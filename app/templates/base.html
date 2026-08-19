@@ -83,9 +83,8 @@
     .badge-awaiting_subtitle { background: var(--vulgarr-info-bg); color: var(--vulgarr-info-text); }
     .badge-not_processed { background: var(--vulgarr-bg-elevated); color: var(--vulgarr-text-secondary); }
     .badge-outdated { background: var(--vulgarr-outdated-bg); color: var(--vulgarr-outdated-text); margin-left: 0.4rem; }
-    .badge-mild { background: var(--vulgarr-info-bg); color: var(--vulgarr-info-text); }
-    .badge-moderate { background: var(--vulgarr-warning-bg); color: var(--vulgarr-warning-text); }
-    .badge-strong { background: var(--vulgarr-danger-bg); color: var(--vulgarr-danger-text); }
+    .badge-child { background: var(--vulgarr-info-bg); color: var(--vulgarr-info-text); }
+    .badge-teen { background: var(--vulgarr-danger-bg); color: var(--vulgarr-danger-text); }
     progress { accent-color: var(--vulgarr-accent); background: var(--vulgarr-border); border-radius: 4px; height: 0.6rem; }
     button, input[type=submit] { background: var(--vulgarr-accent); color: white; border: none; padding: 0.4rem 0.9rem; border-radius: 6px; cursor: pointer; font-weight: 600; font-size: 0.9rem; }
     button:hover { background: var(--vulgarr-accent-hover); }
@@ -118,10 +117,10 @@
     .topbar-job-msg { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   </style>
   <script>
-    // Severity checkboxes are cumulative: strong implies moderate implies mild.
+    // Severity checkboxes are cumulative: teen implies child.
     // Checking a box also checks everything below it; unchecking a box also
     // unchecks everything above it.
-    const SEVERITY_ORDER = ["mild", "moderate", "strong"];
+    const SEVERITY_ORDER = ["child", "teen"];
     function cascadeSeverity(changed) {
       const form = changed.form;
       const idx = SEVERITY_ORDER.indexOf(changed.name.replace("sev_", ""));

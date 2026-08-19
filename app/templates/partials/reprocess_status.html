@@ -1,0 +1,8 @@
+<div id="reprocess-area">
+  {% if outdated_count %}
+  <form class="inline" hx-post="/wordlist/reprocess-outdated" hx-target="#reprocess-area" hx-swap="outerHTML">
+    <button type="submit" class="secondary">Reprocess {{ outdated_count }} outdated title(s)</button>
+  </form>
+  {% endif %}
+  {% if message %}<div class="muted" style="margin-top: 0.3rem;">{{ message }}</div>{% endif %}
+</div>

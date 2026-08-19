@@ -228,7 +228,7 @@ async def build_clean_track(
     # requested, for files muxed by certain non-ffmpeg tools). Language is the only
     # field that reliably persists, so it's the only reliable way left to keep clean
     # tracks distinguishable from the original when it has no specific language of
-    # its own -- track order (fixed: mild, moderate, strong) is what distinguishes
+    # its own -- track order (fixed: child, teen) is what distinguishes
     # multiple clean tracks from each other when title tags don't stick.
     source_language = plan.source_stream.get("tags", {}).get("language")
     if source_language and source_language.lower() not in ("und", ""):

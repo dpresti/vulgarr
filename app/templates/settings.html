@@ -1,6 +1,11 @@
 {% extends "base.html" %}
 {% block content %}
-  <h1>Settings</h1>
+  <div class="toolbar">
+    <h1>Settings</h1>
+    <form method="post" action="/library/sync">
+      <button type="submit" class="secondary">Sync from Sonarr/Radarr</button>
+    </form>
+  </div>
   <p class="muted">Bazarr's webhook is disabled by default since it's currently down -- flip it on once it's back and Sonarr/Radarr import + poll can stay on as a fallback.</p>
   {% include "partials/settings_form.html" %}
 {% endblock %}

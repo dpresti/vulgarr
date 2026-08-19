@@ -46,11 +46,11 @@ class Title(Base):
     # rows are migrated into severity_levels on first startup after the upgrade.
     severity_threshold: Mapped[str] = mapped_column(String(20), default="mild", nullable=False)
 
-    # Comma-separated subset of {"mild","moderate","strong"} -- which threshold tracks
-    # to generate for this title, e.g. "mild" (one track) or "mild,strong" (two tracks).
-    # Each selected level gets its own clean audio track ("mild" mutes mild+moderate+strong,
-    # "strong" mutes only strong). Set per-movie, or in bulk for every episode in a show.
-    severity_levels: Mapped[str] = mapped_column(String(40), default="mild", nullable=False)
+    # Comma-separated subset of {"child","teen"} -- which threshold tracks to generate
+    # for this title, e.g. "child" (one track) or "child,teen" (two tracks). Each
+    # selected level gets its own clean audio track ("child" mutes everything, "teen"
+    # mutes only teen-tagged words). Set per-movie, or in bulk for every episode in a show.
+    severity_levels: Mapped[str] = mapped_column(String(40), default="child", nullable=False)
 
     # Opt-in: mute a narrower window estimated around each matched word's position within
     # its cue, instead of the whole cue's on-screen duration. New titles inherit the
@@ -61,7 +61,7 @@ class Title(Base):
     clean_track_audio_index: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
     # Comma-separated audio-relative indices of our own generated clean track(s), in the
-    # same fixed order as severity_levels (mild, moderate, strong), recorded after each
+    # same fixed order as severity_levels (child, teen), recorded after each
     # successful processing run. Used to detect/replace stale clean tracks on reprocess
     # instead of appending more -- file-embedded metadata (title tag) isn't a reliable way
     # to detect this, since some real-world MP4s silently drop it on remux.
@@ -111,7 +111,7 @@ class WordListEntry(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     term: Mapped[str] = mapped_column(String(128), nullable=False, unique=True)
-    severity: Mapped[Severity] = mapped_column(Enum(Severity), default=Severity.strong, nullable=False)
+    severity: Mapped[Severity] = mapped_column(Enum(Severity), default=Severity.teen, nullable=False)
     enabled: Mapped[bool] = mapped_column(default=True)
     match_whole_word: Mapped[bool] = mapped_column(default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)

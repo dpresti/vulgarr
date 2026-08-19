@@ -44,26 +44,21 @@ def test_zero_video_duration_is_skipped():
 
 
 def test_single_severity_mp4_uses_that_level():
-    levels = effective_severity_levels("/plex/Movie.mp4", [Severity.moderate])
-    assert levels == [Severity.moderate]
+    levels = effective_severity_levels("/plex/Movie.mp4", [Severity.teen])
+    assert levels == [Severity.teen]
 
 
 def test_multi_severity_mkv_keeps_all_levels():
-    levels = effective_severity_levels("/plex/Movie.mkv", [Severity.mild, Severity.strong])
-    assert levels == [Severity.mild, Severity.strong]
+    levels = effective_severity_levels("/plex/Movie.mkv", [Severity.child, Severity.teen])
+    assert levels == [Severity.child, Severity.teen]
 
 
 def test_multi_severity_mp4_falls_back_to_most_inclusive():
-    # mild is more inclusive than strong (catches mild+moderate+strong vs strong-only),
+    # child is more inclusive than teen (catches everything vs only teen-tagged words),
     # and comes first in canonical order -- that's the one that should survive.
-    levels = effective_severity_levels("/plex/Movie.mp4", [Severity.strong, Severity.mild])
-    assert levels == [Severity.mild]
+    levels = effective_severity_levels("/plex/Movie.mp4", [Severity.teen, Severity.child])
+    assert levels == [Severity.child]
 
 
-def test_multi_severity_mp4_without_mild_falls_back_to_moderate():
-    levels = effective_severity_levels("/plex/Movie.mp4", [Severity.moderate, Severity.strong])
-    assert levels == [Severity.moderate]
-
-
-def test_no_severity_levels_defaults_to_mild():
-    assert effective_severity_levels("/plex/Movie.mp4", None) == [Severity.mild]
+def test_no_severity_levels_defaults_to_child():
+    assert effective_severity_levels("/plex/Movie.mp4", None) == [Severity.child]

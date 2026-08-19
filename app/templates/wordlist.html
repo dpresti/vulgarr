@@ -1,14 +1,17 @@
 {% extends "base.html" %}
 {% block content %}
-  <h1>Word List</h1>
+  <div class="toolbar">
+    <h1>Word List</h1>
+    <span class="muted">Word list version: v{{ wordlist_version }}</span>
+  </div>
   <p class="muted">Changes here bump the word-list version. Already-processed titles are marked "outdated" in the Library rather than being auto-reprocessed.</p>
+  {% include "partials/reprocess_status.html" %}
 
   <form class="inline" hx-post="/wordlist" hx-target="#wordlist-table" hx-swap="outerHTML">
     <input type="text" name="term" placeholder="term, e.g. poop" required>
     <span class="severity-checks">
-      <label><input type="checkbox" name="sev_mild" checked onchange="cascadeSeverity(this)"> mild</label>
-      <label><input type="checkbox" name="sev_moderate" checked onchange="cascadeSeverity(this)"> moderate</label>
-      <label><input type="checkbox" name="sev_strong" checked onchange="cascadeSeverity(this)"> strong</label>
+      <label><input type="radio" name="term_severity" value="child" checked> child</label>
+      <label><input type="radio" name="term_severity" value="teen"> teen</label>
     </span>
     <label class="muted"><input type="checkbox" name="match_whole_word" checked> whole word</label>
     <button type="submit">Add term</button>
@@ -23,9 +26,8 @@
     <input type="text" name="q" placeholder="Search terms…" value="{{ q }}">
     <select name="severity">
       <option value="all" {% if severity == 'all' %}selected{% endif %}>All severities</option>
-      <option value="mild" {% if severity == 'mild' %}selected{% endif %}>Mild</option>
-      <option value="moderate" {% if severity == 'moderate' %}selected{% endif %}>Moderate</option>
-      <option value="strong" {% if severity == 'strong' %}selected{% endif %}>Strong</option>
+      <option value="child" {% if severity == 'child' %}selected{% endif %}>Child</option>
+      <option value="teen" {% if severity == 'teen' %}selected{% endif %}>Teen</option>
     </select>
     <select name="enabled">
       <option value="all" {% if enabled == 'all' %}selected{% endif %}>Enabled + disabled</option>
