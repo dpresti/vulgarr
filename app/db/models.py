@@ -36,6 +36,13 @@ class Title(Base):
     subtitle_path: Mapped[str | None] = mapped_column(String(1024), nullable=True)
     subtitle_language: Mapped[str | None] = mapped_column(String(16), nullable=True)
 
+    # Poster art URL from Radarr/Sonarr (their `remoteUrl`, i.e. the original TMDB/TVDB
+    # CDN link -- directly loadable by a browser, unlike their `url` which only resolves
+    # inside the Radarr/Sonarr container). Refreshed on every /library/sync; null until
+    # the first sync after upgrading. For episodes this is the show's poster, denormalized
+    # onto every episode row the same way series_title already is.
+    poster_url: Mapped[str | None] = mapped_column(String(1024), nullable=True)
+
     # Cached display status ("not_processed"/"queued"/"processing"/"done"/"failed"), kept in
     # sync by the queue worker on every job transition. Avoids joining ProcessingJob for every
     # row just to render a status badge, which doesn't scale to a library this size.

@@ -25,6 +25,7 @@ _COLUMNS_ADDED_LATER = [
     ("titles", "clean_track_audio_indices", "VARCHAR(40)"),
     ("titles", "precise_mute", "BOOLEAN NOT NULL DEFAULT 0"),
     ("titles", "replacement_requested_at", "DATETIME"),
+    ("titles", "poster_url", "VARCHAR(1024)"),
     ("processing_jobs", "progress_percent", "FLOAT"),
 ]
 

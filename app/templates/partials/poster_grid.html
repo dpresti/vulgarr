@@ -1,0 +1,23 @@
+<div class="poster-grid">
+  {% for row in rows %}
+    {% if row.title.media_type.value == 'movie' %}
+      {% set href = '/library/title/' ~ row.title.id %}
+    {% else %}
+      {% set href = '/library/shows/' ~ row.title.sonarr_series_id ~ '/season/' ~ row.title.season_number %}
+    {% endif %}
+    <a class="poster-card" href="{{ href }}">
+      <div class="poster-frame">
+        {% if row.title.poster_url %}
+          <img src="{{ row.title.poster_url }}" alt="" loading="lazy">
+        {% else %}
+          <div class="poster-placeholder">{{ row.display_name[:1] }}</div>
+        {% endif %}
+        {% if row.title.media_type.value == 'episode' %}<span class="type-pip">TV</span>{% endif %}
+        <span class="status-pip pip-{{ row.pip }}" title="{{ row.pip_label }}"></span>
+      </div>
+      <div class="poster-title">{{ row.display_name }}</div>
+    </a>
+  {% else %}
+    <p class="muted">No titles found.</p>
+  {% endfor %}
+</div>

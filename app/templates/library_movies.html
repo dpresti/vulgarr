@@ -11,9 +11,10 @@
   </form>
 
   {% with rows=movie_rows %}
-    {% include "partials/library_table.html" %}
+    {% include "partials/poster_grid.html" %}
   {% endwith %}
   {% with total=movie_total, page=movie_page, page_size=movie_page_size, pager_link=movie_pager_qs %}
     {% include "partials/pager.html" %}
   {% endwith %}
+  {% include "partials/pip_legend.html" %}
 {% endblock %}
