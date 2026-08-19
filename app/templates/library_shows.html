@@ -10,7 +10,7 @@
     {% if q %}<a href="/library/shows" class="muted">clear</a>{% endif %}
   </form>
 
-  {% include "partials/shows_table.html" %}
+  {% include "partials/poster_grid_shows.html" %}
   {% with total=show_total, page=show_page, page_size=show_page_size, pager_link=show_pager_qs %}
     {% include "partials/pager.html" %}
   {% endwith %}

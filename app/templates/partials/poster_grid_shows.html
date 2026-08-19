@@ -1,0 +1,20 @@
+<div class="poster-grid">
+  {% for show in shows %}
+    {% set pct = ((100 * show.done_count / show.total) | round | int) if show.total else 0 %}
+    <a class="poster-card" href="/library/shows/{{ show.sonarr_series_id }}">
+      <div class="poster-frame">
+        {% if show.poster_url %}
+          <img src="{{ show.poster_url }}" alt="" loading="lazy">
+        {% else %}
+          <div class="poster-placeholder">{{ (show.series_title or '?')[:1] }}</div>
+        {% endif %}
+        <span class="type-pip">TV</span>
+        <div class="poster-scrim"><span class="meta-line">{{ show.done_count }} / {{ show.total }} processed</span></div>
+      </div>
+      <div class="poster-title">{{ show.series_title or 'Unknown series' }}</div>
+      <div class="poster-progress"><div class="poster-progress-fill" style="width: {{ pct }}%"></div></div>
+    </a>
+  {% else %}
+    <p class="muted">No shows found.</p>
+  {% endfor %}
+</div>

@@ -14,10 +14,17 @@ class SonarrEpisodeFile:
     episode_number: int
     episode_title: str
     path: str
+    poster_url: str | None = None
 
     @property
     def display_name(self) -> str:
         return f"{self.series_title} - S{self.season_number:02d}E{self.episode_number:02d} - {self.episode_title}"
+
+
+def _extract_poster_url(images: list[dict]) -> str | None:
+    """See the identical helper in app.integrations.radarr -- same reasoning, different
+    CDN (TheTVDB instead of TMDB)."""
+    return next((img["remoteUrl"] for img in images if img.get("coverType") == "poster" and img.get("remoteUrl")), None)
 
 
 class SonarrClient:
@@ -45,6 +52,7 @@ class SonarrClient:
 
         for series in series_list:
             series_id = series["id"]
+            poster_url = _extract_poster_url(series.get("images", []))
             episodes = await self._get("/api/v3/episode", params={"seriesId": series_id})
             files_by_id = {
                 f["id"]: f for f in await self._get("/api/v3/episodefile", params={"seriesId": series_id})
@@ -62,6 +70,7 @@ class SonarrClient:
                         episode_number=ep["episodeNumber"],
                         episode_title=ep.get("title", ""),
                         path=files_by_id[file_id]["path"],
+                        poster_url=poster_url,
                     )
                 )
         return results

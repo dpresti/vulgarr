@@ -39,6 +39,7 @@ async def upsert_title(
     season_number: int | None = None,
     episode_number: int | None = None,
     default_precise_mute: bool | None = None,
+    poster_url: str | None = None,
 ) -> Title:
     result = await session.execute(select(Title).where(Title.video_path == video_path))
     title = result.scalar_one_or_none()
@@ -68,6 +69,10 @@ async def upsert_title(
     title.episode_number = episode_number
     title.subtitle_path = str(subtitle) if subtitle else None
     title.subtitle_language = app_settings.default_subtitle_language if subtitle else None
+    if poster_url:
+        # Webhook-triggered upserts don't carry poster art -- don't clobber a poster a
+        # real /library/sync already found with None just because this call has none.
+        title.poster_url = poster_url
 
     await session.commit()
     await session.refresh(title)
@@ -89,6 +94,7 @@ async def sync_sonarr_library(session: AsyncSession, client: SonarrClient) -> in
             season_number=ep_file.season_number,
             episode_number=ep_file.episode_number,
             default_precise_mute=default_precise_mute,
+            poster_url=ep_file.poster_url,
         )
         count += 1
     return count
@@ -105,6 +111,7 @@ async def sync_radarr_library(session: AsyncSession, client: RadarrClient) -> in
             video_path=movie_file.path,
             radarr_movie_id=movie_file.movie_id,
             default_precise_mute=default_precise_mute,
+            poster_url=movie_file.poster_url,
         )
         count += 1
     return count

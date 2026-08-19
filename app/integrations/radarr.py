@@ -11,10 +11,18 @@ class RadarrMovieFile:
     title: str
     year: int
     path: str
+    poster_url: str | None = None
 
     @property
     def display_name(self) -> str:
         return f"{self.title} ({self.year})"
+
+
+def _extract_poster_url(images: list[dict]) -> str | None:
+    """Images come back with both a Radarr-local `url` (only reachable from inside the
+    Radarr container, and only with the API key) and a `remoteUrl` pointing at the
+    original TMDB CDN -- the latter is what a browser can actually load directly."""
+    return next((img["remoteUrl"] for img in images if img.get("coverType") == "poster" and img.get("remoteUrl")), None)
 
 
 class RadarrClient:
@@ -61,6 +69,7 @@ class RadarrClient:
                     title=movie["title"],
                     year=movie.get("year", 0),
                     path=movie_file["path"],
+                    poster_url=_extract_poster_url(movie.get("images", [])),
                 )
             )
         return results

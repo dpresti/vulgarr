@@ -64,6 +64,36 @@ def _short_episode_label(title: Title) -> str:
     return f"E{title.episode_number:02d} - {suffix}"
 
 
+_PIP_LABELS = {
+    "done": "done",
+    "processing": "processing",
+    "queued": "queued",
+    "failed": "failed",
+    "not_processed": "not processed",
+    "outdated": "outdated word list",
+    "no_subtitle": "no subtitle",
+}
+
+
+def _pip_state(status: str, outdated: bool, has_subtitle: bool) -> str:
+    """Single-glance poster status, in priority order: an active/failed job always wins
+    (most actionable), then an outdated or missing-subtitle title (both blockers on an
+    otherwise-fine title), then plain done/not-processed."""
+    if status == "failed":
+        return "failed"
+    if status == "processing":
+        return "processing"
+    if status in ("queued", "awaiting_mkv", "awaiting_subtitle"):
+        return "queued"
+    if outdated:
+        return "outdated"
+    if not has_subtitle:
+        return "no_subtitle"
+    if status == "done":
+        return "done"
+    return "not_processed"
+
+
 def _row_dict(
     title: Title, current_version: int, bazarr_message: str | None = None, short_label: bool = False
 ) -> dict:
@@ -88,17 +118,35 @@ def _row_dict(
     display_name = (
         _short_episode_label(title) if short_label and title.media_type == MediaType.episode else title.display_name
     )
+    outdated = is_outdated(title, current_version)
+    pip = _pip_state(title.status, outdated, has_subtitle)
 
     return {
         "title": title,
         "display_name": display_name,
         "status": title.status,
-        "outdated": is_outdated(title, current_version),
+        "outdated": outdated,
         "bazarr_message": bazarr_message,
         "is_mkv": is_mkv,
         "severity_error": severity_error,
         "has_subtitle": has_subtitle,
+        "pip": pip,
+        "pip_label": _PIP_LABELS[pip],
     }
+
+
+def _render_title(request: Request, row: dict, detail_view: bool, **extra):
+    """Single-title action routes are called both from a table row (title_row.html)
+    and from the title detail page (title_detail_card.html) -- render whichever one
+    the caller came from, identified by the hidden detail_view form field each of
+    that page's forms carries."""
+    if detail_view:
+        return templates.TemplateResponse(
+            "partials/title_detail_card.html", {"request": request, "row": row, **extra}
+        )
+    return templates.TemplateResponse(
+        "partials/title_row.html", {"request": request, "row": row, "severity_options": SEVERITY_OPTIONS, **extra}
+    )
 
 
 MOVIE_SORT_COLUMNS = {
@@ -169,6 +217,7 @@ async def _load_shows(
     # already had below.
     severity_col = func.min(Title.severity_levels).label("severity_levels")
     precise_col = func.min(Title.precise_mute).label("precise_mute")
+    poster_col = func.max(Title.poster_url).label("poster_url")
 
     query = select(
         Title.sonarr_series_id,
@@ -180,6 +229,7 @@ async def _load_shows(
         outdated_col,
         severity_col,
         precise_col,
+        poster_col,
     ).where(Title.media_type == MediaType.episode)
 
     if q:
@@ -423,6 +473,16 @@ async def _load_season(session, series_id: int, season_number: int, current_vers
     return season
 
 
+@router.get("/title/{title_id}", response_class=HTMLResponse)
+async def title_detail(request: Request, title_id: int):
+    async with get_session() as session:
+        current_version = int(await get_setting(session, "wordlist_version"))
+        title = await session.get(Title, title_id)
+        row = _row_dict(title, current_version)
+
+    return templates.TemplateResponse("title_detail.html", {"request": request, "row": row})
+
+
 @router.get("/shows/{series_id}", response_class=HTMLResponse)
 async def show_detail(request: Request, series_id: int):
     async with get_session() as session:
@@ -484,7 +544,9 @@ async def sync_library(request: Request):
 
 
 @router.post("/{title_id}/process", response_class=HTMLResponse)
-async def process_title(request: Request, title_id: int, short_label: bool = Form(False)):
+async def process_title(
+    request: Request, title_id: int, short_label: bool = Form(False), detail_view: bool = Form(False)
+):
     await job_queue.enqueue(title_id, TriggerSource.manual)
 
     async with get_session() as session:
@@ -492,9 +554,7 @@ async def process_title(request: Request, title_id: int, short_label: bool = For
         title = await session.get(Title, title_id)
         row = _row_dict(title, current_version, short_label=short_label)
 
-    return templates.TemplateResponse(
-        "partials/title_row.html", {"request": request, "row": row, "severity_options": SEVERITY_OPTIONS}
-    )
+    return _render_title(request, row, detail_view)
 
 
 async def _bulk_enqueue_titles(session, *conditions) -> tuple[int, int]:
@@ -569,6 +629,7 @@ async def set_title_severity(
     sev_child: bool = Form(False),
     sev_teen: bool = Form(False),
     short_label: bool = Form(False),
+    detail_view: bool = Form(False),
 ):
     levels = _severity_levels_from_checkboxes(sev_child, sev_teen)
     async with get_session() as session:
@@ -587,9 +648,7 @@ async def set_title_severity(
 
         row = _row_dict(title, current_version, short_label=short_label)
 
-    return templates.TemplateResponse(
-        "partials/title_row.html", {"request": request, "row": row, "severity_options": SEVERITY_OPTIONS}
-    )
+    return _render_title(request, row, detail_view, severity_saved=detail_view)
 
 
 @router.post("/shows/{series_id}/season/{season_number}/severity", response_class=HTMLResponse)
@@ -615,7 +674,9 @@ async def set_season_severity(
 
 
 @router.post("/{title_id}/toggle-precise", response_class=HTMLResponse)
-async def toggle_title_precise_mute(request: Request, title_id: int, short_label: bool = Form(False)):
+async def toggle_title_precise_mute(
+    request: Request, title_id: int, short_label: bool = Form(False), detail_view: bool = Form(False)
+):
     async with get_session() as session:
         current_version = int(await get_setting(session, "wordlist_version"))
         title = await session.get(Title, title_id)
@@ -624,9 +685,7 @@ async def toggle_title_precise_mute(request: Request, title_id: int, short_label
         await session.refresh(title)
         row = _row_dict(title, current_version, short_label=short_label)
 
-    return templates.TemplateResponse(
-        "partials/title_row.html", {"request": request, "row": row, "severity_options": SEVERITY_OPTIONS}
-    )
+    return _render_title(request, row, detail_view, precise_saved=detail_view)
 
 
 @router.post("/shows/{series_id}/season/{season_number}/toggle-precise", response_class=HTMLResponse)
@@ -649,7 +708,9 @@ async def set_season_precise_mute(request: Request, series_id: int, season_numbe
 
 
 @router.post("/{title_id}/search-subtitle", response_class=HTMLResponse)
-async def search_subtitle_via_bazarr(request: Request, title_id: int, short_label: bool = Form(False)):
+async def search_subtitle_via_bazarr(
+    request: Request, title_id: int, short_label: bool = Form(False), detail_view: bool = Form(False)
+):
     async with get_session() as session:
         current_version = int(await get_setting(session, "wordlist_version"))
         title = await session.get(Title, title_id)
@@ -693,13 +754,13 @@ async def search_subtitle_via_bazarr(request: Request, title_id: int, short_labe
         await session.refresh(title)
         row = _row_dict(title, current_version, bazarr_message=message, short_label=short_label)
 
-    return templates.TemplateResponse(
-        "partials/title_row.html", {"request": request, "row": row, "severity_options": SEVERITY_OPTIONS}
-    )
+    return _render_title(request, row, detail_view)
 
 
 @router.post("/{title_id}/search-mkv-replacement", response_class=HTMLResponse)
-async def search_mkv_replacement(request: Request, title_id: int, short_label: bool = Form(False)):
+async def search_mkv_replacement(
+    request: Request, title_id: int, short_label: bool = Form(False), detail_view: bool = Form(False)
+):
     """Trigger a Sonarr/Radarr search for an .mkv release of this title, so multiple
     severity tracks become available. The queue worker polls for the new file to land
     and, once it does, searches Bazarr for a subtitle if needed and auto-queues processing --
@@ -737,6 +798,4 @@ async def search_mkv_replacement(request: Request, title_id: int, short_label: b
         await session.refresh(title)
         row = _row_dict(title, current_version, bazarr_message=message, short_label=short_label)
 
-    return templates.TemplateResponse(
-        "partials/title_row.html", {"request": request, "row": row, "severity_options": SEVERITY_OPTIONS}
-    )
+    return _render_title(request, row, detail_view)
