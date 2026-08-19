@@ -1,6 +1,33 @@
 {% extends "base.html" %}
 {% block content %}
-  <p><a href="/library">&laquo; Library</a> / <a href="/library/shows/{{ series_id }}">{{ series_title or 'Unknown series' }}</a></p>
-  <h1>{{ series_title or 'Unknown series' }} &mdash; Season {{ season_number }}</h1>
+  <p><a href="/library/shows">&laquo; TV Shows</a> / <a href="/library/shows/{{ series_id }}">{{ series_title or 'Unknown series' }}</a></p>
+  {% set current_levels = current_severity.split(',') %}
+  <div class="toolbar">
+    <h1>{{ series_title or 'Unknown series' }} &mdash; Season {{ season_number }}</h1>
+    <div>
+      {% if severity_saved %}<span style="color:var(--vulgarr-success-text);">Saved.</span>{% endif %}
+      {% if process_message %}<div class="muted">{{ process_message }}</div>{% endif %}
+      <form class="inline" method="post" action="/library/shows/{{ series_id }}/season/{{ season_number }}/severity">
+        <span class="muted">Tracks to generate for this season:</span>
+        <span class="severity-checks">
+          <label><input type="checkbox" name="sev_mild" {% if 'mild' in current_levels %}checked{% endif %}> mild</label>
+          <label><input type="checkbox" name="sev_moderate" {% if 'moderate' in current_levels %}checked{% endif %}> moderate</label>
+          <label><input type="checkbox" name="sev_strong" {% if 'strong' in current_levels %}checked{% endif %}> strong</label>
+        </span>
+        <button type="submit">Apply to season</button>
+      </form>
+      {% if gating_message %}<div class="muted" style="color: var(--vulgarr-outdated-text); margin-top: 0.3rem;">{{ gating_message }}</div>{% endif %}
+      <form class="inline" method="post" action="/library/shows/{{ series_id }}/season/{{ season_number }}/toggle-precise" style="margin-top: 0.4rem;">
+        <label class="muted" title="Mute a narrow window around each word instead of the whole subtitle line">
+          <input type="checkbox" name="precise_mute" value="true" {% if current_precise_mute %}checked{% endif %}> Precise mute (word-level estimate, not whole line)
+        </label>
+        <button type="submit">Apply to season</button>
+      </form>
+      <form class="inline" method="post" action="/library/shows/{{ series_id }}/season/{{ season_number }}/process" style="margin-top: 0.4rem;">
+        <button type="submit" class="secondary" title="Queue every episode in this season that already has a subtitle">Process this season</button>
+      </form>
+    </div>
+  </div>
+
   {% include "partials/library_table.html" %}
 {% endblock %}
