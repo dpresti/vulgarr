@@ -294,21 +294,27 @@
       .responsive-table tbody, .responsive-table tr, .responsive-table td { display: block; width: 100%; box-sizing: border-box; }
       .responsive-table tr {
         border: 1px solid var(--vulgarr-border); border-radius: 8px;
-        margin-bottom: 0.75rem; padding: 0.6rem 0.8rem; background: var(--vulgarr-bg-surface);
+        margin-bottom: 0.5rem; padding: 0.5rem 0.7rem; background: var(--vulgarr-bg-surface);
       }
-      /* overflow-wrap matters here specifically -- error/result messages (e.g.
-         a raw ffmpeg failure with a long file path) can be one long unbroken
-         string with no natural wrap point. Without this, that text silently
-         overflows its own box without making the box itself measurably wider
-         (invisible to a bounding-box check), dragging the whole scrollable
-         card region out with it. */
-      .responsive-table td { border: none; padding: 0.35rem 0; text-align: left; overflow-wrap: anywhere; }
+      /* Label sits inline before its value instead of stacked above it, so a
+         short field (a badge, "manual", "done") takes one line instead of two --
+         only wraps to its own line when the value doesn't fit next to the label.
+         overflow-wrap matters here specifically -- error/result messages (e.g. a
+         raw ffmpeg failure with a long file path) can be one long unbroken string
+         with no natural wrap point. Without it, that text silently overflows its
+         own box without making the box itself measurably wider (invisible to a
+         bounding-box check), dragging the whole scrollable card region out with it. */
+      .responsive-table td {
+        border: none; padding: 0.2rem 0; text-align: left; overflow-wrap: anywhere;
+        display: flex; align-items: center; flex-wrap: wrap; column-gap: 0.5rem; row-gap: 0.15rem;
+      }
       .responsive-table td::before {
-        content: attr(data-label); display: block; font-weight: 700; font-size: 0.68rem;
+        content: attr(data-label); font-weight: 700; font-size: 0.66rem;
         text-transform: uppercase; letter-spacing: 0.03em; color: var(--vulgarr-text-secondary);
-        margin-bottom: 0.2rem;
+        flex-shrink: 0; white-space: nowrap;
       }
       .responsive-table td[data-label=""]::before { display: none; }
+      .responsive-table td[data-label=""] { padding-top: 0.35rem; }
     }
 
     /* A second, tighter tier for the smallest phones (e.g. iPhone SE-class,
