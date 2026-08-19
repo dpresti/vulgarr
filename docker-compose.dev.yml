@@ -1,0 +1,26 @@
+# Isolated dev/test instance for in-progress feature work (e.g. Whisper forced
+# alignment). Separate container, port, and data dir from docker-compose.yml's
+# production "vulgarr" service -- nothing here touches the real database or
+# media library. Run alongside prod with:
+#   docker compose -f docker-compose.dev.yml up -d --build
+services:
+  vulgarr-dev:
+    build: .
+    container_name: vulgarr-dev
+    restart: "no"
+    ports:
+      - 8012:8000
+    environment:
+      TZ: ${TZ:-UTC}
+      PUID: ${PUID:-1000}
+      PGID: ${PGID:-1000}
+      SPF_MEDIA_ROOT: /media
+      SPF_DEFAULT_SUBTITLE_LANGUAGE: en
+    volumes:
+      - ./data-dev:/data
+      - ./dev-media:/media
+    networks:
+      - media_default
+networks:
+  media_default:
+    external: true
