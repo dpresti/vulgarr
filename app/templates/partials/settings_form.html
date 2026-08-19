@@ -97,7 +97,7 @@
     <label for="backup_retention_days">Delete backups older than (days)</label>
     <div>
       <input type="number" id="backup_retention_days" name="backup_retention_days" min="0" value="{{ values.backup_retention_days }}" class="input-sm">
-      <div class="muted">0 = keep every backup forever (default). Backups live under <code>/data/backups</code> and are the only copy of the original, unmodified file.</div>
+      <div class="muted">0 = keep every backup forever. Defaults to 7 days. Backups live under <code>/data/backups</code> and are the only copy of the original, unmodified file.</div>
     </div>
   </div>
 
