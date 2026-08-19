@@ -47,56 +47,56 @@
   <p class="muted" style="margin-top: -0.5rem;">Reachable from inside this app's container -- use the same URL/API key you'd use from Bazarr's own settings. Changes here take effect immediately, no restart needed.</p>
   <div class="settings-grid">
     <label for="sonarr_url">Sonarr URL</label>
-    <input type="text" id="sonarr_url" name="sonarr_url" value="{{ values.sonarr_url }}" placeholder="http://sonarr:8989" style="min-width: 320px;">
+    <input type="text" id="sonarr_url" name="sonarr_url" value="{{ values.sonarr_url }}" placeholder="http://sonarr:8989" class="wide-input">
 
     <label for="sonarr_api_key">Sonarr API key</label>
     <div class="secret-field">
-      <input type="password" id="sonarr_api_key" name="sonarr_api_key" value="{{ values.sonarr_api_key }}" autocomplete="off" style="min-width: 320px;">
+      <input type="password" id="sonarr_api_key" name="sonarr_api_key" value="{{ values.sonarr_api_key }}" autocomplete="off" class="wide-input">
       <button type="button" class="eye-toggle" onclick="toggleSecretVisibility(this)" title="Show/hide" aria-label="Show or hide API key"><i class="ti ti-eye" aria-hidden="true"></i></button>
     </div>
 
     <label for="radarr_url">Radarr URL</label>
-    <input type="text" id="radarr_url" name="radarr_url" value="{{ values.radarr_url }}" placeholder="http://radarr:7878" style="min-width: 320px;">
+    <input type="text" id="radarr_url" name="radarr_url" value="{{ values.radarr_url }}" placeholder="http://radarr:7878" class="wide-input">
 
     <label for="radarr_api_key">Radarr API key</label>
     <div class="secret-field">
-      <input type="password" id="radarr_api_key" name="radarr_api_key" value="{{ values.radarr_api_key }}" autocomplete="off" style="min-width: 320px;">
+      <input type="password" id="radarr_api_key" name="radarr_api_key" value="{{ values.radarr_api_key }}" autocomplete="off" class="wide-input">
       <button type="button" class="eye-toggle" onclick="toggleSecretVisibility(this)" title="Show/hide" aria-label="Show or hide API key"><i class="ti ti-eye" aria-hidden="true"></i></button>
     </div>
 
     <label for="bazarr_url">Bazarr URL</label>
-    <input type="text" id="bazarr_url" name="bazarr_url" value="{{ values.bazarr_url }}" placeholder="http://bazarr:6767" style="min-width: 320px;">
+    <input type="text" id="bazarr_url" name="bazarr_url" value="{{ values.bazarr_url }}" placeholder="http://bazarr:6767" class="wide-input">
 
     <label for="bazarr_api_key">Bazarr API key</label>
     <div class="secret-field">
-      <input type="password" id="bazarr_api_key" name="bazarr_api_key" value="{{ values.bazarr_api_key }}" autocomplete="off" style="min-width: 320px;">
+      <input type="password" id="bazarr_api_key" name="bazarr_api_key" value="{{ values.bazarr_api_key }}" autocomplete="off" class="wide-input">
       <button type="button" class="eye-toggle" onclick="toggleSecretVisibility(this)" title="Show/hide" aria-label="Show or hide API key"><i class="ti ti-eye" aria-hidden="true"></i></button>
     </div>
 
     <label for="webhook_token">Webhook token</label>
     <div>
       <div class="secret-field">
-        <input type="password" id="webhook_token" name="webhook_token" value="{{ values.webhook_token }}" autocomplete="off" style="min-width: 320px;">
+        <input type="password" id="webhook_token" name="webhook_token" value="{{ values.webhook_token }}" autocomplete="off" class="wide-input">
         <button type="button" class="eye-toggle" onclick="toggleSecretVisibility(this)" title="Show/hide" aria-label="Show or hide webhook token"><i class="ti ti-eye" aria-hidden="true"></i></button>
       </div>
       <div class="muted">Append <code>?token=&lt;this&gt;</code> to the Sonarr/Radarr/Bazarr webhook URLs. Edit and save to rotate it.</div>
     </div>
 
     <label for="default_subtitle_language">Default subtitle language</label>
-    <input type="text" id="default_subtitle_language" name="default_subtitle_language" value="{{ values.default_subtitle_language }}" style="width: 100px;">
+    <input type="text" id="default_subtitle_language" name="default_subtitle_language" value="{{ values.default_subtitle_language }}" class="input-sm">
 
     <label for="clean_track_title">Clean track title</label>
-    <input type="text" id="clean_track_title" name="clean_track_title" value="{{ values.clean_track_title }}" style="width: 200px;">
+    <input type="text" id="clean_track_title" name="clean_track_title" value="{{ values.clean_track_title }}" class="input-md">
 
     <label for="clean_track_language">Clean track language tag</label>
-    <input type="text" id="clean_track_language" name="clean_track_language" value="{{ values.clean_track_language }}" style="width: 100px;">
+    <input type="text" id="clean_track_language" name="clean_track_language" value="{{ values.clean_track_language }}" class="input-sm">
   </div>
 
   <h2 style="margin-top: 1.75rem;">Backups</h2>
   <div class="settings-grid">
     <label for="backup_retention_days">Delete backups older than (days)</label>
     <div>
-      <input type="number" id="backup_retention_days" name="backup_retention_days" min="0" value="{{ values.backup_retention_days }}" style="width: 100px;">
+      <input type="number" id="backup_retention_days" name="backup_retention_days" min="0" value="{{ values.backup_retention_days }}" class="input-sm">
       <div class="muted">0 = keep every backup forever (default). Backups live under <code>/data/backups</code> and are the only copy of the original, unmodified file.</div>
     </div>
   </div>
@@ -108,11 +108,11 @@
     <input type="checkbox" id="auth_enabled" name="auth_enabled" {% if values.auth_enabled %}checked{% endif %}>
 
     <label for="auth_username">Username</label>
-    <input type="text" id="auth_username" name="auth_username" value="{{ values.auth_username }}" autocomplete="off" style="width: 200px;">
+    <input type="text" id="auth_username" name="auth_username" value="{{ values.auth_username }}" autocomplete="off" class="input-md">
 
     <label for="auth_password">Password</label>
     <div>
-      <input type="password" id="auth_password" name="auth_password" value="" autocomplete="new-password" style="width: 200px;">
+      <input type="password" id="auth_password" name="auth_password" value="" autocomplete="new-password" class="input-md">
       <div class="muted">Leave blank to keep the current password. Required (once, the first time) before "Require login" can take effect.</div>
     </div>
   </div>

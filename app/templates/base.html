@@ -94,6 +94,7 @@
     .btn-link.small { padding: 0.2rem 0.6rem; font-size: 0.78rem; }
     .main-wrap { flex: 1; min-width: 0; }
     main { padding: 1.5rem; max-width: 1100px; }
+    .table-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; }
     table { width: 100%; border-collapse: collapse; margin-top: 1rem; }
     th, td { text-align: left; padding: 0.45rem 0.75rem; border-bottom: 1px solid var(--vulgarr-border); vertical-align: middle; }
     th { color: var(--vulgarr-text-secondary); font-size: 0.85rem; text-transform: uppercase; }
@@ -128,6 +129,9 @@
     .toolbar { display: flex; justify-content: space-between; align-items: center; }
     .muted { color: var(--vulgarr-text-secondary); font-size: 0.85rem; }
     .settings-grid { display: grid; grid-template-columns: 320px 1fr; gap: 0.75rem 1.5rem; align-items: center; max-width: 640px; }
+    .wide-input { min-width: 320px; }
+    .input-md { width: 200px; }
+    .input-sm { width: 100px; }
     .secret-field { position: relative; display: inline-block; }
     .secret-field input { padding-right: 2.3rem; }
     .secret-field .eye-toggle {
@@ -234,8 +238,27 @@
       .sidebar nav a { padding: 8px 7px; flex-shrink: 0; }
       .sidebar nav a i { font-size: 1.2rem; }
       .sidebar nav .nav-label, .sidebar nav .nav-sub-group { display: none; }
+      /* .nav-sub-group.open (2 base rules up) is more specific than the plain
+         .nav-sub-group hide above, so it wins the cascade and pops the text
+         sub-menu open on top of the icon bar whenever a /library/* route is
+         active -- this repeats that exact selector to override it back off. */
+      .sidebar nav .nav-sub-group.open { display: none; }
       .sidebar nav .nav-mobile-only { display: flex; }
       main { padding: 1rem; }
+
+      /* ---- mobile: stack label/input pairs instead of a fixed 320px column ---- */
+      .settings-grid { grid-template-columns: 1fr; max-width: 100%; }
+      .settings-grid > label { margin-top: 0.5rem; }
+      .settings-grid input[type=text], .settings-grid input[type=password], .settings-grid input[type=number],
+      .settings-grid .secret-field {
+        width: 100%; max-width: 100%; min-width: 0; box-sizing: border-box;
+      }
+      .settings-grid .secret-field input { width: 100%; box-sizing: border-box; }
+
+      /* ---- mobile: page headers and the queue topbar wrap instead of overflowing ---- */
+      .toolbar { flex-wrap: wrap; gap: 0.5rem; }
+      .topbar-job { flex-wrap: wrap; padding: 0.5rem 1rem; row-gap: 0.3rem; }
+      .topbar-job-msg { flex-basis: 100%; white-space: normal; }
     }
   </style>
   <script>
