@@ -4,6 +4,7 @@
   <meta charset="utf-8">
   <title>Vulgarr</title>
   <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@3.46.0/dist/tabler-icons.min.css">
   <script src="https://unpkg.com/htmx.org@2.0.3"></script>
   <style>
     :root {
@@ -43,16 +44,20 @@
       --vulgarr-outdated-text: #F0A25C;
     }
     body { font-family: system-ui, sans-serif; margin: 0; background: var(--vulgarr-bg-main); color: var(--vulgarr-text-primary); }
-    header.app-header { background: var(--vulgarr-bg-surface); border-bottom: 1px solid var(--vulgarr-border); padding: 1.25rem 1.5rem 1rem; }
-    .brand-row { display: flex; align-items: center; gap: 16px; text-decoration: none; }
-    .brand-row svg { flex-shrink: 0; }
-    .brand-wordmark { font-size: 2.1rem; font-weight: 900; color: var(--vulgarr-text-primary); letter-spacing: 0.02em; line-height: 1; }
+    .app-layout { display: flex; min-height: 100vh; }
+    .sidebar { width: 220px; flex-shrink: 0; background: var(--vulgarr-bg-surface); border-right: 1px solid var(--vulgarr-border); padding: 1.25rem 0; }
+    .sidebar-brand { display: block; text-align: center; padding: 0 1rem 1.25rem; border-bottom: 1px solid var(--vulgarr-border); margin-bottom: 0.75rem; text-decoration: none; }
+    .sidebar-brand svg { display: block; margin: 0 auto 8px; }
+    .brand-wordmark { font-size: 1.3rem; font-weight: 900; color: var(--vulgarr-text-primary); letter-spacing: 0.02em; line-height: 1; }
     .brand-wordmark span { color: var(--vulgarr-accent); }
-    .brand-tagline { font-size: 0.7rem; font-weight: 600; color: var(--vulgarr-text-secondary); letter-spacing: 0.15em; margin-top: 6px; }
-    nav { display: flex; gap: 1.5rem; margin-top: 1rem; }
-    nav a { color: var(--vulgarr-text-secondary); text-decoration: none; font-weight: 600; }
-    nav a:hover, nav a.active { color: var(--vulgarr-text-primary); }
-    main { padding: 1.5rem; max-width: 1100px; margin: 0 auto; }
+    .brand-tagline { font-size: 0.6rem; font-weight: 600; color: var(--vulgarr-text-secondary); letter-spacing: 0.12em; margin-top: 6px; }
+    .sidebar nav { display: flex; flex-direction: column; gap: 2px; padding: 0 0.6rem; }
+    .sidebar nav a { display: flex; align-items: center; gap: 10px; padding: 9px 12px; border-radius: 6px; color: var(--vulgarr-text-secondary); text-decoration: none; font-weight: 600; font-size: 0.9rem; }
+    .sidebar nav a i { font-size: 1.1rem; }
+    .sidebar nav a:hover { color: var(--vulgarr-text-primary); }
+    .sidebar nav a.active { background: var(--vulgarr-bg-elevated); color: var(--vulgarr-text-primary); }
+    .main-wrap { flex: 1; min-width: 0; }
+    main { padding: 1.5rem; max-width: 1100px; }
     table { width: 100%; border-collapse: collapse; margin-top: 1rem; }
     th, td { text-align: left; padding: 0.45rem 0.75rem; border-bottom: 1px solid var(--vulgarr-border); vertical-align: middle; }
     th { color: var(--vulgarr-text-secondary); font-size: 0.85rem; text-transform: uppercase; }
@@ -134,38 +139,40 @@
   </script>
 </head>
 <body>
-  <header class="app-header">
-    <a class="brand-row" href="/library">
-      <svg viewBox="0 0 512 512" width="56" height="56">
-        <defs>
-          <linearGradient id="navRedGrad" x1="0%" y1="0%" x2="100%" y2="0%">
-            <stop offset="0%" stop-color="#FF5252" />
-            <stop offset="100%" stop-color="#D32F2F" />
-          </linearGradient>
-        </defs>
-        <rect x="0" y="0" width="512" height="512" rx="110" fill="#242533" stroke="#353846" stroke-width="12"/>
-        <path d="M 256,100 C 170,100 135,160 135,235 C 135,275 155,305 180,325 L 180,380 C 180,395 195,405 210,405 L 302,405 C 317,405 332,395 332,380 L 332,325 C 357,305 377,275 377,235 C 377,160 342,100 256,100 Z" fill="#FFFFFF"/>
-        <ellipse cx="205" cy="225" rx="26" ry="32" fill="#1E1F28" transform="rotate(-6 205 225)"/>
-        <path d="M 148,165 L 364,285" stroke="#E53935" stroke-width="9"/>
-        <ellipse cx="307" cy="225" rx="30" ry="34" fill="#141419" stroke="#E53935" stroke-width="8"/>
-        <rect x="65" y="300" width="382" height="80" rx="14" fill="url(#navRedGrad)"/>
-        <text x="96" y="358" fill="#FFF" font-family="monospace" font-weight="900" font-size="46" letter-spacing="12">#$!%*</text>
-      </svg>
-      <div>
+  <div class="app-layout">
+    <aside class="sidebar">
+      <a class="sidebar-brand" href="/library">
+        <svg viewBox="0 0 512 512" width="52" height="52">
+          <defs>
+            <linearGradient id="navRedGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+              <stop offset="0%" stop-color="#FF5252" />
+              <stop offset="100%" stop-color="#D32F2F" />
+            </linearGradient>
+          </defs>
+          <rect x="0" y="0" width="512" height="512" rx="110" fill="#242533" stroke="#353846" stroke-width="12"/>
+          <path d="M 256,100 C 170,100 135,160 135,235 C 135,275 155,305 180,325 L 180,380 C 180,395 195,405 210,405 L 302,405 C 317,405 332,395 332,380 L 332,325 C 357,305 377,275 377,235 C 377,160 342,100 256,100 Z" fill="#FFFFFF"/>
+          <ellipse cx="205" cy="225" rx="26" ry="32" fill="#1E1F28" transform="rotate(-6 205 225)"/>
+          <path d="M 148,165 L 364,285" stroke="#E53935" stroke-width="9"/>
+          <ellipse cx="307" cy="225" rx="30" ry="34" fill="#141419" stroke="#E53935" stroke-width="8"/>
+          <rect x="65" y="300" width="382" height="80" rx="14" fill="url(#navRedGrad)"/>
+          <text x="96" y="358" fill="#FFF" font-family="monospace" font-weight="900" font-size="46" letter-spacing="12">#$!%*</text>
+        </svg>
         <div class="brand-wordmark">VULG<span>ARR</span></div>
-        <div class="brand-tagline">PROFANITY &amp; EXPLICIT CONTENT FILTER</div>
-      </div>
-    </a>
-    <nav>
-      <a href="/library">Library</a>
-      <a href="/wordlist">Word List</a>
-      <a href="/queue">Queue</a>
-      <a href="/settings">Settings</a>
-    </nav>
-  </header>
-  <div id="topbar" hx-get="/queue/topbar" hx-trigger="load, every 3s" hx-swap="innerHTML"></div>
-  <main>
-    {% block content %}{% endblock %}
-  </main>
+        <div class="brand-tagline">PROFANITY FILTER</div>
+      </a>
+      <nav>
+        <a href="/library" class="{{ 'active' if request.url.path.startswith('/library') else '' }}"><i class="ti ti-movie" aria-hidden="true"></i>Library</a>
+        <a href="/wordlist" class="{{ 'active' if request.url.path.startswith('/wordlist') else '' }}"><i class="ti ti-list" aria-hidden="true"></i>Word list</a>
+        <a href="/queue" class="{{ 'active' if request.url.path.startswith('/queue') else '' }}"><i class="ti ti-activity" aria-hidden="true"></i>Activity</a>
+        <a href="/settings" class="{{ 'active' if request.url.path.startswith('/settings') else '' }}"><i class="ti ti-settings" aria-hidden="true"></i>Settings</a>
+      </nav>
+    </aside>
+    <div class="main-wrap">
+      <div id="topbar" hx-get="/queue/topbar" hx-trigger="load, every 3s" hx-swap="innerHTML"></div>
+      <main>
+        {% block content %}{% endblock %}
+      </main>
+    </div>
+  </div>
 </body>
 </html>
