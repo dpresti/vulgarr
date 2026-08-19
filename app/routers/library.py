@@ -40,6 +40,10 @@ def _qs(params: dict, **overrides) -> str:
     return "?" + urlencode(merged) if merged else ""
 
 
+def _is_htmx(request: Request) -> bool:
+    return request.headers.get("hx-request") == "true"
+
+
 def _outdated_case(current_version: int):
     return case(
         (
@@ -308,7 +312,16 @@ async def library_page(
         current_version = int(await get_setting(session, "wordlist_version"))
         rows, total = await _load_processed(session, current_version, page, q, sort, dir)
 
-    current_params = {"q": q, "page": page, "sort": sort, "dir": dir}
+    current_params = {"q": q, "sort": sort, "dir": dir}
+    next_url = _qs(current_params, page=page + 1) if page * PAGE_SIZE < total else None
+
+    if _is_htmx(request):
+        # A revealed load-more sentinel asking for the next batch -- return just
+        # the new cards (+ a fresh sentinel if there's still more), not the whole page.
+        return templates.TemplateResponse(
+            "partials/poster_grid_items.html",
+            {"request": request, "rows": rows, "from_page": "library", "next_url": next_url},
+        )
 
     def sort_link(key: str) -> str:
         new_dir = "desc" if sort == key and dir == "asc" else "asc"
@@ -321,12 +334,10 @@ async def library_page(
             "q": q or "",
             "movie_rows": rows,
             "movie_total": total,
-            "movie_page": page,
-            "movie_page_size": PAGE_SIZE,
             "movie_sort": sort,
             "movie_dir": dir,
             "movie_sort_link": sort_link,
-            "movie_pager_qs": lambda p: _qs(current_params, page=p),
+            "next_url": next_url,
             "wordlist_version": current_version,
             "severity_options": SEVERITY_OPTIONS,
         },
@@ -345,7 +356,14 @@ async def movies_page(
         current_version = int(await get_setting(session, "wordlist_version"))
         movie_rows, movie_total = await _load_movies(session, current_version, movie_page, q, movie_sort, movie_dir)
 
-    current_params = {"q": q, "movie_page": movie_page, "movie_sort": movie_sort, "movie_dir": movie_dir}
+    current_params = {"q": q, "movie_sort": movie_sort, "movie_dir": movie_dir}
+    next_url = _qs(current_params, movie_page=movie_page + 1) if movie_page * PAGE_SIZE < movie_total else None
+
+    if _is_htmx(request):
+        return templates.TemplateResponse(
+            "partials/poster_grid_items.html",
+            {"request": request, "rows": movie_rows, "next_url": next_url},
+        )
 
     def movie_sort_link(key: str) -> str:
         new_dir = "desc" if movie_sort == key and movie_dir == "asc" else "asc"
@@ -357,13 +375,11 @@ async def movies_page(
             "request": request,
             "q": q or "",
             "movie_rows": movie_rows,
-            "movie_page": movie_page,
             "movie_total": movie_total,
-            "movie_page_size": PAGE_SIZE,
             "movie_sort": movie_sort,
             "movie_dir": movie_dir,
             "movie_sort_link": movie_sort_link,
-            "movie_pager_qs": lambda p: _qs(current_params, movie_page=p),
+            "next_url": next_url,
             "wordlist_version": current_version,
             "severity_options": SEVERITY_OPTIONS,
         },
@@ -382,7 +398,14 @@ async def shows_page(
         current_version = int(await get_setting(session, "wordlist_version"))
         shows, show_total = await _load_shows(session, current_version, show_page, q, show_sort, show_dir)
 
-    current_params = {"q": q, "show_page": show_page, "show_sort": show_sort, "show_dir": show_dir}
+    current_params = {"q": q, "show_sort": show_sort, "show_dir": show_dir}
+    next_url = _qs(current_params, show_page=show_page + 1) if show_page * PAGE_SIZE < show_total else None
+
+    if _is_htmx(request):
+        return templates.TemplateResponse(
+            "partials/poster_grid_shows_items.html",
+            {"request": request, "shows": shows, "next_url": next_url},
+        )
 
     def show_sort_link(key: str) -> str:
         new_dir = "desc" if show_sort == key and show_dir == "asc" else "asc"
@@ -394,13 +417,11 @@ async def shows_page(
             "request": request,
             "q": q or "",
             "shows": shows,
-            "show_page": show_page,
             "show_total": show_total,
-            "show_page_size": PAGE_SIZE,
             "show_sort": show_sort,
             "show_dir": show_dir,
             "show_sort_link": show_sort_link,
-            "show_pager_qs": lambda p: _qs(current_params, show_page=p),
+            "next_url": next_url,
             "wordlist_version": current_version,
             "severity_options": SEVERITY_OPTIONS,
         },

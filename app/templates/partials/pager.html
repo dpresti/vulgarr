@@ -1,8 +1,0 @@
-{% if total > page_size %}
-<div class="muted" style="margin: 0.5rem 0;">
-  {% set last_page = ((total - 1) // page_size) + 1 %}
-  Page {{ page }} of {{ last_page }} ({{ total }} total)
-  {% if page > 1 %}<a href="{{ pager_link(page - 1) }}">&laquo; prev</a>{% endif %}
-  {% if page < last_page %}<a href="{{ pager_link(page + 1) }}">next &raquo;</a>{% endif %}
-</div>
-{% endif %}

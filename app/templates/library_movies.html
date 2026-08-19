@@ -5,16 +5,14 @@
   </div>
 
   <form method="get" action="/library/movies" style="margin: 0.75rem 0;">
-    <input type="text" name="q" placeholder="Search movies…" value="{{ q }}" style="min-width: 320px;">
+    <input type="text" name="q" placeholder="Search movies…" value="{{ q }}" class="wide-input">
     <button type="submit">Search</button>
     {% if q %}<a href="/library/movies" class="btn-link small">Clear</a>{% endif %}
   </form>
 
-  {% with rows=movie_rows %}
+  {% with rows=movie_rows, next_url=next_url %}
     {% include "partials/poster_grid.html" %}
   {% endwith %}
-  {% with total=movie_total, page=movie_page, page_size=movie_page_size, pager_link=movie_pager_qs %}
-    {% include "partials/pager.html" %}
-  {% endwith %}
+  <p class="muted">{{ movie_total }} title(s)</p>
   {% include "partials/pip_legend.html" %}
 {% endblock %}
