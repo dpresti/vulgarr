@@ -71,13 +71,12 @@ cp .env.example .env
 docker compose up -d --build
 ```
 
-Then open `http://<host>:<SPF_PORT>/library` (default port `8011`).
+Then open `http://<host>:<SPF_PORT>/library/movies` (default port `8011`).
 
 ## Wiring into an existing Sonarr/Radarr/Bazarr/Plex/Jellyfin stack
 
 1. **Compose**: [`docker-compose.yml`](docker-compose.yml) joins the same Docker network your Sonarr/Radarr/Bazarr containers are on (`media_default` by default — rename to match yours) so it's reachable from them by container name. Set these in `.env` (copy from [`.env.example`](.env.example); `.env` itself is never committed — see `.gitignore`):
    - `MEDIA_ROOT_HOST_PATH` / `SPF_MEDIA_ROOT` — the host path and matching **container-side** path for your media, which must be the exact same container-side path your Sonarr/Radarr containers already use (this app resolves file paths returned by their APIs directly, so a mismatch means it won't find files that exist). Once you've synced titles, don't change the container-side path later — it's baked into every stored path in the database.
-   - `SECOND_MEDIA_ROOT_HOST_PATH` / `SECOND_MEDIA_ROOT_CONTAINER_PATH` — only needed if your library is split across a second mount that Sonarr/Radarr/Bazarr also mount independently; delete that volume line in `docker-compose.yml` entirely if you only have one media root.
    - `SPF_DATA_DIR` — where the SQLite DB and backups live on the host.
    - `SPF_PORT` — host port to publish the UI on (defaults to 8011).
    - `PUID` / `PGID` — the host user/group (`id -u` / `id -g`) that should own files this container creates under `SPF_DATA_DIR` and your media mounts. Defaults to 1000/1000; set these if your host user is different, otherwise you'll get permission-mismatched files.
@@ -94,7 +93,7 @@ Then open `http://<host>:<SPF_PORT>/library` (default port `8011`).
    ```
    (Bazarr's exact variable names vary by version — check Settings > Subtitles > Custom Post-Processing for the list available in your version and adjust.) Then flip "Bazarr subtitle-downloaded event" on in this app's Settings page if you want this trigger active.
 
-6. **First run**: open `http://<host>:<SPF_PORT>/library` and click "Sync from Sonarr/Radarr" to pull in the existing library (this only reads metadata/paths via the Sonarr/Radarr APIs — it does not process anything). Then go to `/wordlist` and build out your word list before processing anything for real.
+6. **First run**: open `http://<host>:<SPF_PORT>/settings` and click "Sync from Sonarr/Radarr" to pull in the existing library (this only reads metadata/paths via the Sonarr/Radarr APIs — it does not process anything). Then check `/library/movies` or `/library/shows` to see the synced titles, and go to `/wordlist` to build out your word list before processing anything for real.
 
 7. **Plex/Jellyfin**: nothing to configure — once a title has been processed, refresh/rescan that item's metadata (or wait for the next library scan) and the "Clean" audio track will appear in the audio track picker like any other track.
 
