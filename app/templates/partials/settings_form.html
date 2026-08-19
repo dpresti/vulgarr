@@ -50,24 +50,36 @@
     <input type="text" id="sonarr_url" name="sonarr_url" value="{{ values.sonarr_url }}" placeholder="http://sonarr:8989" style="min-width: 320px;">
 
     <label for="sonarr_api_key">Sonarr API key</label>
-    <input type="text" id="sonarr_api_key" name="sonarr_api_key" value="{{ values.sonarr_api_key }}" autocomplete="off" style="min-width: 320px;">
+    <div class="secret-field">
+      <input type="password" id="sonarr_api_key" name="sonarr_api_key" value="{{ values.sonarr_api_key }}" autocomplete="off" style="min-width: 320px;">
+      <button type="button" class="eye-toggle" onclick="toggleSecretVisibility(this)" title="Show/hide" aria-label="Show or hide API key"><i class="ti ti-eye" aria-hidden="true"></i></button>
+    </div>
 
     <label for="radarr_url">Radarr URL</label>
     <input type="text" id="radarr_url" name="radarr_url" value="{{ values.radarr_url }}" placeholder="http://radarr:7878" style="min-width: 320px;">
 
     <label for="radarr_api_key">Radarr API key</label>
-    <input type="text" id="radarr_api_key" name="radarr_api_key" value="{{ values.radarr_api_key }}" autocomplete="off" style="min-width: 320px;">
+    <div class="secret-field">
+      <input type="password" id="radarr_api_key" name="radarr_api_key" value="{{ values.radarr_api_key }}" autocomplete="off" style="min-width: 320px;">
+      <button type="button" class="eye-toggle" onclick="toggleSecretVisibility(this)" title="Show/hide" aria-label="Show or hide API key"><i class="ti ti-eye" aria-hidden="true"></i></button>
+    </div>
 
     <label for="bazarr_url">Bazarr URL</label>
     <input type="text" id="bazarr_url" name="bazarr_url" value="{{ values.bazarr_url }}" placeholder="http://bazarr:6767" style="min-width: 320px;">
 
     <label for="bazarr_api_key">Bazarr API key</label>
-    <input type="text" id="bazarr_api_key" name="bazarr_api_key" value="{{ values.bazarr_api_key }}" autocomplete="off" style="min-width: 320px;">
+    <div class="secret-field">
+      <input type="password" id="bazarr_api_key" name="bazarr_api_key" value="{{ values.bazarr_api_key }}" autocomplete="off" style="min-width: 320px;">
+      <button type="button" class="eye-toggle" onclick="toggleSecretVisibility(this)" title="Show/hide" aria-label="Show or hide API key"><i class="ti ti-eye" aria-hidden="true"></i></button>
+    </div>
 
     <label for="webhook_token">Webhook token</label>
     <div>
-      <input type="text" id="webhook_token" name="webhook_token" value="" placeholder="{{ values.webhook_token }}" autocomplete="off" style="min-width: 320px;">
-      <div class="muted">Append <code>?token=&lt;this&gt;</code> to the Sonarr/Radarr/Bazarr webhook URLs. Shown above as the placeholder -- leave blank to keep it, type a new value to rotate it.</div>
+      <div class="secret-field">
+        <input type="password" id="webhook_token" name="webhook_token" value="{{ values.webhook_token }}" autocomplete="off" style="min-width: 320px;">
+        <button type="button" class="eye-toggle" onclick="toggleSecretVisibility(this)" title="Show/hide" aria-label="Show or hide webhook token"><i class="ti ti-eye" aria-hidden="true"></i></button>
+      </div>
+      <div class="muted">Append <code>?token=&lt;this&gt;</code> to the Sonarr/Radarr/Bazarr webhook URLs. Edit and save to rotate it.</div>
     </div>
 
     <label for="default_subtitle_language">Default subtitle language</label>
