@@ -102,6 +102,9 @@
     .search-bar { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; margin: 0.75rem 0; }
     .search-bar input[type=text] { flex: 1; min-width: 120px; }
     .table-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+    /* Desktop keeps the real separate stat columns; mobile folds them into one
+       summary line instead (see .card-grid td.stat-cell-hide-mobile). */
+    .mobile-only-summary { display: none; }
     table { width: 100%; border-collapse: collapse; margin-top: 1rem; }
     th, td { text-align: left; padding: 0.45rem 0.75rem; border-bottom: 1px solid var(--vulgarr-border); vertical-align: middle; }
     th { color: var(--vulgarr-text-secondary); font-size: 0.85rem; text-transform: uppercase; }
@@ -338,6 +341,42 @@
          non-mobile <table> too). */
       .responsive-table .card-grid-reorder td:nth-child(3) { order: 4; }
       .responsive-table .card-grid-reorder td:nth-child(4) { order: 3; }
+      /* A field that should keep spanning the full card width even inside a
+         2-column grid table (a merged summary line, typically). */
+      .responsive-table .card-grid td.span-full { grid-column: 1 / -1; }
+      /* Stat columns folded into a single mobile-only summary line (see
+         span-full/mobile-only-summary below) -- still real <td>s so the
+         non-mobile <table> keeps its normal separate columns. */
+      .responsive-table .card-grid td.stat-cell-hide-mobile { display: none !important; }
+
+      /* ---- mobile: Word List reads better as one compact row per term than
+         a 2x2 grid -- everything (term, severity, enabled, delete) on a
+         single line, icon-only Delete to make room. ---- */
+      .responsive-table .card-row tr { display: flex; align-items: center; gap: 0.5rem; padding: 0.5rem 0.65rem; }
+      .responsive-table .card-row td { display: block; padding: 0; }
+      .responsive-table .card-row td::before { display: none; }
+      .responsive-table .card-row td:first-child {
+        flex: 1; min-width: 0; font-weight: 600;
+        overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+      }
+      .responsive-table .card-row .severity-checks { gap: 0.4rem; font-size: 0.78rem; white-space: nowrap; }
+      .responsive-table .card-row button { padding: 0.28rem 0.5rem; font-size: 0.78rem; white-space: nowrap; }
+      .responsive-table .card-row button i { font-size: 0.95rem; }
+      .responsive-table .card-row .btn-label { display: none; }
+
+      /* ---- mobile: the season/show-detail table's whole card should feel
+         tappable (it already looks like a button/card), not just the small
+         "Season N" text inside it -- a transparent full-card overlay on the
+         link handles that, while explicitly raising the real controls
+         (checkboxes/buttons) above it so they still get their own taps. ---- */
+      .responsive-table .card-tap tr { position: relative; }
+      .responsive-table .card-tap td:first-child a.title-link { position: static; }
+      .responsive-table .card-tap td:first-child a.title-link::after {
+        content: ""; position: absolute; inset: 0; z-index: 1;
+      }
+      .responsive-table .card-tap td form, .responsive-table .card-tap td button {
+        position: relative; z-index: 2;
+      }
     }
 
     /* A second, tighter tier for the smallest phones (e.g. iPhone SE-class,
