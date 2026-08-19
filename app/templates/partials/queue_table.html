@@ -5,6 +5,7 @@
   {% endif %}
 
   <h3>Active</h3>
+  <div class="table-scroll">
   <table>
     <thead><tr><th>Title</th><th>State</th><th>Trigger</th><th>Progress</th><th></th></tr></thead>
     <tbody>
@@ -36,9 +37,11 @@
       {% endfor %}
     </tbody>
   </table>
+  </div>
 
   <h3>Waiting on Sonarr/Radarr/Bazarr</h3>
   <p class="muted">Not counted against the concurrency limit -- no ffmpeg work is happening yet.</p>
+  <div class="table-scroll">
   <table>
     <thead><tr><th>Title</th><th>Status</th><th>Since</th></tr></thead>
     <tbody>
@@ -59,8 +62,10 @@
       {% endfor %}
     </tbody>
   </table>
+  </div>
 
   <h3>Recent</h3>
+  <div class="table-scroll">
   <table>
     <thead><tr><th>Title</th><th>State</th><th>Trigger</th><th>Result</th></tr></thead>
     <tbody>
@@ -76,4 +81,5 @@
       {% endfor %}
     </tbody>
   </table>
+  </div>
 </div>
