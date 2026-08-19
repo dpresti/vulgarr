@@ -46,7 +46,12 @@
       --vulgarr-nosub-bg: #4D4A1F;
       --vulgarr-nosub-text: #E8D44D;
     }
-    body { font-family: system-ui, sans-serif; margin: 0; background: var(--vulgarr-bg-main); color: var(--vulgarr-text-primary); }
+    /* Defense in depth: several places surface raw external text -- ffmpeg
+       errors, Sonarr/Radarr/Bazarr exception messages, file paths -- that can
+       be one long unbroken string with no natural wrap point. Inherited
+       site-wide so nothing has to remember to add this per-element; it's a
+       no-op for ordinary text. */
+    body { font-family: system-ui, sans-serif; margin: 0; background: var(--vulgarr-bg-main); color: var(--vulgarr-text-primary); overflow-wrap: break-word; }
     .app-layout { display: flex; min-height: 100vh; }
     .sidebar { width: 220px; flex-shrink: 0; background: var(--vulgarr-bg-surface); border-right: 1px solid var(--vulgarr-border); padding: 1.25rem 0; position: relative; transition: width .15s ease; }
     .sidebar-brand { display: block; text-align: center; padding: 0 1rem 1.25rem; border-bottom: 1px solid var(--vulgarr-border); margin-bottom: 0.75rem; text-decoration: none; }
@@ -276,14 +281,28 @@
       /* ---- mobile: data tables become stacked cards instead of a table that
          only works by scrolling sideways -- each <td> keeps its column header
          as a label via data-label, driven by CSS content, no JS needed. ---- */
-      .responsive-table table { border-collapse: separate; border-spacing: 0; margin-top: 0.75rem; }
+      /* The <table> element itself must switch to display:block too -- leaving
+         it as display:table while only its tbody/tr/td go display:block means
+         the browser still runs its native table-layout sizing algorithm off
+         the (now-detached) row/cell structure, which can compute a wildly
+         wrong intrinsic width (observed: one table rendered ~17700px wide
+         instead of ~360px) -- invisible in whole-page scroll checks because
+         it's trapped inside .table-scroll's own overflow-x:auto, but very
+         visible to an actual user as blank scrollable space. */
+      .responsive-table table { display: block; width: 100%; border-collapse: separate; border-spacing: 0; margin-top: 0.75rem; }
       .responsive-table thead { display: none; }
-      .responsive-table tbody, .responsive-table tr, .responsive-table td { display: block; width: 100%; }
+      .responsive-table tbody, .responsive-table tr, .responsive-table td { display: block; width: 100%; box-sizing: border-box; }
       .responsive-table tr {
         border: 1px solid var(--vulgarr-border); border-radius: 8px;
         margin-bottom: 0.75rem; padding: 0.6rem 0.8rem; background: var(--vulgarr-bg-surface);
       }
-      .responsive-table td { border: none; padding: 0.35rem 0; text-align: left; }
+      /* overflow-wrap matters here specifically -- error/result messages (e.g.
+         a raw ffmpeg failure with a long file path) can be one long unbroken
+         string with no natural wrap point. Without this, that text silently
+         overflows its own box without making the box itself measurably wider
+         (invisible to a bounding-box check), dragging the whole scrollable
+         card region out with it. */
+      .responsive-table td { border: none; padding: 0.35rem 0; text-align: left; overflow-wrap: anywhere; }
       .responsive-table td::before {
         content: attr(data-label); display: block; font-weight: 700; font-size: 0.68rem;
         text-transform: uppercase; letter-spacing: 0.03em; color: var(--vulgarr-text-secondary);
