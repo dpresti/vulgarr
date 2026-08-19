@@ -1,6 +1,6 @@
 <tr id="title-row-{{ row.title.id }}">
   {% set current_levels = row.title.severity_levels.split(',') %}
-  <td>{{ row.title.display_name }}</td>
+  <td>{{ row.display_name }}</td>
   <td>
     <span class="badge badge-{{ row.status }}">{{ row.status.replace('_', ' ') }}</span>
     {% if row.outdated %}<span class="badge badge-outdated">outdated</span>{% endif %}
@@ -15,7 +15,6 @@
   </td>
   <td class="muted">{{ row.title.matched_cue_count if row.title.matched_cue_count is not none else '—' }}</td>
   <td>
-    {% if row.title.media_type.value == 'movie' %}
     <form hx-post="/library/{{ row.title.id }}/severity" hx-target="#title-row-{{ row.title.id }}" hx-swap="outerHTML">
       <span class="severity-checks">
         <label><input type="checkbox" name="sev_mild" {% if 'mild' in current_levels %}checked{% endif %} onchange="this.form.requestSubmit()"> mild</label>
@@ -33,20 +32,13 @@
     {% elif not row.is_mkv and row.status == 'awaiting_mkv' %}
     <div class="muted" style="margin-top: 0.3rem;">Awaiting .mkv replacement from Sonarr/Radarr…</div>
     {% endif %}
-    {% else %}
-      <span class="muted">{{ row.title.severity_levels.replace(',', ', ') }}</span>
-    {% endif %}
   </td>
   <td>
-    {% if row.title.media_type.value == 'movie' %}
     <form hx-post="/library/{{ row.title.id }}/toggle-precise" hx-target="#title-row-{{ row.title.id }}" hx-swap="outerHTML">
       <button type="submit" class="small {{ 'secondary' if not row.title.precise_mute else '' }}" title="Mute a narrow window around each word instead of the whole subtitle line">
         {{ 'precise' if row.title.precise_mute else 'whole line' }}
       </button>
     </form>
-    {% else %}
-      <span class="muted">{{ 'precise' if row.title.precise_mute else 'whole line' }}</span>
-    {% endif %}
   </td>
   <td>
     <div class="row-actions">

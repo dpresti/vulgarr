@@ -8,6 +8,7 @@
       <th><a href="{{ show_sort_link('failed_count') }}">Failed{% if show_sort == 'failed_count' %} {{ '▲' if show_dir == 'asc' else '▼' }}{% endif %}</a></th>
       <th><a href="{{ show_sort_link('outdated_count') }}">Outdated{% if show_sort == 'outdated_count' %} {{ '▲' if show_dir == 'asc' else '▼' }}{% endif %}</a></th>
       <th>Severity</th>
+      <th>Precision</th>
       <th></th>
     </tr>
   </thead>
@@ -21,10 +22,11 @@
       <td class="muted">{{ show.failed_count }}</td>
       <td>{% if show.outdated_count %}<span class="badge badge-outdated">{{ show.outdated_count }} outdated</span>{% else %}<span class="muted">—</span>{% endif %}</td>
       <td class="muted">{{ show.severity_levels.replace(',', ', ') if show.severity_levels else '—' }}</td>
+      <td class="muted">{{ 'precise' if show.precise_mute else 'whole line' }}</td>
       <td><a href="/library/shows/{{ show.sonarr_series_id }}"><button type="button">View seasons</button></a></td>
     </tr>
     {% else %}
-    <tr><td colspan="8" class="muted">No shows found.</td></tr>
+    <tr><td colspan="9" class="muted">No shows found.</td></tr>
     {% endfor %}
   </tbody>
 </table>

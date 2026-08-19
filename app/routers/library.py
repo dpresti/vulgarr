@@ -15,7 +15,7 @@ from app.integrations.bazarr import BazarrClient
 from app.integrations.radarr import RadarrClient
 from app.integrations.sonarr import SonarrClient
 from app.integrations.subtitle_lookup import find_subtitle_for_video
-from app.library import is_outdated, sync_radarr_library, sync_sonarr_library
+from app.library import enqueue_if_not_already_active, is_outdated, sync_radarr_library, sync_sonarr_library
 from app.queue.worker import job_queue
 
 router = APIRouter(prefix="/library", tags=["library"])
@@ -52,7 +52,21 @@ def _outdated_case(current_version: int):
     )
 
 
-def _row_dict(title: Title, current_version: int, bazarr_message: str | None = None) -> dict:
+def _short_episode_label(title: Title) -> str:
+    """Episode display_name is stored as "{series} - S{ss}E{ee} - {episode title}"
+    (see app/library.py upsert_title). Within a season page the series+season are
+    already shown in the breadcrumb/heading, so strip that prefix back off rather
+    than repeating it on every row."""
+    if title.season_number is None or title.episode_number is None:
+        return title.display_name
+    prefix = f"{title.series_title} - S{title.season_number:02d}E{title.episode_number:02d} - "
+    suffix = title.display_name[len(prefix):] if title.display_name.startswith(prefix) else title.display_name
+    return f"E{title.episode_number:02d} - {suffix}"
+
+
+def _row_dict(
+    title: Title, current_version: int, bazarr_message: str | None = None, short_label: bool = False
+) -> dict:
     # subtitle_path can go stale if the .srt is deleted/moved outside the app (e.g.
     # manually removed from Bazarr) -- check the file is actually still there rather
     # than trusting the DB column, so the UI doesn't keep showing "yes" for a ghost path.
@@ -71,8 +85,13 @@ def _row_dict(title: Title, current_version: int, bazarr_message: str | None = N
             "Search for an .mkv replacement below to get all selected tracks."
         )
 
+    display_name = (
+        _short_episode_label(title) if short_label and title.media_type == MediaType.episode else title.display_name
+    )
+
     return {
         "title": title,
+        "display_name": display_name,
         "status": title.status,
         "outdated": is_outdated(title, current_version),
         "bazarr_message": bazarr_message,
@@ -110,6 +129,28 @@ async def _load_movies(
     return rows, total
 
 
+async def _load_processed(
+    session, current_version: int, page: int, q: str | None, sort: str | None, sort_dir: str
+) -> tuple[list[dict], int]:
+    """Every fully-processed title (movie or episode) -- the combined view shown at
+    the main /library route, per the sidebar's "Library" item being distinct from
+    the "Movies"/"TV Shows" sub-items (which list everything, not just done ones)."""
+    base: Select = select(Title).where(Title.status == "done")
+    if q:
+        base = base.where(Title.display_name.like(f"%{_escape_like(q)}%", escape="\\"))
+
+    total = (await session.execute(select(func.count()).select_from(base.subquery()))).scalar_one()
+
+    sort_col = MOVIE_SORT_COLUMNS.get(sort, Title.display_name)
+    order = sort_col.desc() if sort_dir == "desc" else sort_col.asc()
+
+    result = await session.execute(
+        base.order_by(order, Title.display_name.collate("NOCASE")).offset((page - 1) * PAGE_SIZE).limit(PAGE_SIZE)
+    )
+    rows = [_row_dict(t, current_version) for t in result.scalars().all()]
+    return rows, total
+
+
 SHOW_SORT_KEYS = {"name", "total", "done_count", "active_count", "failed_count", "outdated_count"}
 
 
@@ -123,7 +164,11 @@ async def _load_shows(
     failed_col = func.sum(case((Title.status == "failed", 1), else_=0)).label("failed_count")
     active_col = func.sum(case((Title.status.in_(["queued", "processing"]), 1), else_=0)).label("active_count")
     outdated_col = func.sum(outdated_expr).label("outdated_count")
+    # Representative (not a true aggregate) values -- a show's episodes could have
+    # mixed settings once per-episode editing exists, same caveat as severity_levels
+    # already had below.
     severity_col = func.min(Title.severity_levels).label("severity_levels")
+    precise_col = func.min(Title.precise_mute).label("precise_mute")
 
     query = select(
         Title.sonarr_series_id,
@@ -134,6 +179,7 @@ async def _load_shows(
         active_col,
         outdated_col,
         severity_col,
+        precise_col,
     ).where(Title.media_type == MediaType.episode)
 
     if q:
@@ -191,38 +237,62 @@ async def _load_seasons(session, series_id: int, current_version: int) -> tuple[
 async def library_page(
     request: Request,
     q: str | None = None,
+    page: int = 1,
+    sort: str | None = None,
+    dir: str = "asc",
+):
+    """The main sidebar "Library" item -- every fully-processed title, movies and
+    episodes combined. Distinct from the "Movies"/"TV Shows" sub-items, which list
+    everything regardless of processing status."""
+    async with get_session() as session:
+        current_version = int(await get_setting(session, "wordlist_version"))
+        rows, total = await _load_processed(session, current_version, page, q, sort, dir)
+
+    current_params = {"q": q, "page": page, "sort": sort, "dir": dir}
+
+    def sort_link(key: str) -> str:
+        new_dir = "desc" if sort == key and dir == "asc" else "asc"
+        return _qs(current_params, sort=key, dir=new_dir, page=1)
+
+    return templates.TemplateResponse(
+        "library_processed.html",
+        {
+            "request": request,
+            "q": q or "",
+            "movie_rows": rows,
+            "movie_total": total,
+            "movie_page": page,
+            "movie_page_size": PAGE_SIZE,
+            "movie_sort": sort,
+            "movie_dir": dir,
+            "movie_sort_link": sort_link,
+            "movie_pager_qs": lambda p: _qs(current_params, page=p),
+            "wordlist_version": current_version,
+            "severity_options": SEVERITY_OPTIONS,
+        },
+    )
+
+
+@router.get("/movies", response_class=HTMLResponse)
+async def movies_page(
+    request: Request,
+    q: str | None = None,
     movie_page: int = 1,
     movie_sort: str | None = None,
     movie_dir: str = "asc",
-    show_page: int = 1,
-    show_sort: str | None = None,
-    show_dir: str = "asc",
 ):
     async with get_session() as session:
         current_version = int(await get_setting(session, "wordlist_version"))
         movie_rows, movie_total = await _load_movies(session, current_version, movie_page, q, movie_sort, movie_dir)
-        shows, show_total = await _load_shows(session, current_version, show_page, q, show_sort, show_dir)
 
-    current_params = {
-        "q": q,
-        "movie_page": movie_page,
-        "movie_sort": movie_sort,
-        "movie_dir": movie_dir,
-        "show_page": show_page,
-        "show_sort": show_sort,
-        "show_dir": show_dir,
-    }
+    current_params = {"q": q, "movie_page": movie_page, "movie_sort": movie_sort, "movie_dir": movie_dir}
 
     def movie_sort_link(key: str) -> str:
         new_dir = "desc" if movie_sort == key and movie_dir == "asc" else "asc"
         return _qs(current_params, movie_sort=key, movie_dir=new_dir, movie_page=1)
 
-    def show_sort_link(key: str) -> str:
-        new_dir = "desc" if show_sort == key and show_dir == "asc" else "asc"
-        return _qs(current_params, show_sort=key, show_dir=new_dir, show_page=1)
-
     return templates.TemplateResponse(
-        "library.html",
+        "library_movies.html",
         {
             "request": request,
             "q": q or "",
@@ -234,6 +304,35 @@ async def library_page(
             "movie_dir": movie_dir,
             "movie_sort_link": movie_sort_link,
             "movie_pager_qs": lambda p: _qs(current_params, movie_page=p),
+            "wordlist_version": current_version,
+            "severity_options": SEVERITY_OPTIONS,
+        },
+    )
+
+
+@router.get("/shows", response_class=HTMLResponse)
+async def shows_page(
+    request: Request,
+    q: str | None = None,
+    show_page: int = 1,
+    show_sort: str | None = None,
+    show_dir: str = "asc",
+):
+    async with get_session() as session:
+        current_version = int(await get_setting(session, "wordlist_version"))
+        shows, show_total = await _load_shows(session, current_version, show_page, q, show_sort, show_dir)
+
+    current_params = {"q": q, "show_page": show_page, "show_sort": show_sort, "show_dir": show_dir}
+
+    def show_sort_link(key: str) -> str:
+        new_dir = "desc" if show_sort == key and show_dir == "asc" else "asc"
+        return _qs(current_params, show_sort=key, show_dir=new_dir, show_page=1)
+
+    return templates.TemplateResponse(
+        "library_shows.html",
+        {
+            "request": request,
+            "q": q or "",
             "shows": shows,
             "show_page": show_page,
             "show_total": show_total,
@@ -255,6 +354,45 @@ async def _current_show_severity(session, series_id: int) -> str:
         .limit(1)
     )
     return result.scalar_one_or_none() or Severity.mild.value
+
+
+async def _current_season_severity(session, series_id: int, season_number: int) -> str:
+    result = await session.execute(
+        select(Title.severity_levels)
+        .where(Title.sonarr_series_id == series_id, Title.season_number == season_number)
+        .limit(1)
+    )
+    return result.scalar_one_or_none() or Severity.mild.value
+
+
+async def _current_season_precise_mute(session, series_id: int, season_number: int) -> bool:
+    result = await session.execute(
+        select(Title.precise_mute)
+        .where(Title.sonarr_series_id == series_id, Title.season_number == season_number)
+        .limit(1)
+    )
+    return bool(result.scalar_one_or_none())
+
+
+async def _non_mkv_gating_message(session, *conditions, levels: str) -> str | None:
+    """Same gating concept as the per-movie one in _row_dict, but for a bulk
+    show/season action: how many of the affected episodes aren't .mkv and will
+    therefore only get a single track (the most inclusive level selected) instead
+    of the full set, until each gets replaced."""
+    if len(levels.split(",")) <= 1:
+        return None
+    total = (await session.execute(select(func.count()).where(*conditions))).scalar_one()
+    non_mkv = (
+        await session.execute(
+            select(func.count()).where(*conditions, func.lower(Title.video_path).notlike("%.mkv"))
+        )
+    ).scalar_one()
+    if not non_mkv:
+        return None
+    return (
+        f"{non_mkv} of {total} episode(s) aren't .mkv and will only get a single track "
+        f"(the most inclusive level selected) until replaced."
+    )
 
 
 @router.get("/shows/{series_id}", response_class=HTMLResponse)
@@ -293,7 +431,9 @@ async def season_detail(request: Request, series_id: int, season_number: int):
             .where(Title.sonarr_series_id == series_id, Title.season_number == season_number)
             .order_by(Title.episode_number)
         )
-        rows = [_row_dict(t, current_version) for t in result.scalars().all()]
+        rows = [_row_dict(t, current_version, short_label=True) for t in result.scalars().all()]
+        current_severity = await _current_season_severity(session, series_id, season_number)
+        current_precise_mute = await _current_season_precise_mute(session, series_id, season_number)
 
     return templates.TemplateResponse(
         "season_detail.html",
@@ -304,6 +444,8 @@ async def season_detail(request: Request, series_id: int, season_number: int):
             "season_number": season_number,
             "rows": rows,
             "severity_options": SEVERITY_OPTIONS,
+            "current_severity": current_severity,
+            "current_precise_mute": current_precise_mute,
         },
     )
 
@@ -332,6 +474,87 @@ async def process_title(request: Request, title_id: int):
 
     return templates.TemplateResponse(
         "partials/title_row.html", {"request": request, "row": row, "severity_options": SEVERITY_OPTIONS}
+    )
+
+
+async def _bulk_enqueue_titles(session, *conditions) -> tuple[int, int]:
+    """Enqueue every title matching conditions that has a real subtitle file on disk
+    and isn't already queued/processing. Returns (queued_count, skipped_count) --
+    skipped titles have no subtitle yet, so use Search Bazarr & Process on them
+    individually rather than silently failing them here."""
+    result = await session.execute(select(Title).where(*conditions))
+    titles = result.scalars().all()
+    queued = 0
+    skipped = 0
+    for title in titles:
+        if not (title.subtitle_path and Path(title.subtitle_path).exists()):
+            skipped += 1
+            continue
+        await enqueue_if_not_already_active(title.id, TriggerSource.manual)
+        queued += 1
+    return queued, skipped
+
+
+def _process_message(queued: int, skipped: int) -> str:
+    message = f"Queued {queued} episode(s)."
+    if skipped:
+        message += f" Skipped {skipped} with no subtitle -- use Search Bazarr & Process on those individually."
+    return message
+
+
+@router.post("/shows/{series_id}/process", response_class=HTMLResponse)
+async def process_show(request: Request, series_id: int):
+    conditions = (Title.sonarr_series_id == series_id, Title.media_type == MediaType.episode)
+    async with get_session() as session:
+        queued, skipped = await _bulk_enqueue_titles(session, *conditions)
+        current_version = int(await get_setting(session, "wordlist_version"))
+        series_title, seasons = await _load_seasons(session, series_id, current_version)
+        current_severity = await _current_show_severity(session, series_id)
+        current_precise_mute = await _current_show_precise_mute(session, series_id)
+
+    return templates.TemplateResponse(
+        "show_detail.html",
+        {
+            "request": request,
+            "series_id": series_id,
+            "series_title": series_title,
+            "seasons": seasons,
+            "severity_options": SEVERITY_OPTIONS,
+            "current_severity": current_severity,
+            "current_precise_mute": current_precise_mute,
+            "process_message": _process_message(queued, skipped),
+        },
+    )
+
+
+@router.post("/shows/{series_id}/season/{season_number}/process", response_class=HTMLResponse)
+async def process_season(request: Request, series_id: int, season_number: int):
+    conditions = (Title.sonarr_series_id == series_id, Title.season_number == season_number)
+    async with get_session() as session:
+        queued, skipped = await _bulk_enqueue_titles(session, *conditions)
+        current_version = int(await get_setting(session, "wordlist_version"))
+        name_result = await session.execute(
+            select(Title.series_title).where(Title.sonarr_series_id == series_id).limit(1)
+        )
+        series_title = name_result.scalar_one_or_none()
+        result = await session.execute(select(Title).where(*conditions).order_by(Title.episode_number))
+        rows = [_row_dict(t, current_version, short_label=True) for t in result.scalars().all()]
+        current_severity = await _current_season_severity(session, series_id, season_number)
+        current_precise_mute = await _current_season_precise_mute(session, series_id, season_number)
+
+    return templates.TemplateResponse(
+        "season_detail.html",
+        {
+            "request": request,
+            "series_id": series_id,
+            "series_title": series_title,
+            "season_number": season_number,
+            "rows": rows,
+            "severity_options": SEVERITY_OPTIONS,
+            "current_severity": current_severity,
+            "current_precise_mute": current_precise_mute,
+            "process_message": _process_message(queued, skipped),
+        },
     )
 
 
@@ -374,16 +597,14 @@ async def set_show_severity(
     sev_strong: bool = Form(False),
 ):
     levels = _severity_levels_from_checkboxes(sev_mild, sev_moderate, sev_strong)
+    conditions = (Title.sonarr_series_id == series_id, Title.media_type == MediaType.episode)
     async with get_session() as session:
-        await session.execute(
-            update(Title)
-            .where(Title.sonarr_series_id == series_id, Title.media_type == MediaType.episode)
-            .values(severity_levels=levels)
-        )
+        await session.execute(update(Title).where(*conditions).values(severity_levels=levels))
         await session.commit()
         current_version = int(await get_setting(session, "wordlist_version"))
         series_title, seasons = await _load_seasons(session, series_id, current_version)
         current_precise_mute = await _current_show_precise_mute(session, series_id)
+        gating_message = await _non_mkv_gating_message(session, *conditions, levels=levels)
 
     return templates.TemplateResponse(
         "show_detail.html",
@@ -396,6 +617,50 @@ async def set_show_severity(
             "current_severity": levels,
             "current_precise_mute": current_precise_mute,
             "severity_saved": True,
+            "gating_message": gating_message,
+        },
+    )
+
+
+@router.post("/shows/{series_id}/season/{season_number}/severity", response_class=HTMLResponse)
+async def set_season_severity(
+    request: Request,
+    series_id: int,
+    season_number: int,
+    sev_mild: bool = Form(False),
+    sev_moderate: bool = Form(False),
+    sev_strong: bool = Form(False),
+):
+    levels = _severity_levels_from_checkboxes(sev_mild, sev_moderate, sev_strong)
+    conditions = (Title.sonarr_series_id == series_id, Title.season_number == season_number)
+    async with get_session() as session:
+        await session.execute(update(Title).where(*conditions).values(severity_levels=levels))
+        await session.commit()
+        current_version = int(await get_setting(session, "wordlist_version"))
+        name_result = await session.execute(
+            select(Title.series_title).where(Title.sonarr_series_id == series_id).limit(1)
+        )
+        series_title = name_result.scalar_one_or_none()
+        result = await session.execute(
+            select(Title).where(*conditions).order_by(Title.episode_number)
+        )
+        rows = [_row_dict(t, current_version, short_label=True) for t in result.scalars().all()]
+        current_precise_mute = await _current_season_precise_mute(session, series_id, season_number)
+        gating_message = await _non_mkv_gating_message(session, *conditions, levels=levels)
+
+    return templates.TemplateResponse(
+        "season_detail.html",
+        {
+            "request": request,
+            "series_id": series_id,
+            "series_title": series_title,
+            "season_number": season_number,
+            "rows": rows,
+            "severity_options": SEVERITY_OPTIONS,
+            "current_severity": levels,
+            "current_precise_mute": current_precise_mute,
+            "severity_saved": True,
+            "gating_message": gating_message,
         },
     )
 
@@ -444,6 +709,46 @@ async def set_show_precise_mute(request: Request, series_id: int, precise_mute: 
             "series_id": series_id,
             "series_title": series_title,
             "seasons": seasons,
+            "severity_options": SEVERITY_OPTIONS,
+            "current_severity": current_severity,
+            "current_precise_mute": precise_mute,
+            "severity_saved": True,
+        },
+    )
+
+
+@router.post("/shows/{series_id}/season/{season_number}/toggle-precise", response_class=HTMLResponse)
+async def set_season_precise_mute(
+    request: Request, series_id: int, season_number: int, precise_mute: bool = Form(False)
+):
+    async with get_session() as session:
+        await session.execute(
+            update(Title)
+            .where(Title.sonarr_series_id == series_id, Title.season_number == season_number)
+            .values(precise_mute=precise_mute)
+        )
+        await session.commit()
+        current_version = int(await get_setting(session, "wordlist_version"))
+        name_result = await session.execute(
+            select(Title.series_title).where(Title.sonarr_series_id == series_id).limit(1)
+        )
+        series_title = name_result.scalar_one_or_none()
+        result = await session.execute(
+            select(Title)
+            .where(Title.sonarr_series_id == series_id, Title.season_number == season_number)
+            .order_by(Title.episode_number)
+        )
+        rows = [_row_dict(t, current_version, short_label=True) for t in result.scalars().all()]
+        current_severity = await _current_season_severity(session, series_id, season_number)
+
+    return templates.TemplateResponse(
+        "season_detail.html",
+        {
+            "request": request,
+            "series_id": series_id,
+            "series_title": series_title,
+            "season_number": season_number,
+            "rows": rows,
             "severity_options": SEVERITY_OPTIONS,
             "current_severity": current_severity,
             "current_precise_mute": precise_mute,

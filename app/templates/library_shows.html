@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+{% block content %}
+  <div class="toolbar">
+    <h1>TV Shows</h1>
+    <div>
+      <span class="muted">Word list version: v{{ wordlist_version }}</span>
+      <form method="post" action="/library/sync" style="display:inline">
+        <button type="submit">Sync from Sonarr/Radarr</button>
+      </form>
+    </div>
+  </div>
+
+  <form method="get" action="/library/shows" style="margin: 0.75rem 0;">
+    <input type="text" name="q" placeholder="Search shows…" value="{{ q }}" style="min-width: 320px;">
+    <button type="submit">Search</button>
+    {% if q %}<a href="/library/shows" class="muted">clear</a>{% endif %}
+  </form>
+
+  {% include "partials/shows_table.html" %}
+  {% with total=show_total, page=show_page, page_size=show_page_size, pager_link=show_pager_qs %}
+    {% include "partials/pager.html" %}
+  {% endwith %}
+{% endblock %}
