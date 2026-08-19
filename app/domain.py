@@ -9,34 +9,33 @@ class MediaType(str, enum.Enum):
 
 
 class Severity(str, enum.Enum):
-    mild = "mild"          # e.g. "butt", "poop"
-    moderate = "moderate"  # e.g. "damn", "hell"
-    strong = "strong"      # hard profanity
+    child = "child"  # kid-safe: mutes everything (was "mild")
+    teen = "teen"    # teen-safe: mutes only what used to be tagged moderate/strong
 
 
 # Ordering for severity-level filtering: a track generated at a given level mutes
-# every severity at or above that rank (e.g. a "moderate" track mutes moderate+strong,
-# skips mild).
-SEVERITY_RANK: dict[Severity, int] = {Severity.mild: 0, Severity.moderate: 1, Severity.strong: 2}
+# every severity at or above that rank (e.g. a "teen" track mutes only teen-tagged
+# words, skipping child-tagged ones).
+SEVERITY_RANK: dict[Severity, int] = {Severity.child: 0, Severity.teen: 1}
 
 # Fixed canonical order multi-track output always uses, regardless of selection order --
-# lets users learn "1st clean track is always Mild" without depending on file-embedded
+# lets users learn "1st clean track is always Child" without depending on file-embedded
 # labels, which aren't reliable on every container/muxer.
-SEVERITY_CANONICAL_ORDER: list[Severity] = [Severity.mild, Severity.moderate, Severity.strong]
+SEVERITY_CANONICAL_ORDER: list[Severity] = [Severity.child, Severity.teen]
 
 
 def parse_severity_levels(value: str) -> list[Severity]:
     """Parse a comma-separated severity_levels string into canonical-order Severity list."""
     if not value:
-        return [Severity.mild]
+        return [Severity.child]
     selected = {v.strip() for v in value.split(",") if v.strip()}
     levels = [s for s in SEVERITY_CANONICAL_ORDER if s.value in selected]
-    return levels or [Severity.mild]
+    return levels or [Severity.child]
 
 
 def serialize_severity_levels(levels: list[Severity]) -> str:
     ordered = [s for s in SEVERITY_CANONICAL_ORDER if s in levels]
-    return ",".join(s.value for s in ordered) or Severity.mild.value
+    return ",".join(s.value for s in ordered) or Severity.child.value
 
 
 def parse_index_list(value: str | None) -> list[int]:

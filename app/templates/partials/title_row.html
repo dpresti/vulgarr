@@ -18,9 +18,8 @@
     <form hx-post="/library/{{ row.title.id }}/severity" hx-target="#title-row-{{ row.title.id }}" hx-swap="outerHTML">
       {% if season_context %}<input type="hidden" name="short_label" value="true">{% endif %}
       <span class="severity-checks">
-        <label><input type="checkbox" name="sev_mild" {% if 'mild' in current_levels %}checked{% endif %} onchange="this.form.requestSubmit()"> mild</label>
-        <label><input type="checkbox" name="sev_moderate" {% if 'moderate' in current_levels %}checked{% endif %} onchange="this.form.requestSubmit()"> moderate</label>
-        <label><input type="checkbox" name="sev_strong" {% if 'strong' in current_levels %}checked{% endif %} onchange="this.form.requestSubmit()"> strong</label>
+        <label><input type="checkbox" name="sev_child" {% if 'child' in current_levels %}checked{% endif %} onchange="this.form.requestSubmit()"> child</label>
+        <label><input type="checkbox" name="sev_teen" {% if 'teen' in current_levels %}checked{% endif %} onchange="this.form.requestSubmit()"> teen</label>
       </span>
     </form>
     {% if row.severity_error %}

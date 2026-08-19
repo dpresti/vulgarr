@@ -52,7 +52,7 @@ def effective_severity_levels(video_path: str, severity_levels: list[Severity] |
     require .mkv; on other file types the saved multi-level selection is preserved (not
     lost) but only the single most inclusive level is generated until an .mkv
     replacement is available."""
-    levels = [s for s in SEVERITY_CANONICAL_ORDER if s in (severity_levels or [Severity.mild])] or [Severity.mild]
+    levels = [s for s in SEVERITY_CANONICAL_ORDER if s in (severity_levels or [Severity.child])] or [Severity.child]
     if len(levels) > 1 and not is_mkv_path(video_path):
         return [levels[0]]
     return levels
@@ -65,7 +65,7 @@ class ProcessingOutcome:
     clean_track_indices: list[int]
 
 
-async def load_active_terms(session: AsyncSession, min_severity: Severity = Severity.mild) -> list[WordListTerm]:
+async def load_active_terms(session: AsyncSession, min_severity: Severity = Severity.child) -> list[WordListTerm]:
     result = await session.execute(select(WordListEntry).where(WordListEntry.enabled.is_(True)))
     min_rank = SEVERITY_RANK[min_severity]
     return [

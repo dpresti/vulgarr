@@ -25,8 +25,8 @@ PAGE_SIZE = 100
 SEVERITY_OPTIONS = list(Severity)
 
 
-def _severity_levels_from_checkboxes(sev_mild: bool, sev_moderate: bool, sev_strong: bool) -> str:
-    levels = [s for s, checked in [(Severity.mild, sev_mild), (Severity.moderate, sev_moderate), (Severity.strong, sev_strong)] if checked]
+def _severity_levels_from_checkboxes(sev_child: bool, sev_teen: bool) -> str:
+    levels = [s for s, checked in [(Severity.child, sev_child), (Severity.teen, sev_teen)] if checked]
     return serialize_severity_levels(levels)
 
 
@@ -480,7 +480,7 @@ async def sync_library(request: Request):
             client = RadarrClient(app_settings.radarr_url, app_settings.radarr_api_key)
             await sync_radarr_library(session, client)
 
-    return RedirectResponse(url="/library", status_code=303)
+    return RedirectResponse(url="/settings", status_code=303)
 
 
 @router.post("/{title_id}/process", response_class=HTMLResponse)
@@ -566,12 +566,11 @@ async def process_season(request: Request, series_id: int, season_number: int):
 async def set_title_severity(
     request: Request,
     title_id: int,
-    sev_mild: bool = Form(False),
-    sev_moderate: bool = Form(False),
-    sev_strong: bool = Form(False),
+    sev_child: bool = Form(False),
+    sev_teen: bool = Form(False),
     short_label: bool = Form(False),
 ):
-    levels = _severity_levels_from_checkboxes(sev_mild, sev_moderate, sev_strong)
+    levels = _severity_levels_from_checkboxes(sev_child, sev_teen)
     async with get_session() as session:
         current_version = int(await get_setting(session, "wordlist_version"))
         title = await session.get(Title, title_id)
@@ -598,11 +597,10 @@ async def set_season_severity(
     request: Request,
     series_id: int,
     season_number: int,
-    sev_mild: bool = Form(False),
-    sev_moderate: bool = Form(False),
-    sev_strong: bool = Form(False),
+    sev_child: bool = Form(False),
+    sev_teen: bool = Form(False),
 ):
-    levels = _severity_levels_from_checkboxes(sev_mild, sev_moderate, sev_strong)
+    levels = _severity_levels_from_checkboxes(sev_child, sev_teen)
     conditions = (Title.sonarr_series_id == series_id, Title.season_number == season_number)
     async with get_session() as session:
         await session.execute(update(Title).where(*conditions).values(severity_levels=levels))

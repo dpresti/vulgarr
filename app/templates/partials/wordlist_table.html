@@ -17,15 +17,13 @@
   </thead>
   <tbody>
     {% for entry in entries %}
-    {% set rank = {'mild': 0, 'moderate': 1, 'strong': 2}[entry.severity.value] %}
     <tr id="wl-row-{{ entry.id }}">
       <td>{{ entry.term }}</td>
       <td>
         <form class="inline" hx-post="/wordlist/{{ entry.id }}/severity" hx-target="#wordlist-table" hx-swap="outerHTML">
           <span class="severity-checks">
-            <label><input type="checkbox" name="sev_mild" {% if rank >= 0 %}checked{% endif %} onchange="cascadeSeverity(this); this.form.requestSubmit();"> mild</label>
-            <label><input type="checkbox" name="sev_moderate" {% if rank >= 1 %}checked{% endif %} onchange="cascadeSeverity(this); this.form.requestSubmit();"> moderate</label>
-            <label><input type="checkbox" name="sev_strong" {% if rank >= 2 %}checked{% endif %} onchange="cascadeSeverity(this); this.form.requestSubmit();"> strong</label>
+            <label><input type="radio" name="term_severity" value="child" {% if entry.severity.value == 'child' %}checked{% endif %} onchange="this.form.requestSubmit()"> child</label>
+            <label><input type="radio" name="term_severity" value="teen" {% if entry.severity.value == 'teen' %}checked{% endif %} onchange="this.form.requestSubmit()"> teen</label>
           </span>
           {{ state_fields() }}
         </form>

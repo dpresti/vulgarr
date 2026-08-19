@@ -19,9 +19,9 @@ _COLUMNS_ADDED_LATER = [
     ("titles", "season_number", "INTEGER"),
     ("titles", "episode_number", "INTEGER"),
     ("titles", "status", "VARCHAR(20) NOT NULL DEFAULT 'not_processed'"),
-    ("titles", "severity_threshold", "VARCHAR(20) NOT NULL DEFAULT 'mild'"),
+    ("titles", "severity_threshold", "VARCHAR(20) NOT NULL DEFAULT 'child'"),
     ("titles", "clean_track_audio_index", "INTEGER"),
-    ("titles", "severity_levels", "VARCHAR(40) NOT NULL DEFAULT 'mild'"),
+    ("titles", "severity_levels", "VARCHAR(40) NOT NULL DEFAULT 'child'"),
     ("titles", "clean_track_audio_indices", "VARCHAR(40)"),
     ("titles", "precise_mute", "BOOLEAN NOT NULL DEFAULT 0"),
     ("titles", "replacement_requested_at", "DATETIME"),
@@ -40,6 +40,51 @@ async def _run_column_migrations(conn: AsyncConnection) -> None:
         if column not in table_columns[table]:
             await conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {column} {ddl_type}"))
             table_columns[table].add(column)
+
+
+async def _run_severity_vocabulary_migration(conn: AsyncConnection) -> None:
+    """Collapse the old 3-level mild/moderate/strong severity vocabulary into the new
+    2-level child/teen vocabulary (child = mutes everything, teen = mutes only what
+    used to be tagged moderate or strong). Runs as raw SQL, before any ORM query
+    touches wordlist_entries -- that column is a real Enum(Severity) type, and any
+    row still holding an old string value would fail to deserialize the instant the
+    Severity enum stops knowing those members. Each UPDATE's WHERE clause only
+    matches pre-migration values, so this is safe to run on every startup."""
+    await conn.execute(text("UPDATE wordlist_entries SET severity = 'child' WHERE severity = 'mild'"))
+    await conn.execute(text("UPDATE wordlist_entries SET severity = 'teen' WHERE severity IN ('moderate', 'strong')"))
+
+
+_SEVERITY_LEVEL_VOCAB_MAP = {"mild": "child", "moderate": "teen", "strong": "teen"}
+
+
+def _migrate_severity_levels_string(value: str) -> str:
+    mapped: list[str] = []
+    for token in (t.strip() for t in value.split(",")):
+        new_token = _SEVERITY_LEVEL_VOCAB_MAP.get(token, token)
+        if new_token and new_token not in mapped:
+            mapped.append(new_token)
+    order = {"child": 0, "teen": 1}
+    mapped.sort(key=lambda t: order.get(t, 99))
+    return ",".join(mapped) or "child"
+
+
+async def _migrate_title_severity_levels_vocabulary(session: AsyncSession) -> None:
+    """titles.severity_levels is a plain string column (no Enum type), so this is
+    safe to do via the ORM -- but still only touches rows that still hold an old
+    mild/moderate/strong token, so it's a no-op once migrated."""
+    result = await session.execute(
+        select(Title).where(
+            Title.severity_levels.like("%mild%")
+            | Title.severity_levels.like("%moderate%")
+            | Title.severity_levels.like("%strong%")
+        )
+    )
+    changed = False
+    for title in result.scalars().all():
+        title.severity_levels = _migrate_severity_levels_string(title.severity_levels)
+        changed = True
+    if changed:
+        await session.commit()
 
 
 async def _backfill_multi_severity_fields(session: AsyncSession) -> None:
@@ -131,6 +176,7 @@ async def init_db() -> None:
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
         await _run_column_migrations(conn)
+        await _run_severity_vocabulary_migration(conn)
     async with async_session_maker() as session:
         for key, value in DEFAULT_SETTINGS.items():
             existing = await session.get(AppSetting, key)
@@ -139,6 +185,7 @@ async def init_db() -> None:
         await session.commit()
         await _backfill_episode_grouping_fields(session)
         await _backfill_multi_severity_fields(session)
+        await _migrate_title_severity_levels_vocabulary(session)
         await _seed_default_wordlist_if_empty(session)
 
 

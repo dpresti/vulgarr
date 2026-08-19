@@ -6,14 +6,14 @@ from app.subtitles.parser import SubtitleCue
 
 def make_match(start, end, i=1):
     cue = SubtitleCue(index=i, start_seconds=start, end_seconds=end, text="x")
-    return CueMatch(cue=cue, matched_terms=("x",), severity=Severity.strong)
+    return CueMatch(cue=cue, matched_terms=("x",), severity=Severity.teen)
 
 
 def real_match(text, start, end, term="fuck", i=1):
     """Build a CueMatch with real spans/normalized_length via the actual matcher,
     for precise-mode tests that depend on those fields being populated correctly."""
     cue = SubtitleCue(index=i, start_seconds=start, end_seconds=end, text=text)
-    matcher = ProfanityMatcher([WordListTerm(term=term, severity=Severity.strong)])
+    matcher = ProfanityMatcher([WordListTerm(term=term, severity=Severity.teen)])
     return matcher.match_cue(cue)
 
 

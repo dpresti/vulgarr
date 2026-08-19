@@ -3,25 +3,20 @@ from urllib.parse import urlencode
 from fastapi import APIRouter, Form, Request
 from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
-from sqlalchemy import Select, select
+from sqlalchemy import Select, func, select
 
-from app.db.models import Severity, WordListEntry
-from app.db.session import bump_wordlist_version, get_session
+from app.db.models import Severity, Title, WordListEntry
+from app.db.session import bump_wordlist_version, get_session, get_setting
+from app.routers.library import _bulk_enqueue_titles, _process_message
 
 router = APIRouter(prefix="/wordlist", tags=["wordlist"])
 templates = Jinja2Templates(directory="app/templates")
 
-_SEVERITY_RANK = {"mild": 0, "moderate": 1, "strong": 2}
+_SEVERITY_RANK = {"child": 0, "teen": 1}
 
 
-def _severity_from_checkboxes(sev_mild: bool, sev_moderate: bool, sev_strong: bool) -> Severity:
-    """A term's severity is the highest checked box -- strong implies moderate implies
-    mild, so checking "strong" is what makes a word get muted at every threshold."""
-    if sev_strong:
-        return Severity.strong
-    if sev_moderate:
-        return Severity.moderate
-    return Severity.mild
+def _severity_from_field(severity: str) -> Severity:
+    return Severity.teen if severity == "teen" else Severity.child
 
 
 def _escape_like(value: str) -> str:
@@ -40,7 +35,7 @@ async def _load_entries(
     query: Select = select(WordListEntry)
     if q:
         query = query.where(WordListEntry.term.like(f"%{_escape_like(q)}%", escape="\\"))
-    if severity in ("mild", "moderate", "strong"):
+    if severity in ("child", "teen"):
         query = query.where(WordListEntry.severity == severity)
     if enabled == "enabled":
         query = query.where(WordListEntry.enabled.is_(True))
@@ -48,7 +43,7 @@ async def _load_entries(
         query = query.where(WordListEntry.enabled.is_(False))
 
     if sort != "severity":
-        # Severity has no natural SQL ordering (mild/moderate/strong isn't alphabetical),
+        # Severity has no natural SQL ordering (child/teen isn't alphabetical),
         # so it's sorted in Python below instead; every other column sorts in SQL.
         sort_columns = {
             "term": WordListEntry.term.collate("NOCASE"),
@@ -87,6 +82,17 @@ def _view_context(request: Request, q, severity, enabled, sort, sort_dir) -> dic
     }
 
 
+async def _outdated_title_count(session, current_version: int) -> int:
+    return (
+        await session.execute(
+            select(func.count()).where(
+                Title.last_processed_wordlist_version.is_not(None),
+                Title.last_processed_wordlist_version < current_version,
+            )
+        )
+    ).scalar_one()
+
+
 @router.get("", response_class=HTMLResponse)
 async def wordlist_page(
     request: Request,
@@ -99,7 +105,31 @@ async def wordlist_page(
     entries = await _load_entries(q, severity, enabled, sort, dir)
     context = _view_context(request, q, severity, enabled, sort, dir)
     context["entries"] = entries
+    async with get_session() as session:
+        context["wordlist_version"] = int(await get_setting(session, "wordlist_version"))
+        context["outdated_count"] = await _outdated_title_count(session, context["wordlist_version"])
     return templates.TemplateResponse("wordlist.html", context)
+
+
+@router.post("/reprocess-outdated", response_class=HTMLResponse)
+async def reprocess_outdated(request: Request):
+    async with get_session() as session:
+        current_version = int(await get_setting(session, "wordlist_version"))
+        queued, skipped = await _bulk_enqueue_titles(
+            session,
+            Title.last_processed_wordlist_version.is_not(None),
+            Title.last_processed_wordlist_version < current_version,
+        )
+        outdated_count = await _outdated_title_count(session, current_version)
+
+    return templates.TemplateResponse(
+        "partials/reprocess_status.html",
+        {
+            "request": request,
+            "message": _process_message(queued, skipped),
+            "outdated_count": outdated_count,
+        },
+    )
 
 
 async def _rerender_table(request: Request, q, severity, enabled, sort, sort_dir):
@@ -113,9 +143,7 @@ async def _rerender_table(request: Request, q, severity, enabled, sort, sort_dir
 async def add_term(
     request: Request,
     term: str = Form(...),
-    sev_mild: bool = Form(False),
-    sev_moderate: bool = Form(False),
-    sev_strong: bool = Form(False),
+    term_severity: str = Form("child"),
     match_whole_word: bool = Form(True),
     q: str | None = Form(None),
     severity: str | None = Form(None),
@@ -124,7 +152,7 @@ async def add_term(
     sort_dir: str = Form("asc"),
 ):
     term = term.strip().lower()
-    new_severity = _severity_from_checkboxes(sev_mild, sev_moderate, sev_strong)
+    new_severity = _severity_from_field(term_severity)
     async with get_session() as session:
         if term:
             existing = await session.execute(select(WordListEntry).where(WordListEntry.term == term))
@@ -160,16 +188,14 @@ async def toggle_term(
 async def update_severity(
     request: Request,
     entry_id: int,
-    sev_mild: bool = Form(False),
-    sev_moderate: bool = Form(False),
-    sev_strong: bool = Form(False),
+    term_severity: str = Form("child"),
     q: str | None = Form(None),
     severity: str | None = Form(None),
     enabled: str | None = Form(None),
     sort: str | None = Form(None),
     sort_dir: str = Form("asc"),
 ):
-    new_severity = _severity_from_checkboxes(sev_mild, sev_moderate, sev_strong)
+    new_severity = _severity_from_field(term_severity)
     async with get_session() as session:
         entry = await session.get(WordListEntry, entry_id)
         if entry is not None:

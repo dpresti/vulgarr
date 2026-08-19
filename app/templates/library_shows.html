@@ -2,12 +2,6 @@
 {% block content %}
   <div class="toolbar">
     <h1>TV Shows</h1>
-    <div>
-      <span class="muted">Word list version: v{{ wordlist_version }}</span>
-      <form method="post" action="/library/sync" style="display:inline">
-        <button type="submit">Sync from Sonarr/Radarr</button>
-      </form>
-    </div>
   </div>
 
   <form method="get" action="/library/shows" style="margin: 0.75rem 0;">
