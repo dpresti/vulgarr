@@ -24,7 +24,7 @@
       </span>
     </form>
     {% if row.severity_error %}
-    <div class="muted" style="color: #f0a25c; margin-top: 0.3rem;">
+    <div class="muted" style="color: var(--vulgarr-outdated-text); margin-top: 0.3rem;">
       {{ row.severity_error }}
       <form class="inline" hx-post="/library/{{ row.title.id }}/search-mkv-replacement" hx-target="#title-row-{{ row.title.id }}" hx-swap="outerHTML">
         <button type="submit" class="small secondary">Search for .mkv replacement</button>

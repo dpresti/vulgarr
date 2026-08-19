@@ -2,62 +2,99 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <title>Subtitle Profanity Filter</title>
+  <title>Vulgarr</title>
   <script src="https://unpkg.com/htmx.org@2.0.3"></script>
   <style>
-    :root { color-scheme: dark; }
-    body { font-family: system-ui, sans-serif; margin: 0; background: #14161a; color: #e6e6e6; }
-    nav { display: flex; gap: 1.5rem; padding: 1rem 1.5rem; background: #1c1f26; border-bottom: 1px solid #2c303a; }
-    nav a { color: #e6e6e6; text-decoration: none; font-weight: 600; }
-    nav a:hover { color: #7cb7ff; }
+    :root {
+      color-scheme: dark;
+
+      /* Brand */
+      --vulgarr-accent: #E53935;
+      --vulgarr-accent-hover: #D32F2F;
+      --vulgarr-accent-glow: rgba(229, 57, 53, 0.25);
+
+      /* Backgrounds */
+      --vulgarr-bg-main: #141419;
+      --vulgarr-bg-surface: #1E1F28;
+      --vulgarr-bg-elevated: #2A2C38;
+      --vulgarr-bg-row-hover: #1A1B23;
+      --vulgarr-border: #353846;
+
+      /* Typography */
+      --vulgarr-text-primary: #FFFFFF;
+      --vulgarr-text-secondary: #9E9EB2;
+      --vulgarr-text-muted: #606275;
+
+      /* Status (semantic -- deliberately distinct from the brand accent above,
+         so "danger" badges never get mistaken for primary buttons/links) */
+      --vulgarr-success-bg: #1F4D2D;
+      --vulgarr-success-text: #7FE3A0;
+      --vulgarr-warning-bg: #4D3D1F;
+      --vulgarr-warning-text: #F0C674;
+      --vulgarr-info-bg: #2C3550;
+      --vulgarr-info-text: #9AB4F0;
+      --vulgarr-danger-bg: #4D1F1F;
+      --vulgarr-danger-text: #F08080;
+      --vulgarr-danger-solid: #7A2C2C;
+      --vulgarr-neutral-bg: #3A3A3A;
+      --vulgarr-neutral-text: #B0B0B0;
+      --vulgarr-outdated-bg: #4D3520;
+      --vulgarr-outdated-text: #F0A25C;
+    }
+    body { font-family: system-ui, sans-serif; margin: 0; background: var(--vulgarr-bg-main); color: var(--vulgarr-text-primary); }
+    nav { display: flex; align-items: center; gap: 1.5rem; padding: 1rem 1.5rem; background: var(--vulgarr-bg-surface); border-bottom: 1px solid var(--vulgarr-border); }
+    nav .brand { color: var(--vulgarr-accent); font-weight: 800; font-size: 1.1rem; letter-spacing: 0.02em; margin-right: 0.5rem; text-decoration: none; }
+    nav a { color: var(--vulgarr-text-primary); text-decoration: none; font-weight: 600; }
+    nav a:hover { color: var(--vulgarr-accent); }
     main { padding: 1.5rem; max-width: 1100px; margin: 0 auto; }
     table { width: 100%; border-collapse: collapse; margin-top: 1rem; }
-    th, td { text-align: left; padding: 0.45rem 0.75rem; border-bottom: 1px solid #2c303a; vertical-align: middle; }
-    th { color: #9aa0aa; font-size: 0.85rem; text-transform: uppercase; }
+    th, td { text-align: left; padding: 0.45rem 0.75rem; border-bottom: 1px solid var(--vulgarr-border); vertical-align: middle; }
+    th { color: var(--vulgarr-text-secondary); font-size: 0.85rem; text-transform: uppercase; }
     th a { color: inherit; text-decoration: none; }
-    th a:hover { color: #7cb7ff; }
-    tbody tr:hover { background: #191c22; }
+    th a:hover { color: var(--vulgarr-accent); }
+    tbody tr:hover { background: var(--vulgarr-bg-row-hover); }
     .badge { display: inline-block; padding: 0.15rem 0.5rem; border-radius: 999px; font-size: 0.75rem; font-weight: 600; }
-    .badge-done { background: #1f4d2d; color: #7fe3a0; }
-    .badge-processing { background: #4d3d1f; color: #f0c674; }
-    .badge-queued { background: #2c3550; color: #9ab4f0; }
-    .badge-failed { background: #4d1f1f; color: #f08080; }
-    .badge-cancelled { background: #3a3a3a; color: #b0b0b0; }
-    .badge-awaiting_mkv { background: #2c3550; color: #9ab4f0; }
-    .badge-awaiting_subtitle { background: #2c3550; color: #9ab4f0; }
-    .badge-not_processed { background: #2c303a; color: #9aa0aa; }
-    .badge-outdated { background: #4d3520; color: #f0a25c; margin-left: 0.4rem; }
-    .badge-mild { background: #2c3550; color: #9ab4f0; }
-    .badge-moderate { background: #4d3d1f; color: #f0c674; }
-    .badge-strong { background: #4d1f1f; color: #f08080; }
-    progress { accent-color: #2c5cc9; background: #2c303a; border-radius: 4px; height: 0.6rem; }
-    button, input[type=submit] { background: #2c5cc9; color: white; border: none; padding: 0.4rem 0.9rem; border-radius: 6px; cursor: pointer; font-weight: 600; font-size: 0.9rem; }
-    button:hover { background: #3b6ee0; }
-    button.secondary { background: #2c303a; }
-    button.secondary:hover { background: #383d49; }
-    button.danger { background: #7a2c2c; }
+    .badge-done { background: var(--vulgarr-success-bg); color: var(--vulgarr-success-text); }
+    .badge-processing { background: var(--vulgarr-warning-bg); color: var(--vulgarr-warning-text); }
+    .badge-queued { background: var(--vulgarr-info-bg); color: var(--vulgarr-info-text); }
+    .badge-failed { background: var(--vulgarr-danger-bg); color: var(--vulgarr-danger-text); }
+    .badge-cancelled { background: var(--vulgarr-neutral-bg); color: var(--vulgarr-neutral-text); }
+    .badge-awaiting_mkv { background: var(--vulgarr-info-bg); color: var(--vulgarr-info-text); }
+    .badge-awaiting_subtitle { background: var(--vulgarr-info-bg); color: var(--vulgarr-info-text); }
+    .badge-not_processed { background: var(--vulgarr-bg-elevated); color: var(--vulgarr-text-secondary); }
+    .badge-outdated { background: var(--vulgarr-outdated-bg); color: var(--vulgarr-outdated-text); margin-left: 0.4rem; }
+    .badge-mild { background: var(--vulgarr-info-bg); color: var(--vulgarr-info-text); }
+    .badge-moderate { background: var(--vulgarr-warning-bg); color: var(--vulgarr-warning-text); }
+    .badge-strong { background: var(--vulgarr-danger-bg); color: var(--vulgarr-danger-text); }
+    progress { accent-color: var(--vulgarr-accent); background: var(--vulgarr-border); border-radius: 4px; height: 0.6rem; }
+    button, input[type=submit] { background: var(--vulgarr-accent); color: white; border: none; padding: 0.4rem 0.9rem; border-radius: 6px; cursor: pointer; font-weight: 600; font-size: 0.9rem; }
+    button:hover { background: var(--vulgarr-accent-hover); }
+    button.secondary { background: var(--vulgarr-bg-elevated); }
+    button.secondary:hover { background: var(--vulgarr-border); }
+    button.danger { background: var(--vulgarr-danger-solid); }
     button.small { padding: 0.2rem 0.6rem; font-size: 0.78rem; font-weight: 500; }
-    input[type=text], input[type=time], input[type=number], select { background: #1c1f26; border: 1px solid #2c303a; color: #e6e6e6; padding: 0.4rem; border-radius: 6px; }
+    input[type=text], input[type=time], input[type=number], select { background: var(--vulgarr-bg-surface); border: 1px solid var(--vulgarr-border); color: var(--vulgarr-text-primary); padding: 0.4rem; border-radius: 6px; }
+    input:focus, select:focus, button:focus-visible { outline: none; box-shadow: 0 0 0 3px var(--vulgarr-accent-glow); }
     form.inline { display: inline-flex; gap: 0.4rem; align-items: center; }
     .toolbar { display: flex; justify-content: space-between; align-items: center; }
-    .muted { color: #9aa0aa; font-size: 0.85rem; }
+    .muted { color: var(--vulgarr-text-secondary); font-size: 0.85rem; }
     .settings-grid { display: grid; grid-template-columns: 320px 1fr; gap: 0.75rem 1.5rem; align-items: center; max-width: 640px; }
     .severity-checks { display: inline-flex; gap: 0.75rem; }
-    .severity-checks label { font-size: 0.85rem; color: #9aa0aa; white-space: nowrap; }
+    .severity-checks label { font-size: 0.85rem; color: var(--vulgarr-text-secondary); white-space: nowrap; }
     .row-actions { display: flex; align-items: center; gap: 0.5rem; }
     details { margin-top: 1.5rem; }
     details:first-of-type { margin-top: 0; }
     summary { cursor: pointer; padding: 0.4rem 0; }
-    summary:hover h2 { color: #7cb7ff; }
+    summary:hover h2 { color: var(--vulgarr-accent); }
     summary h2 { transition: color 0.1s; }
     .topbar-job {
       display: flex; align-items: center; gap: 0.6rem;
-      padding: 0.4rem 1.5rem; background: #20242c; border-bottom: 1px solid #2c303a;
+      padding: 0.4rem 1.5rem; background: var(--vulgarr-bg-elevated); border-bottom: 1px solid var(--vulgarr-border);
       font-size: 0.82rem;
     }
     .topbar-job-title { font-weight: 600; white-space: nowrap; }
     .topbar-job progress { width: 120px; }
-    .topbar-job-pct { color: #9aa0aa; width: 2.5em; }
+    .topbar-job-pct { color: var(--vulgarr-text-secondary); width: 2.5em; }
     .topbar-job-msg { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   </style>
   <script>
@@ -92,6 +129,7 @@
 </head>
 <body>
   <nav>
+    <a class="brand" href="/library">Vulgarr</a>
     <a href="/library">Library</a>
     <a href="/wordlist">Word List</a>
     <a href="/queue">Queue</a>

@@ -1,5 +1,5 @@
 <form id="settings-form" hx-post="/settings" hx-target="#settings-form" hx-swap="outerHTML">
-  {% if saved %}<p style="color:#7fe3a0;">Saved.</p>{% endif %}
+  {% if saved %}<p style="color:var(--vulgarr-success-text);">Saved.</p>{% endif %}
 
   <div class="settings-grid">
     <label for="concurrency_cap">Max concurrent ffmpeg jobs</label>

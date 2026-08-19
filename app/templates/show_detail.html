@@ -5,7 +5,7 @@
   <div class="toolbar">
     <h1>{{ series_title or 'Unknown series' }}</h1>
     <div>
-      {% if severity_saved %}<span style="color:#7fe3a0;">Saved.</span>{% endif %}
+      {% if severity_saved %}<span style="color:var(--vulgarr-success-text);">Saved.</span>{% endif %}
       <form class="inline" method="post" action="/library/shows/{{ series_id }}/severity">
         <span class="muted">Tracks to generate for this show:</span>
         <span class="severity-checks">
