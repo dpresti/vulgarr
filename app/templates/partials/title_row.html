@@ -13,7 +13,7 @@
       {% if row.bazarr_message %}<div class="muted">{{ row.bazarr_message }}</div>{% endif %}
     {% endif %}
   </td>
-  <td data-label="Muted cues" class="muted">{{ row.title.matched_cue_count if row.title.matched_cue_count is not none else '—' }}</td>
+  <td data-label="Muted cues" class="muted stat-cell-hide-mobile">{{ row.title.matched_cue_count if row.title.matched_cue_count is not none else '—' }}</td>
   <td data-label="Severity">
     <form hx-post="/library/{{ row.title.id }}/severity" hx-target="#title-row-{{ row.title.id }}" hx-swap="outerHTML">
       {% if season_context %}<input type="hidden" name="short_label" value="true">{% endif %}

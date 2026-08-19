@@ -1,11 +1,12 @@
 {% set current_levels = (season.severity_levels or '').split(',') %}
 <tr id="season-row-{{ season.season_number }}">
   <td data-label="Season"><a class="title-link" href="/library/shows/{{ series_id }}/season/{{ season.season_number }}">Season {{ season.season_number }}</a></td>
-  <td data-label="Episodes" class="muted">{{ season.total }}</td>
-  <td data-label="Done" class="muted">{{ season.done_count }}</td>
-  <td data-label="Active" class="muted">{{ season.active_count }}</td>
-  <td data-label="Failed" class="muted">{{ season.failed_count }}</td>
-  <td data-label="Outdated">{% if season.outdated_count %}<span class="badge badge-outdated">{{ season.outdated_count }} outdated</span>{% else %}<span class="muted">—</span>{% endif %}</td>
+  <td data-label="Episodes" class="muted stat-cell-hide-mobile">{{ season.total }}</td>
+  <td data-label="Done" class="muted stat-cell-hide-mobile">{{ season.done_count }}</td>
+  <td data-label="Active" class="muted stat-cell-hide-mobile">{{ season.active_count }}</td>
+  <td data-label="Failed" class="muted stat-cell-hide-mobile">{{ season.failed_count }}</td>
+  <td data-label="Outdated" class="stat-cell-hide-mobile">{% if season.outdated_count %}<span class="badge badge-outdated">{{ season.outdated_count }} outdated</span>{% else %}<span class="muted">—</span>{% endif %}</td>
+  <td data-label="Progress" class="muted span-full mobile-only-summary">{{ season.done_count }}/{{ season.total }} done{% if season.active_count %} &middot; {{ season.active_count }} active{% endif %}{% if season.failed_count %} &middot; {{ season.failed_count }} failed{% endif %}{% if season.outdated_count %} &middot; {{ season.outdated_count }} outdated{% endif %}</td>
   <td data-label="Severity">
     <form hx-post="/library/shows/{{ series_id }}/season/{{ season.season_number }}/severity" hx-target="#season-row-{{ season.season_number }}" hx-swap="outerHTML">
       <span class="severity-checks">
