@@ -21,7 +21,7 @@ async def lifespan(app: FastAPI):
     await job_queue.stop()
 
 
-app = FastAPI(title="Subtitle Profanity Filter", lifespan=lifespan)
+app = FastAPI(title="Vulgarr", lifespan=lifespan)
 app.add_middleware(BasicAuthMiddleware)
 app.mount("/static", StaticFiles(directory="app/static"), name="static")
 
