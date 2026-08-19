@@ -4,10 +4,10 @@ services:
     container_name: profanity-filter
     restart: unless-stopped
     ports:
-      - 8011:8000
+      - ${SPF_PORT:-8011}:8000
     environment:
       TZ: ${TZ}
-      SPF_MEDIA_ROOT: /plex
+      SPF_MEDIA_ROOT: ${SPF_MEDIA_ROOT:-/media}
       SPF_SONARR_URL: http://sonarr:8989
       SPF_SONARR_API_KEY: ${SONARR_API_KEY}
       SPF_RADARR_URL: http://radarr:7878
@@ -17,9 +17,20 @@ services:
       SPF_WEBHOOK_TOKEN: ${SPF_WEBHOOK_TOKEN}
       SPF_DEFAULT_SUBTITLE_LANGUAGE: en
     volumes:
-      - /share/Docker-Configs/profanity-filter/data:/data
-      - /Fileserver/PLEX:/plex # same host path + container mount point as sonarr/radarr, so file paths from their APIs resolve here unchanged
-      - /yountnfs/:/yountnfs # second media root sonarr/radarr/bazarr also mount -- some titles (e.g. Deadpool & Wolverine) live here, not under /plex
+      - ${SPF_DATA_DIR:-./data}:/data
+      # Container-side mount point MUST match SPF_MEDIA_ROOT above exactly, and must be
+      # the identical container-side path your Sonarr/Radarr containers use -- this app
+      # resolves file paths returned by their APIs directly, so a mismatch here means it
+      # won't find files that exist. Once titles are synced, changing this later breaks
+      # every already-stored path -- pick it once, matching your existing Sonarr/Radarr
+      # setup, and treat it as fixed after that.
+      - ${MEDIA_ROOT_HOST_PATH}:${SPF_MEDIA_ROOT:-/media}
+      # Optional: a second, separate media root, only needed if your library is split
+      # across more than one mount that Sonarr/Radarr/Bazarr also mount independently
+      # (this app has no config of its own for this -- it's purely a filesystem mount,
+      # matched by container-side path just like the primary one above). Delete this
+      # line entirely if you only have one media root.
+      - ${SECOND_MEDIA_ROOT_HOST_PATH:-/dev/null}:${SECOND_MEDIA_ROOT_CONTAINER_PATH:-/second_media}
     networks:
       - media_default # join the sonarr/radarr/bazarr network so they're reachable by container name
 networks:

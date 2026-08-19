@@ -37,9 +37,13 @@ pytest tests/ -q
 
 ## Wiring into an existing Sonarr/Radarr/Bazarr/Plex/Jellyfin stack
 
-1. **Compose**: this repo's [`docker-compose.yml`](docker-compose.yml) is the actual file this service runs from (Dockge-managed, under `/docker/stack/profanity-filter/` on erwin) -- it already joins the `media_default` network so it's reachable from Sonarr/Radarr/Bazarr by container name, and mounts the same media roots those services use (`/Fileserver/PLEX:/plex` and `/yountnfs/:/yountnfs`). If wiring this into a *different* stack, match whatever media volume mount(s)/host paths your Sonarr/Radarr/Bazarr/Plex/Jellyfin services already use -- this service resolves file paths returned by the Sonarr/Radarr APIs directly, so a path mismatch means it won't find files that exist.
+1. **Compose**: [`docker-compose.yml`](docker-compose.yml) joins the same Docker network your Sonarr/Radarr/Bazarr containers are on (`media_default` by default -- rename to match yours) so it's reachable from them by container name. Set these in `.env` (never committed -- see `.gitignore`):
+   - `MEDIA_ROOT_HOST_PATH` / `SPF_MEDIA_ROOT` -- the host path and matching **container-side** path for your media, which must be the exact same container-side path your Sonarr/Radarr containers already use (this app resolves file paths returned by their APIs directly, so a mismatch means it won't find files that exist). Once you've synced titles, don't change the container-side path later -- it's baked into every stored path in the database.
+   - `SECOND_MEDIA_ROOT_HOST_PATH` / `SECOND_MEDIA_ROOT_CONTAINER_PATH` -- only needed if your library is split across a second mount that Sonarr/Radarr/Bazarr also mount independently; delete that volume line in `docker-compose.yml` entirely if you only have one media root.
+   - `SPF_DATA_DIR` -- where the SQLite DB and backups live on the host.
+   - `SPF_PORT` -- host port to publish the UI on (defaults to 8011).
 
-2. **API keys**: set `SONARR_API_KEY` / `RADARR_API_KEY` / `BAZARR_API_KEY` in `.env` (not committed -- see `.gitignore`) from Settings > General > Security in each app. Set `SPF_WEBHOOK_TOKEN` to a random string and append `?token=<that value>` to the webhook URLs below -- otherwise anyone on the network can trigger processing.
+2. **API keys**: set `SONARR_API_KEY` / `RADARR_API_KEY` / `BAZARR_API_KEY` in `.env` from Settings > General > Security in each app. Set `SPF_WEBHOOK_TOKEN` to a random string and append `?token=<that value>` to the webhook URLs below -- otherwise anyone on the network can trigger processing.
 
 3. **Sonarr**: Settings > Connect > add Webhook. URL: `http://profanity-filter:8000/webhooks/sonarr?token=<token>`. Trigger on: *On Import*, *On Upgrade*.
 
@@ -51,7 +55,7 @@ pytest tests/ -q
    ```
    (Bazarr's exact variable names vary by version -- check Settings > Subtitles > Custom Post-Processing for the list available in your version and adjust.) Then flip "Bazarr subtitle-downloaded event" on in this app's Settings page if you want this trigger active.
 
-6. **First run**: open `http://erwin:8011/library` (port `8011` on the host, mapped from the container's `8000` -- see `docker-compose.yml`) and click "Sync from Sonarr/Radarr" to pull in the existing library (this only reads metadata/paths via the Sonarr/Radarr APIs -- it does not process anything). Then go to `/wordlist` and build out your word list before processing anything for real.
+6. **First run**: open `http://<host>:<SPF_PORT>/library` and click "Sync from Sonarr/Radarr" to pull in the existing library (this only reads metadata/paths via the Sonarr/Radarr APIs -- it does not process anything). Then go to `/wordlist` and build out your word list before processing anything for real.
 
 7. **Plex/Jellyfin**: nothing to configure -- once a title has been processed, refresh/rescan that item's metadata (or wait for the next library scan) and the "Clean" audio track will appear in the audio track picker like any other track.
 

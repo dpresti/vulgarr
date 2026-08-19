@@ -19,7 +19,7 @@ def test_subtitle_ending_well_before_video_is_fine():
 
 
 def test_subtitle_extending_past_video_is_flagged():
-    # Deadpool 2 case: subtitle timed for a longer (extended) cut than this video file.
+    # A subtitle timed for a longer (e.g. extended/director's) cut than this video file.
     cues = [cue(10, 15), cue(8000, 8010)]
     error = check_subtitle_video_duration_match(cues, video_duration=7160)
     assert error is not None
