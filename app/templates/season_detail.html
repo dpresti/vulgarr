@@ -1,0 +1,6 @@
+{% extends "base.html" %}
+{% block content %}
+  <p><a href="/library">&laquo; Library</a> / <a href="/library/shows/{{ series_id }}">{{ series_title or 'Unknown series' }}</a></p>
+  <h1>{{ series_title or 'Unknown series' }} &mdash; Season {{ season_number }}</h1>
+  {% include "partials/library_table.html" %}
+{% endblock %}

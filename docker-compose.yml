@@ -1,0 +1,27 @@
+services:
+  profanity-filter:
+    build: .
+    container_name: profanity-filter
+    restart: unless-stopped
+    ports:
+      - 8011:8000
+    environment:
+      TZ: ${TZ}
+      SPF_MEDIA_ROOT: /plex
+      SPF_SONARR_URL: http://sonarr:8989
+      SPF_SONARR_API_KEY: ${SONARR_API_KEY}
+      SPF_RADARR_URL: http://radarr:7878
+      SPF_RADARR_API_KEY: ${RADARR_API_KEY}
+      SPF_BAZARR_URL: http://bazarr:6767
+      SPF_BAZARR_API_KEY: ${BAZARR_API_KEY}
+      SPF_WEBHOOK_TOKEN: ${SPF_WEBHOOK_TOKEN}
+      SPF_DEFAULT_SUBTITLE_LANGUAGE: en
+    volumes:
+      - /share/Docker-Configs/profanity-filter/data:/data
+      - /Fileserver/PLEX:/plex # same host path + container mount point as sonarr/radarr, so file paths from their APIs resolve here unchanged
+      - /yountnfs/:/yountnfs # second media root sonarr/radarr/bazarr also mount -- some titles (e.g. Deadpool & Wolverine) live here, not under /plex
+    networks:
+      - media_default # join the sonarr/radarr/bazarr network so they're reachable by container name
+networks:
+  media_default:
+    external: true

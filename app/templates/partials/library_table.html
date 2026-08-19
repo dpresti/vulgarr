@@ -1,0 +1,20 @@
+<table id="library-table">
+  <thead>
+    <tr>
+      <th>{% if movie_sort_link is defined %}<a href="{{ movie_sort_link('title') }}">Title{% if movie_sort == 'title' %} {{ '▲' if movie_dir == 'asc' else '▼' }}{% endif %}</a>{% else %}Title{% endif %}</th>
+      <th>{% if movie_sort_link is defined %}<a href="{{ movie_sort_link('status') }}">Status{% if movie_sort == 'status' %} {{ '▲' if movie_dir == 'asc' else '▼' }}{% endif %}</a>{% else %}Status{% endif %}</th>
+      <th>{% if movie_sort_link is defined %}<a href="{{ movie_sort_link('subtitle') }}">Subtitle{% if movie_sort == 'subtitle' %} {{ '▲' if movie_dir == 'asc' else '▼' }}{% endif %}</a>{% else %}Subtitle{% endif %}</th>
+      <th>{% if movie_sort_link is defined %}<a href="{{ movie_sort_link('muted_cues') }}">Muted cues{% if movie_sort == 'muted_cues' %} {{ '▲' if movie_dir == 'asc' else '▼' }}{% endif %}</a>{% else %}Muted cues{% endif %}</th>
+      <th>{% if movie_sort_link is defined %}<a href="{{ movie_sort_link('severity') }}">Severity{% if movie_sort == 'severity' %} {{ '▲' if movie_dir == 'asc' else '▼' }}{% endif %}</a>{% else %}Severity{% endif %}</th>
+      <th>Mute precision</th>
+      <th></th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for row in rows %}
+      {% include "partials/title_row.html" %}
+    {% else %}
+      <tr><td colspan="7" class="muted">No titles found.</td></tr>
+    {% endfor %}
+  </tbody>
+</table>

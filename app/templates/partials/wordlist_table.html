@@ -1,0 +1,52 @@
+{% macro state_fields() %}
+  <input type="hidden" name="q" value="{{ q }}">
+  <input type="hidden" name="severity" value="{{ severity }}">
+  <input type="hidden" name="enabled" value="{{ enabled }}">
+  <input type="hidden" name="sort" value="{{ sort or '' }}">
+  <input type="hidden" name="sort_dir" value="{{ sort_dir }}">
+{% endmacro %}
+
+<table id="wordlist-table">
+  <thead>
+    <tr>
+      <th><a href="{{ sort_link('term') }}">Term{% if sort == 'term' or not sort %} {{ '▲' if sort_dir == 'asc' else '▼' }}{% endif %}</a></th>
+      <th><a href="{{ sort_link('severity') }}">Severity{% if sort == 'severity' %} {{ '▲' if sort_dir == 'asc' else '▼' }}{% endif %}</a></th>
+      <th><a href="{{ sort_link('enabled') }}">Enabled{% if sort == 'enabled' %} {{ '▲' if sort_dir == 'asc' else '▼' }}{% endif %}</a></th>
+      <th></th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for entry in entries %}
+    {% set rank = {'mild': 0, 'moderate': 1, 'strong': 2}[entry.severity.value] %}
+    <tr id="wl-row-{{ entry.id }}">
+      <td>{{ entry.term }}</td>
+      <td>
+        <form class="inline" hx-post="/wordlist/{{ entry.id }}/severity" hx-target="#wordlist-table" hx-swap="outerHTML">
+          <span class="severity-checks">
+            <label><input type="checkbox" name="sev_mild" {% if rank >= 0 %}checked{% endif %} onchange="cascadeSeverity(this); this.form.requestSubmit();"> mild</label>
+            <label><input type="checkbox" name="sev_moderate" {% if rank >= 1 %}checked{% endif %} onchange="cascadeSeverity(this); this.form.requestSubmit();"> moderate</label>
+            <label><input type="checkbox" name="sev_strong" {% if rank >= 2 %}checked{% endif %} onchange="cascadeSeverity(this); this.form.requestSubmit();"> strong</label>
+          </span>
+          {{ state_fields() }}
+        </form>
+      </td>
+      <td>
+        <form hx-post="/wordlist/{{ entry.id }}/toggle" hx-target="#wordlist-table" hx-swap="outerHTML">
+          <button type="submit" class="{{ 'secondary' if entry.enabled else '' }}">
+            {{ 'enabled' if entry.enabled else 'disabled' }}
+          </button>
+          {{ state_fields() }}
+        </form>
+      </td>
+      <td>
+        <form hx-post="/wordlist/{{ entry.id }}/delete" hx-target="#wordlist-table" hx-swap="outerHTML" hx-confirm="Remove '{{ entry.term }}' from the word list?">
+          <button type="submit" class="danger">Delete</button>
+          {{ state_fields() }}
+        </form>
+      </td>
+    </tr>
+    {% else %}
+    <tr><td colspan="4" class="muted">{% if q or severity != 'all' or enabled != 'all' %}No terms match your search/filter.{% else %}No terms yet. Add one below.{% endif %}</td></tr>
+    {% endfor %}
+  </tbody>
+</table>

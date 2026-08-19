@@ -1,0 +1,30 @@
+<table id="shows-table">
+  <thead>
+    <tr>
+      <th><a href="{{ show_sort_link('name') }}">Show{% if show_sort == 'name' %} {{ '▲' if show_dir == 'asc' else '▼' }}{% endif %}</a></th>
+      <th><a href="{{ show_sort_link('total') }}">Episodes{% if show_sort == 'total' %} {{ '▲' if show_dir == 'asc' else '▼' }}{% endif %}</a></th>
+      <th><a href="{{ show_sort_link('done_count') }}">Done{% if show_sort == 'done_count' %} {{ '▲' if show_dir == 'asc' else '▼' }}{% endif %}</a></th>
+      <th><a href="{{ show_sort_link('active_count') }}">Active{% if show_sort == 'active_count' %} {{ '▲' if show_dir == 'asc' else '▼' }}{% endif %}</a></th>
+      <th><a href="{{ show_sort_link('failed_count') }}">Failed{% if show_sort == 'failed_count' %} {{ '▲' if show_dir == 'asc' else '▼' }}{% endif %}</a></th>
+      <th><a href="{{ show_sort_link('outdated_count') }}">Outdated{% if show_sort == 'outdated_count' %} {{ '▲' if show_dir == 'asc' else '▼' }}{% endif %}</a></th>
+      <th>Severity</th>
+      <th></th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for show in shows %}
+    <tr>
+      <td>{{ show.series_title or 'Unknown series' }}</td>
+      <td class="muted">{{ show.total }}</td>
+      <td class="muted">{{ show.done_count }}</td>
+      <td class="muted">{{ show.active_count }}</td>
+      <td class="muted">{{ show.failed_count }}</td>
+      <td>{% if show.outdated_count %}<span class="badge badge-outdated">{{ show.outdated_count }} outdated</span>{% else %}<span class="muted">—</span>{% endif %}</td>
+      <td class="muted">{{ show.severity_levels.replace(',', ', ') if show.severity_levels else '—' }}</td>
+      <td><a href="/library/shows/{{ show.sonarr_series_id }}"><button type="button">View seasons</button></a></td>
+    </tr>
+    {% else %}
+    <tr><td colspan="8" class="muted">No shows found.</td></tr>
+    {% endfor %}
+  </tbody>
+</table>
