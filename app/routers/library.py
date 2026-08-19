@@ -218,6 +218,10 @@ async def _load_seasons(session, series_id: int, current_version: int) -> tuple[
             func.sum(case((Title.status == "failed", 1), else_=0)).label("failed_count"),
             func.sum(case((Title.status.in_(["queued", "processing"]), 1), else_=0)).label("active_count"),
             func.sum(outdated_expr).label("outdated_count"),
+            # Representative (not a true aggregate) values -- a season's episodes could
+            # have mixed settings once per-episode editing exists.
+            func.min(Title.severity_levels).label("severity_levels"),
+            func.min(Title.precise_mute).label("precise_mute"),
         )
         .where(Title.sonarr_series_id == series_id, Title.media_type == MediaType.episode)
         .group_by(Title.season_number)
@@ -225,6 +229,13 @@ async def _load_seasons(session, series_id: int, current_version: int) -> tuple[
     )
     result = await session.execute(query)
     seasons = [dict(row._mapping) for row in result.all()]
+    for season in seasons:
+        season["gating_message"] = await _non_mkv_gating_message(
+            session,
+            Title.sonarr_series_id == series_id,
+            Title.season_number == season["season_number"],
+            levels=season["severity_levels"] or "",
+        )
 
     name_result = await session.execute(
         select(Title.series_title).where(Title.sonarr_series_id == series_id).limit(1)
@@ -347,24 +358,6 @@ async def shows_page(
     )
 
 
-async def _current_show_severity(session, series_id: int) -> str:
-    result = await session.execute(
-        select(Title.severity_levels)
-        .where(Title.sonarr_series_id == series_id, Title.media_type == MediaType.episode)
-        .limit(1)
-    )
-    return result.scalar_one_or_none() or Severity.mild.value
-
-
-async def _current_season_severity(session, series_id: int, season_number: int) -> str:
-    result = await session.execute(
-        select(Title.severity_levels)
-        .where(Title.sonarr_series_id == series_id, Title.season_number == season_number)
-        .limit(1)
-    )
-    return result.scalar_one_or_none() or Severity.mild.value
-
-
 async def _current_season_precise_mute(session, series_id: int, season_number: int) -> bool:
     result = await session.execute(
         select(Title.precise_mute)
@@ -395,13 +388,46 @@ async def _non_mkv_gating_message(session, *conditions, levels: str) -> str | No
     )
 
 
+async def _load_season(session, series_id: int, season_number: int, current_version: int) -> dict | None:
+    """Single-season counterpart to _load_seasons, used to re-render just one season
+    row after a bulk severity/precision/process action on it."""
+    outdated_expr = _outdated_case(current_version)
+    query = (
+        select(
+            Title.season_number,
+            func.count().label("total"),
+            func.sum(case((Title.status == "done", 1), else_=0)).label("done_count"),
+            func.sum(case((Title.status == "failed", 1), else_=0)).label("failed_count"),
+            func.sum(case((Title.status.in_(["queued", "processing"]), 1), else_=0)).label("active_count"),
+            func.sum(outdated_expr).label("outdated_count"),
+            func.min(Title.severity_levels).label("severity_levels"),
+            func.min(Title.precise_mute).label("precise_mute"),
+        )
+        .where(
+            Title.sonarr_series_id == series_id,
+            Title.season_number == season_number,
+            Title.media_type == MediaType.episode,
+        )
+        .group_by(Title.season_number)
+    )
+    row = (await session.execute(query)).first()
+    if row is None:
+        return None
+    season = dict(row._mapping)
+    season["gating_message"] = await _non_mkv_gating_message(
+        session,
+        Title.sonarr_series_id == series_id,
+        Title.season_number == season_number,
+        levels=season["severity_levels"] or "",
+    )
+    return season
+
+
 @router.get("/shows/{series_id}", response_class=HTMLResponse)
 async def show_detail(request: Request, series_id: int):
     async with get_session() as session:
         current_version = int(await get_setting(session, "wordlist_version"))
         series_title, seasons = await _load_seasons(session, series_id, current_version)
-        current_severity = await _current_show_severity(session, series_id)
-        current_precise_mute = await _current_show_precise_mute(session, series_id)
 
     return templates.TemplateResponse(
         "show_detail.html",
@@ -411,8 +437,6 @@ async def show_detail(request: Request, series_id: int):
             "series_title": series_title,
             "seasons": seasons,
             "severity_options": SEVERITY_OPTIONS,
-            "current_severity": current_severity,
-            "current_precise_mute": current_precise_mute,
         },
     )
 
@@ -432,8 +456,6 @@ async def season_detail(request: Request, series_id: int, season_number: int):
             .order_by(Title.episode_number)
         )
         rows = [_row_dict(t, current_version, short_label=True) for t in result.scalars().all()]
-        current_severity = await _current_season_severity(session, series_id, season_number)
-        current_precise_mute = await _current_season_precise_mute(session, series_id, season_number)
 
     return templates.TemplateResponse(
         "season_detail.html",
@@ -444,8 +466,6 @@ async def season_detail(request: Request, series_id: int, season_number: int):
             "season_number": season_number,
             "rows": rows,
             "severity_options": SEVERITY_OPTIONS,
-            "current_severity": current_severity,
-            "current_precise_mute": current_precise_mute,
         },
     )
 
@@ -464,13 +484,13 @@ async def sync_library(request: Request):
 
 
 @router.post("/{title_id}/process", response_class=HTMLResponse)
-async def process_title(request: Request, title_id: int):
+async def process_title(request: Request, title_id: int, short_label: bool = Form(False)):
     await job_queue.enqueue(title_id, TriggerSource.manual)
 
     async with get_session() as session:
         current_version = int(await get_setting(session, "wordlist_version"))
         title = await session.get(Title, title_id)
-        row = _row_dict(title, current_version)
+        row = _row_dict(title, current_version, short_label=short_label)
 
     return templates.TemplateResponse(
         "partials/title_row.html", {"request": request, "row": row, "severity_options": SEVERITY_OPTIONS}
@@ -509,8 +529,6 @@ async def process_show(request: Request, series_id: int):
         queued, skipped = await _bulk_enqueue_titles(session, *conditions)
         current_version = int(await get_setting(session, "wordlist_version"))
         series_title, seasons = await _load_seasons(session, series_id, current_version)
-        current_severity = await _current_show_severity(session, series_id)
-        current_precise_mute = await _current_show_precise_mute(session, series_id)
 
     return templates.TemplateResponse(
         "show_detail.html",
@@ -520,8 +538,6 @@ async def process_show(request: Request, series_id: int):
             "series_title": series_title,
             "seasons": seasons,
             "severity_options": SEVERITY_OPTIONS,
-            "current_severity": current_severity,
-            "current_precise_mute": current_precise_mute,
             "process_message": _process_message(queued, skipped),
         },
     )
@@ -533,26 +549,14 @@ async def process_season(request: Request, series_id: int, season_number: int):
     async with get_session() as session:
         queued, skipped = await _bulk_enqueue_titles(session, *conditions)
         current_version = int(await get_setting(session, "wordlist_version"))
-        name_result = await session.execute(
-            select(Title.series_title).where(Title.sonarr_series_id == series_id).limit(1)
-        )
-        series_title = name_result.scalar_one_or_none()
-        result = await session.execute(select(Title).where(*conditions).order_by(Title.episode_number))
-        rows = [_row_dict(t, current_version, short_label=True) for t in result.scalars().all()]
-        current_severity = await _current_season_severity(session, series_id, season_number)
-        current_precise_mute = await _current_season_precise_mute(session, series_id, season_number)
+        season = await _load_season(session, series_id, season_number, current_version)
 
     return templates.TemplateResponse(
-        "season_detail.html",
+        "partials/season_row.html",
         {
             "request": request,
             "series_id": series_id,
-            "series_title": series_title,
-            "season_number": season_number,
-            "rows": rows,
-            "severity_options": SEVERITY_OPTIONS,
-            "current_severity": current_severity,
-            "current_precise_mute": current_precise_mute,
+            "season": season,
             "process_message": _process_message(queued, skipped),
         },
     )
@@ -565,6 +569,7 @@ async def set_title_severity(
     sev_mild: bool = Form(False),
     sev_moderate: bool = Form(False),
     sev_strong: bool = Form(False),
+    short_label: bool = Form(False),
 ):
     levels = _severity_levels_from_checkboxes(sev_mild, sev_moderate, sev_strong)
     async with get_session() as session:
@@ -581,44 +586,10 @@ async def set_title_severity(
         await session.commit()
         await session.refresh(title)
 
-        row = _row_dict(title, current_version)
+        row = _row_dict(title, current_version, short_label=short_label)
 
     return templates.TemplateResponse(
         "partials/title_row.html", {"request": request, "row": row, "severity_options": SEVERITY_OPTIONS}
-    )
-
-
-@router.post("/shows/{series_id}/severity", response_class=HTMLResponse)
-async def set_show_severity(
-    request: Request,
-    series_id: int,
-    sev_mild: bool = Form(False),
-    sev_moderate: bool = Form(False),
-    sev_strong: bool = Form(False),
-):
-    levels = _severity_levels_from_checkboxes(sev_mild, sev_moderate, sev_strong)
-    conditions = (Title.sonarr_series_id == series_id, Title.media_type == MediaType.episode)
-    async with get_session() as session:
-        await session.execute(update(Title).where(*conditions).values(severity_levels=levels))
-        await session.commit()
-        current_version = int(await get_setting(session, "wordlist_version"))
-        series_title, seasons = await _load_seasons(session, series_id, current_version)
-        current_precise_mute = await _current_show_precise_mute(session, series_id)
-        gating_message = await _non_mkv_gating_message(session, *conditions, levels=levels)
-
-    return templates.TemplateResponse(
-        "show_detail.html",
-        {
-            "request": request,
-            "series_id": series_id,
-            "series_title": series_title,
-            "seasons": seasons,
-            "severity_options": SEVERITY_OPTIONS,
-            "current_severity": levels,
-            "current_precise_mute": current_precise_mute,
-            "severity_saved": True,
-            "gating_message": gating_message,
-        },
     )
 
 
@@ -637,128 +608,50 @@ async def set_season_severity(
         await session.execute(update(Title).where(*conditions).values(severity_levels=levels))
         await session.commit()
         current_version = int(await get_setting(session, "wordlist_version"))
-        name_result = await session.execute(
-            select(Title.series_title).where(Title.sonarr_series_id == series_id).limit(1)
-        )
-        series_title = name_result.scalar_one_or_none()
-        result = await session.execute(
-            select(Title).where(*conditions).order_by(Title.episode_number)
-        )
-        rows = [_row_dict(t, current_version, short_label=True) for t in result.scalars().all()]
-        current_precise_mute = await _current_season_precise_mute(session, series_id, season_number)
-        gating_message = await _non_mkv_gating_message(session, *conditions, levels=levels)
+        season = await _load_season(session, series_id, season_number, current_version)
 
     return templates.TemplateResponse(
-        "season_detail.html",
-        {
-            "request": request,
-            "series_id": series_id,
-            "series_title": series_title,
-            "season_number": season_number,
-            "rows": rows,
-            "severity_options": SEVERITY_OPTIONS,
-            "current_severity": levels,
-            "current_precise_mute": current_precise_mute,
-            "severity_saved": True,
-            "gating_message": gating_message,
-        },
+        "partials/season_row.html",
+        {"request": request, "series_id": series_id, "season": season},
     )
 
 
 @router.post("/{title_id}/toggle-precise", response_class=HTMLResponse)
-async def toggle_title_precise_mute(request: Request, title_id: int):
+async def toggle_title_precise_mute(request: Request, title_id: int, short_label: bool = Form(False)):
     async with get_session() as session:
         current_version = int(await get_setting(session, "wordlist_version"))
         title = await session.get(Title, title_id)
         title.precise_mute = not title.precise_mute
         await session.commit()
         await session.refresh(title)
-        row = _row_dict(title, current_version)
+        row = _row_dict(title, current_version, short_label=short_label)
 
     return templates.TemplateResponse(
         "partials/title_row.html", {"request": request, "row": row, "severity_options": SEVERITY_OPTIONS}
     )
 
 
-async def _current_show_precise_mute(session, series_id: int) -> bool:
-    result = await session.execute(
-        select(Title.precise_mute)
-        .where(Title.sonarr_series_id == series_id, Title.media_type == MediaType.episode)
-        .limit(1)
-    )
-    return bool(result.scalar_one_or_none())
-
-
-@router.post("/shows/{series_id}/toggle-precise", response_class=HTMLResponse)
-async def set_show_precise_mute(request: Request, series_id: int, precise_mute: bool = Form(False)):
-    async with get_session() as session:
-        await session.execute(
-            update(Title)
-            .where(Title.sonarr_series_id == series_id, Title.media_type == MediaType.episode)
-            .values(precise_mute=precise_mute)
-        )
-        await session.commit()
-        current_version = int(await get_setting(session, "wordlist_version"))
-        series_title, seasons = await _load_seasons(session, series_id, current_version)
-        current_severity = await _current_show_severity(session, series_id)
-
-    return templates.TemplateResponse(
-        "show_detail.html",
-        {
-            "request": request,
-            "series_id": series_id,
-            "series_title": series_title,
-            "seasons": seasons,
-            "severity_options": SEVERITY_OPTIONS,
-            "current_severity": current_severity,
-            "current_precise_mute": precise_mute,
-            "severity_saved": True,
-        },
-    )
-
-
 @router.post("/shows/{series_id}/season/{season_number}/toggle-precise", response_class=HTMLResponse)
-async def set_season_precise_mute(
-    request: Request, series_id: int, season_number: int, precise_mute: bool = Form(False)
-):
+async def set_season_precise_mute(request: Request, series_id: int, season_number: int):
     async with get_session() as session:
+        current = await _current_season_precise_mute(session, series_id, season_number)
         await session.execute(
             update(Title)
             .where(Title.sonarr_series_id == series_id, Title.season_number == season_number)
-            .values(precise_mute=precise_mute)
+            .values(precise_mute=not current)
         )
         await session.commit()
         current_version = int(await get_setting(session, "wordlist_version"))
-        name_result = await session.execute(
-            select(Title.series_title).where(Title.sonarr_series_id == series_id).limit(1)
-        )
-        series_title = name_result.scalar_one_or_none()
-        result = await session.execute(
-            select(Title)
-            .where(Title.sonarr_series_id == series_id, Title.season_number == season_number)
-            .order_by(Title.episode_number)
-        )
-        rows = [_row_dict(t, current_version, short_label=True) for t in result.scalars().all()]
-        current_severity = await _current_season_severity(session, series_id, season_number)
+        season = await _load_season(session, series_id, season_number, current_version)
 
     return templates.TemplateResponse(
-        "season_detail.html",
-        {
-            "request": request,
-            "series_id": series_id,
-            "series_title": series_title,
-            "season_number": season_number,
-            "rows": rows,
-            "severity_options": SEVERITY_OPTIONS,
-            "current_severity": current_severity,
-            "current_precise_mute": precise_mute,
-            "severity_saved": True,
-        },
+        "partials/season_row.html",
+        {"request": request, "series_id": series_id, "season": season},
     )
 
 
 @router.post("/{title_id}/search-subtitle", response_class=HTMLResponse)
-async def search_subtitle_via_bazarr(request: Request, title_id: int):
+async def search_subtitle_via_bazarr(request: Request, title_id: int, short_label: bool = Form(False)):
     async with get_session() as session:
         current_version = int(await get_setting(session, "wordlist_version"))
         title = await session.get(Title, title_id)
@@ -800,7 +693,7 @@ async def search_subtitle_via_bazarr(request: Request, title_id: int):
                         message = "Searched, but no subtitle was found by any provider."
 
         await session.refresh(title)
-        row = _row_dict(title, current_version, bazarr_message=message)
+        row = _row_dict(title, current_version, bazarr_message=message, short_label=short_label)
 
     return templates.TemplateResponse(
         "partials/title_row.html", {"request": request, "row": row, "severity_options": SEVERITY_OPTIONS}
@@ -808,7 +701,7 @@ async def search_subtitle_via_bazarr(request: Request, title_id: int):
 
 
 @router.post("/{title_id}/search-mkv-replacement", response_class=HTMLResponse)
-async def search_mkv_replacement(request: Request, title_id: int):
+async def search_mkv_replacement(request: Request, title_id: int, short_label: bool = Form(False)):
     """Trigger a Sonarr/Radarr search for an .mkv release of this title, so multiple
     severity tracks become available. The queue worker polls for the new file to land
     and, once it does, searches Bazarr for a subtitle if needed and auto-queues processing --
@@ -844,7 +737,7 @@ async def search_mkv_replacement(request: Request, title_id: int):
                 message = "Search triggered -- will auto-process once an .mkv release is grabbed."
 
         await session.refresh(title)
-        row = _row_dict(title, current_version, bazarr_message=message)
+        row = _row_dict(title, current_version, bazarr_message=message, short_label=short_label)
 
     return templates.TemplateResponse(
         "partials/title_row.html", {"request": request, "row": row, "severity_options": SEVERITY_OPTIONS}
