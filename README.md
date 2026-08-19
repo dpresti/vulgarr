@@ -3,7 +3,7 @@
 </p>
 
 <h1 align="center">Vulgarr</h1>
-<p align="center">A self-hosted, Radarr/Sonarr-styled clean-audio-track generator for your Plex/Jellyfin library.</p>
+<p align="center">A self-hosted, Radarr/Sonarr-styled profanity filter for your Plex/Jellyfin library.</p>
 
 Vulgarr adds a second, selectable **"Clean"** audio track to movies and
 episodes by muting the audio under profane subtitle cues. Detection is
@@ -83,13 +83,13 @@ Then open `http://<host>:<SPF_PORT>/library/movies` (default port `8011`).
 
 2. **API keys**: set `SONARR_API_KEY` / `RADARR_API_KEY` / `BAZARR_API_KEY` in `.env` from Settings > General > Security in each app, and set `SPF_WEBHOOK_TOKEN` to a random string (or leave it unset — a random one is generated automatically on first run rather than leaving webhooks unauthenticated). These are only used to *seed* the app's database on first startup — from then on, all of them (including rotating the webhook token) are editable from **Settings > Integrations** in the UI, no `.env` edit or restart required. Append `?token=<that value>` to the webhook URLs below, using whatever the token currently is in Settings.
 
-3. **Sonarr**: Settings > Connect > add Webhook. URL: `http://profanity-filter:8000/webhooks/sonarr?token=<token>`. Trigger on: *On Import*, *On Upgrade*.
+3. **Sonarr**: Settings > Connect > add Webhook. URL: `http://vulgarr:8000/webhooks/sonarr?token=<token>`. Trigger on: *On Import*, *On Upgrade*.
 
-4. **Radarr**: same as Sonarr, URL: `http://profanity-filter:8000/webhooks/radarr?token=<token>`.
+4. **Radarr**: same as Sonarr, URL: `http://vulgarr:8000/webhooks/radarr?token=<token>`.
 
 5. **Bazarr**: Settings > Subtitles > Custom Post-Processing. Enable it, and set the command to a `curl` call using Bazarr's template variables, e.g.:
    ```
-   curl -s -X POST "http://profanity-filter:8000/webhooks/bazarr?token=<token>&video_path={{directory}}/{{episode}}&subtitle_path={{subtitles}}&language={{subtitles_language_code2}}"
+   curl -s -X POST "http://vulgarr:8000/webhooks/bazarr?token=<token>&video_path={{directory}}/{{episode}}&subtitle_path={{subtitles}}&language={{subtitles_language_code2}}"
    ```
    (Bazarr's exact variable names vary by version — check Settings > Subtitles > Custom Post-Processing for the list available in your version and adjust.) Then flip "Bazarr subtitle-downloaded event" on in this app's Settings page if you want this trigger active.
 
