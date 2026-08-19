@@ -1,7 +1,7 @@
 services:
-  profanity-filter:
+  vulgarr:
     build: .
-    container_name: profanity-filter
+    container_name: vulgarr
     restart: unless-stopped
     ports:
       - ${SPF_PORT:-8011}:8000
