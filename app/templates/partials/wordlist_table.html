@@ -6,7 +6,7 @@
   <input type="hidden" name="sort_dir" value="{{ sort_dir }}">
 {% endmacro %}
 
-<table id="wordlist-table">
+<table id="wordlist-table" class="card-grid">
   <thead>
     <tr>
       <th><a href="{{ sort_link('term') }}">Term{% if sort == 'term' or not sort %} {{ '▲' if sort_dir == 'asc' else '▼' }}{% endif %}</a></th>

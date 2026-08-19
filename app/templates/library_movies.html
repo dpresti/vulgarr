@@ -4,8 +4,8 @@
     <h1>Movies</h1>
   </div>
 
-  <form method="get" action="/library/movies" style="margin: 0.75rem 0;">
-    <input type="text" name="q" placeholder="Search movies…" value="{{ q }}" class="wide-input">
+  <form method="get" action="/library/movies" class="search-bar">
+    <input type="text" name="q" placeholder="Search movies…" value="{{ q }}">
     <button type="submit">Search</button>
     {% if q %}<a href="/library/movies" class="btn-link small">Clear</a>{% endif %}
   </form>
