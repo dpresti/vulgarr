@@ -43,5 +43,67 @@
     </div>
   </div>
 
+  <h2 style="margin-top: 1.75rem;">Integrations</h2>
+  <p class="muted" style="margin-top: -0.5rem;">Reachable from inside this app's container -- use the same URL/API key you'd use from Bazarr's own settings. Changes here take effect immediately, no restart needed.</p>
+  <div class="settings-grid">
+    <label for="sonarr_url">Sonarr URL</label>
+    <input type="text" id="sonarr_url" name="sonarr_url" value="{{ values.sonarr_url }}" placeholder="http://sonarr:8989" style="min-width: 320px;">
+
+    <label for="sonarr_api_key">Sonarr API key</label>
+    <input type="text" id="sonarr_api_key" name="sonarr_api_key" value="{{ values.sonarr_api_key }}" autocomplete="off" style="min-width: 320px;">
+
+    <label for="radarr_url">Radarr URL</label>
+    <input type="text" id="radarr_url" name="radarr_url" value="{{ values.radarr_url }}" placeholder="http://radarr:7878" style="min-width: 320px;">
+
+    <label for="radarr_api_key">Radarr API key</label>
+    <input type="text" id="radarr_api_key" name="radarr_api_key" value="{{ values.radarr_api_key }}" autocomplete="off" style="min-width: 320px;">
+
+    <label for="bazarr_url">Bazarr URL</label>
+    <input type="text" id="bazarr_url" name="bazarr_url" value="{{ values.bazarr_url }}" placeholder="http://bazarr:6767" style="min-width: 320px;">
+
+    <label for="bazarr_api_key">Bazarr API key</label>
+    <input type="text" id="bazarr_api_key" name="bazarr_api_key" value="{{ values.bazarr_api_key }}" autocomplete="off" style="min-width: 320px;">
+
+    <label for="webhook_token">Webhook token</label>
+    <div>
+      <input type="text" id="webhook_token" name="webhook_token" value="" placeholder="{{ values.webhook_token }}" autocomplete="off" style="min-width: 320px;">
+      <div class="muted">Append <code>?token=&lt;this&gt;</code> to the Sonarr/Radarr/Bazarr webhook URLs. Shown above as the placeholder -- leave blank to keep it, type a new value to rotate it.</div>
+    </div>
+
+    <label for="default_subtitle_language">Default subtitle language</label>
+    <input type="text" id="default_subtitle_language" name="default_subtitle_language" value="{{ values.default_subtitle_language }}" style="width: 100px;">
+
+    <label for="clean_track_title">Clean track title</label>
+    <input type="text" id="clean_track_title" name="clean_track_title" value="{{ values.clean_track_title }}" style="width: 200px;">
+
+    <label for="clean_track_language">Clean track language tag</label>
+    <input type="text" id="clean_track_language" name="clean_track_language" value="{{ values.clean_track_language }}" style="width: 100px;">
+  </div>
+
+  <h2 style="margin-top: 1.75rem;">Backups</h2>
+  <div class="settings-grid">
+    <label for="backup_retention_days">Delete backups older than (days)</label>
+    <div>
+      <input type="number" id="backup_retention_days" name="backup_retention_days" min="0" value="{{ values.backup_retention_days }}" style="width: 100px;">
+      <div class="muted">0 = keep every backup forever (default). Backups live under <code>/data/backups</code> and are the only copy of the original, unmodified file.</div>
+    </div>
+  </div>
+
+  <h2 style="margin-top: 1.75rem;">Authentication</h2>
+  <p class="muted" style="margin-top: -0.5rem;">Off by default. Turn this on if this app is reachable by anyone other than you (e.g. exposed beyond your LAN) -- otherwise every page here, including this one, is wide open.</p>
+  <div class="settings-grid">
+    <label for="auth_enabled">Require login</label>
+    <input type="checkbox" id="auth_enabled" name="auth_enabled" {% if values.auth_enabled %}checked{% endif %}>
+
+    <label for="auth_username">Username</label>
+    <input type="text" id="auth_username" name="auth_username" value="{{ values.auth_username }}" autocomplete="off" style="width: 200px;">
+
+    <label for="auth_password">Password</label>
+    <div>
+      <input type="password" id="auth_password" name="auth_password" value="" autocomplete="new-password" style="width: 200px;">
+      <div class="muted">Leave blank to keep the current password. Required (once, the first time) before "Require login" can take effect.</div>
+    </div>
+  </div>
+
   <p><button type="submit">Save settings</button></p>
 </form>

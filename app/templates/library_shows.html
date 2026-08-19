@@ -7,7 +7,7 @@
   <form method="get" action="/library/shows" style="margin: 0.75rem 0;">
     <input type="text" name="q" placeholder="Search shows…" value="{{ q }}" style="min-width: 320px;">
     <button type="submit">Search</button>
-    {% if q %}<a href="/library/shows" class="muted">clear</a>{% endif %}
+    {% if q %}<a href="/library/shows" class="btn-link small">Clear</a>{% endif %}
   </form>
 
   {% include "partials/poster_grid_shows.html" %}

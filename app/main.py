@@ -5,6 +5,7 @@ from fastapi import FastAPI
 from fastapi.responses import RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
+from app.auth import BasicAuthMiddleware
 from app.db.session import init_db
 from app.queue.worker import job_queue
 from app.routers import library, queue, settings as settings_router, webhooks, wordlist
@@ -21,6 +22,7 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="Subtitle Profanity Filter", lifespan=lifespan)
+app.add_middleware(BasicAuthMiddleware)
 app.mount("/static", StaticFiles(directory="app/static"), name="static")
 
 app.include_router(library.router)

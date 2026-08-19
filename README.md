@@ -42,8 +42,9 @@ pytest tests/ -q
    - `SECOND_MEDIA_ROOT_HOST_PATH` / `SECOND_MEDIA_ROOT_CONTAINER_PATH` -- only needed if your library is split across a second mount that Sonarr/Radarr/Bazarr also mount independently; delete that volume line in `docker-compose.yml` entirely if you only have one media root.
    - `SPF_DATA_DIR` -- where the SQLite DB and backups live on the host.
    - `SPF_PORT` -- host port to publish the UI on (defaults to 8011).
+   - `PUID` / `PGID` -- the host user/group (`id -u` / `id -g`) that should own files this container creates under `SPF_DATA_DIR` and your media mounts. Defaults to 1000/1000; set these if your host user is different, otherwise you'll get permission-mismatched files.
 
-2. **API keys**: set `SONARR_API_KEY` / `RADARR_API_KEY` / `BAZARR_API_KEY` in `.env` from Settings > General > Security in each app. Set `SPF_WEBHOOK_TOKEN` to a random string and append `?token=<that value>` to the webhook URLs below -- otherwise anyone on the network can trigger processing.
+2. **API keys**: set `SONARR_API_KEY` / `RADARR_API_KEY` / `BAZARR_API_KEY` in `.env` from Settings > General > Security in each app, and set `SPF_WEBHOOK_TOKEN` to a random string (or leave it unset -- a random one is generated automatically on first run rather than leaving webhooks unauthenticated). These are only used to *seed* the app's database on first startup -- from then on, all of them (including rotating the webhook token) are editable from **Settings > Integrations** in the UI, no `.env` edit or restart required. Append `?token=<that value>` to the webhook URLs below, using whatever the token currently is in Settings.
 
 3. **Sonarr**: Settings > Connect > add Webhook. URL: `http://profanity-filter:8000/webhooks/sonarr?token=<token>`. Trigger on: *On Import*, *On Upgrade*.
 
@@ -64,9 +65,13 @@ pytest tests/ -q
 - **Max concurrent ffmpeg jobs** -- caps how many remux jobs run at once.
 - **Restrict processing to off-hours** -- when on, queued jobs wait until the configured window (handles windows that cross midnight).
 - **Automation triggers** -- independently enable/disable the Sonarr/Radarr and Bazarr triggers, and set which one takes priority for de-duplication.
+- **Integrations** -- Sonarr/Radarr/Bazarr URLs+API keys, the webhook token, default subtitle language, and the clean track's title/language tag. Editable here at any time; `.env` only supplies the first-run defaults.
+- **Backups** -- optional retention (in days) for files under `/data/backups`; 0 (default) keeps every backup forever.
+- **Authentication** -- optional HTTP Basic Auth in front of the entire UI (off by default). Turn this on if the app is reachable by anyone besides you -- e.g. exposed outside your LAN -- since nothing here is protected otherwise. Sonarr/Radarr/Bazarr's webhook calls are always exempt (they carry their own `?token=`, not a login).
 
 ## Notes / known trade-offs
 
-- Backups accumulate under `/data/backups` and are never auto-deleted -- prune manually once you've confirmed a batch of clean tracks look right.
+- Backups accumulate under `/data/backups` unless you set a retention period in Settings > Backups (off by default, since a backup is the only copy of the untouched original file).
 - `backup_root` (`/data/backups`) should ideally be on the same filesystem as your media mount; otherwise the "move original aside" step becomes a slower copy+delete instead of an instant rename.
 - Subtitle matching mutes the whole subtitle cue's time range (padded slightly), not word-level timing -- there's no word-level timestamp data available from a plain .srt.
+- There's no per-user accounts/roles -- Settings > Authentication is a single shared username/password (or nothing) in front of the whole app, not a multi-user system.

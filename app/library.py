@@ -9,7 +9,6 @@ from pathlib import Path
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.config import settings as app_settings
 from app.db.models import JobState, MediaType, ProcessingJob, Title, TriggerSource
 from app.db.session import get_session, get_setting
 from app.integrations.radarr import RadarrClient
@@ -44,7 +43,8 @@ async def upsert_title(
     result = await session.execute(select(Title).where(Title.video_path == video_path))
     title = result.scalar_one_or_none()
 
-    subtitle = find_subtitle_for_video(Path(video_path), app_settings.default_subtitle_language)
+    default_subtitle_language = await get_setting(session, "default_subtitle_language")
+    subtitle = find_subtitle_for_video(Path(video_path), default_subtitle_language)
 
     if title is None:
         if default_precise_mute is None:
@@ -68,7 +68,7 @@ async def upsert_title(
     title.season_number = season_number
     title.episode_number = episode_number
     title.subtitle_path = str(subtitle) if subtitle else None
-    title.subtitle_language = app_settings.default_subtitle_language if subtitle else None
+    title.subtitle_language = default_subtitle_language if subtitle else None
     if poster_url:
         # Webhook-triggered upserts don't carry poster art -- don't clobber a poster a
         # real /library/sync already found with None just because this call has none.
@@ -156,10 +156,11 @@ async def poll_for_subtitle_then_enqueue(
     async with get_session() as session:
         timeout = float(await get_setting(session, "sonarr_radarr_subtitle_poll_timeout_seconds"))
         interval = float(await get_setting(session, "sonarr_radarr_subtitle_poll_interval_seconds"))
+        default_subtitle_language = await get_setting(session, "default_subtitle_language")
 
     elapsed = 0.0
     while elapsed < timeout:
-        subtitle = find_subtitle_for_video(Path(video_path), app_settings.default_subtitle_language)
+        subtitle = find_subtitle_for_video(Path(video_path), default_subtitle_language)
         if subtitle is not None:
             async with get_session() as session:
                 title = await upsert_title(

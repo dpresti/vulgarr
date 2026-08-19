@@ -5,6 +5,7 @@
     {% else %}
       {% set href = '/library/shows/' ~ row.title.sonarr_series_id ~ '/season/' ~ row.title.season_number %}
     {% endif %}
+    {% if from_page %}{% set href = href ~ '?from=' ~ from_page %}{% endif %}
     <a class="poster-card" href="{{ href }}">
       <div class="poster-frame">
         {% if row.title.poster_url %}

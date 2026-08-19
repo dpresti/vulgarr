@@ -7,6 +7,7 @@ worker tasks, backed by the ProcessingJob table for persistence/visibility.
 import asyncio
 import datetime
 import logging
+import os
 import time
 from pathlib import Path
 
@@ -36,6 +37,12 @@ _PROGRESS_UPDATE_MIN_INTERVAL_SECONDS = 1.5
 # from seconds to a long time depending on availability -- no need to check often.
 _REPLACEMENT_CHECK_INTERVAL_SECONDS = 60.0
 
+# How often to sweep /data/backups for files past the configured retention window.
+# Retention is opt-in (0 = disabled/keep forever, see Settings > Backups), and even
+# when enabled a stale backup sitting an extra hour costs nothing -- no need to poll
+# more often than this.
+_BACKUP_PRUNE_INTERVAL_SECONDS = 3600.0
+
 
 def _format_eta(seconds: float) -> str:
     seconds = max(0, int(seconds))
@@ -59,6 +66,33 @@ def is_within_off_hours_window(now: datetime.time, start: datetime.time, end: da
     return now >= start or now < end  # window wraps past midnight
 
 
+def _delete_backups_older_than(backup_root: Path, retention_days: int) -> int:
+    """Synchronous (run off the event loop via asyncio.to_thread -- backup_root can be
+    a slow network mount) sweep of every file under backup_root older than the cutoff,
+    by mtime. Returns how many files were deleted."""
+    if not backup_root.exists():
+        return 0
+    cutoff = time.time() - retention_days * 86400
+    deleted = 0
+    for path in backup_root.rglob("*"):
+        if not path.is_file():
+            continue
+        try:
+            if path.stat().st_mtime < cutoff:
+                path.unlink()
+                deleted += 1
+        except OSError:
+            logger.warning("Could not delete backup %s", path, exc_info=True)
+    # Clean up any directories left empty behind deleted backups.
+    for dirpath, dirnames, filenames in os.walk(backup_root, topdown=False):
+        if dirpath != str(backup_root) and not dirnames and not filenames:
+            try:
+                os.rmdir(dirpath)
+            except OSError:
+                pass
+    return deleted
+
+
 class JobQueue:
     def __init__(self) -> None:
         self._pending: asyncio.Queue[int] = asyncio.Queue()
@@ -66,6 +100,7 @@ class JobQueue:
         self._dispatcher_task: asyncio.Task | None = None
         self._stopping = False
         self._last_replacement_check = 0.0
+        self._last_backup_prune = 0.0
 
     async def start(self) -> None:
         # Re-queue anything left mid-flight from a prior process crash/restart.
@@ -176,6 +211,10 @@ class JobQueue:
                     self._last_replacement_check = now_monotonic
                     await self._check_awaiting_replacements()
 
+                if now_monotonic - self._last_backup_prune >= _BACKUP_PRUNE_INTERVAL_SECONDS:
+                    self._last_backup_prune = now_monotonic
+                    await self._prune_old_backups()
+
                 await asyncio.sleep(2)
             except asyncio.CancelledError:
                 raise
@@ -193,20 +232,42 @@ class JobQueue:
             except Exception:
                 logger.exception("Replacement check failed for title %s", title_id)
 
+    async def _prune_old_backups(self) -> None:
+        async with get_session() as session:
+            retention_days = int(await get_setting(session, "backup_retention_days") or 0)
+        if retention_days <= 0:
+            return  # 0 = keep forever, the default -- opt-in only
+        backup_root = app_settings.data_dir / "backups"
+        try:
+            deleted = await asyncio.to_thread(_delete_backups_older_than, backup_root, retention_days)
+        except Exception:
+            logger.exception("Backup retention sweep failed")
+            return
+        if deleted:
+            logger.info("Backup retention: deleted %d file(s) older than %d day(s)", deleted, retention_days)
+
     async def _check_one_replacement(self, title_id: int) -> None:
         async with get_session() as session:
             title = await session.get(Title, title_id)
             if title is None or title.status != "awaiting_mkv":
                 return
 
+            radarr_url = await get_setting(session, "radarr_url")
+            radarr_api_key = await get_setting(session, "radarr_api_key")
+            sonarr_url = await get_setting(session, "sonarr_url")
+            sonarr_api_key = await get_setting(session, "sonarr_api_key")
+            bazarr_url = await get_setting(session, "bazarr_url")
+            bazarr_api_key = await get_setting(session, "bazarr_api_key")
+            default_subtitle_language = await get_setting(session, "default_subtitle_language")
+
             new_path: str | None = None
             if title.media_type == MediaType.movie and title.radarr_movie_id:
-                if app_settings.radarr_url and app_settings.radarr_api_key:
-                    client = RadarrClient(app_settings.radarr_url, app_settings.radarr_api_key)
+                if radarr_url and radarr_api_key:
+                    client = RadarrClient(radarr_url, radarr_api_key)
                     new_path = await client.get_current_movie_file_path(title.radarr_movie_id)
             elif title.media_type == MediaType.episode and title.sonarr_episode_id:
-                if app_settings.sonarr_url and app_settings.sonarr_api_key:
-                    client = SonarrClient(app_settings.sonarr_url, app_settings.sonarr_api_key)
+                if sonarr_url and sonarr_api_key:
+                    client = SonarrClient(sonarr_url, sonarr_api_key)
                     new_path = await client.get_current_episode_file_path(title.sonarr_episode_id)
 
             if not new_path or new_path == title.video_path or not is_mkv_path(new_path):
@@ -219,10 +280,10 @@ class JobQueue:
             title.replacement_requested_at = None
             title.last_error = None
 
-            subtitle = find_subtitle_for_video(Path(new_path), app_settings.default_subtitle_language)
+            subtitle = find_subtitle_for_video(Path(new_path), default_subtitle_language)
             if subtitle:
                 title.subtitle_path = str(subtitle)
-                title.subtitle_language = app_settings.default_subtitle_language
+                title.subtitle_language = default_subtitle_language
                 title.status = "queued"
                 await session.commit()
                 await self.enqueue(title_id, TriggerSource.manual)
@@ -247,18 +308,18 @@ class JobQueue:
             episode_number = title.episode_number
             await session.commit()
 
-        if app_settings.bazarr_url and app_settings.bazarr_api_key:
-            bazarr = BazarrClient(app_settings.bazarr_url, app_settings.bazarr_api_key)
+        if bazarr_url and bazarr_api_key:
+            bazarr = BazarrClient(bazarr_url, bazarr_api_key)
             try:
                 if media_type == MediaType.episode:
                     await bazarr.search_episode_subtitle(
                         series_id=sonarr_series_id,
                         episode_id=sonarr_episode_id,
-                        language=app_settings.default_subtitle_language,
+                        language=default_subtitle_language,
                     )
                 else:
                     await bazarr.search_movie_subtitle(
-                        radarr_id=radarr_movie_id, language=app_settings.default_subtitle_language
+                        radarr_id=radarr_movie_id, language=default_subtitle_language
                     )
             except Exception:
                 logger.exception("Bazarr search failed for replacement title %s", title_id)
