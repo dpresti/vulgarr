@@ -40,7 +40,7 @@
     {% if q or severity != 'all' or enabled != 'all' %}<a href="/wordlist" class="btn-link small">Clear</a>{% endif %}
   </form>
 
-  <div class="table-scroll">
+  <div class="table-scroll responsive-table">
     {% include "partials/wordlist_table.html" %}
   </div>
 {% endblock %}

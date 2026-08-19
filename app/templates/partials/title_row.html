@@ -1,11 +1,11 @@
 <tr id="title-row-{{ row.title.id }}">
   {% set current_levels = row.title.severity_levels.split(',') %}
-  <td>{{ row.display_name }}</td>
-  <td>
+  <td data-label="Title">{{ row.display_name }}</td>
+  <td data-label="Status">
     <span class="badge badge-{{ row.status }}">{{ row.status.replace('_', ' ') }}</span>
     {% if row.outdated %}<span class="badge badge-outdated">outdated</span>{% endif %}
   </td>
-  <td class="muted">
+  <td data-label="Subtitle" class="muted">
     {% if row.has_subtitle %}
       yes
     {% else %}
@@ -13,8 +13,8 @@
       {% if row.bazarr_message %}<div class="muted">{{ row.bazarr_message }}</div>{% endif %}
     {% endif %}
   </td>
-  <td class="muted">{{ row.title.matched_cue_count if row.title.matched_cue_count is not none else '—' }}</td>
-  <td>
+  <td data-label="Muted cues" class="muted">{{ row.title.matched_cue_count if row.title.matched_cue_count is not none else '—' }}</td>
+  <td data-label="Severity">
     <form hx-post="/library/{{ row.title.id }}/severity" hx-target="#title-row-{{ row.title.id }}" hx-swap="outerHTML">
       {% if season_context %}<input type="hidden" name="short_label" value="true">{% endif %}
       <span class="severity-checks">
@@ -34,7 +34,7 @@
     <div class="muted" style="margin-top: 0.3rem;">Awaiting .mkv replacement from Sonarr/Radarr…</div>
     {% endif %}
   </td>
-  <td>
+  <td data-label="Mute precision">
     <form hx-post="/library/{{ row.title.id }}/toggle-precise" hx-target="#title-row-{{ row.title.id }}" hx-swap="outerHTML">
       {% if season_context %}<input type="hidden" name="short_label" value="true">{% endif %}
       <button type="submit" class="small {{ 'secondary' if not row.title.precise_mute else '' }}" title="Mute a narrow window around each word instead of the whole subtitle line">
@@ -42,7 +42,7 @@
       </button>
     </form>
   </td>
-  <td>
+  <td data-label="">
     <div class="row-actions">
       {% if row.status == 'awaiting_mkv' %}
         <span class="muted">waiting on Sonarr/Radarr…</span>

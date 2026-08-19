@@ -259,7 +259,39 @@
       /* ---- mobile: page headers and the queue topbar wrap instead of overflowing ---- */
       .toolbar { flex-wrap: wrap; gap: 0.5rem; }
       .topbar-job { flex-wrap: wrap; padding: 0.5rem 1rem; row-gap: 0.3rem; }
+      .topbar-job-title { white-space: normal; max-width: 100%; }
       .topbar-job-msg { flex-basis: 100%; white-space: normal; }
+
+      /* ---- mobile: forms with several fields in a row (add/filter/inline-edit
+         forms) wrap instead of forcing the page to scroll sideways ---- */
+      form.inline { flex-wrap: wrap; row-gap: 0.4rem; }
+
+      /* ---- mobile: data tables become stacked cards instead of a table that
+         only works by scrolling sideways -- each <td> keeps its column header
+         as a label via data-label, driven by CSS content, no JS needed. ---- */
+      .responsive-table table { border-collapse: separate; border-spacing: 0; margin-top: 0.75rem; }
+      .responsive-table thead { display: none; }
+      .responsive-table tbody, .responsive-table tr, .responsive-table td { display: block; width: 100%; }
+      .responsive-table tr {
+        border: 1px solid var(--vulgarr-border); border-radius: 8px;
+        margin-bottom: 0.75rem; padding: 0.6rem 0.8rem; background: var(--vulgarr-bg-surface);
+      }
+      .responsive-table td { border: none; padding: 0.35rem 0; text-align: left; }
+      .responsive-table td::before {
+        content: attr(data-label); display: block; font-weight: 700; font-size: 0.68rem;
+        text-transform: uppercase; letter-spacing: 0.03em; color: var(--vulgarr-text-secondary);
+        margin-bottom: 0.2rem;
+      }
+      .responsive-table td[data-label=""]::before { display: none; }
+    }
+
+    /* A second, tighter tier for the smallest phones (e.g. iPhone SE-class,
+       ~320-374px) -- the six nav icons at the normal mobile size are right at
+       the edge of fitting without a sideways scroll there. */
+    @media (max-width: 380px) {
+      .sidebar nav a { padding: 10px 7px; min-width: 38px; }
+      .sidebar nav a i { font-size: 1.3rem; }
+      .sidebar-brand svg { width: 28px; height: 28px; }
     }
   </style>
   <script>

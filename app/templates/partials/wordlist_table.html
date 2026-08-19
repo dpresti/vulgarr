@@ -18,8 +18,8 @@
   <tbody>
     {% for entry in entries %}
     <tr id="wl-row-{{ entry.id }}">
-      <td>{{ entry.term }}</td>
-      <td>
+      <td data-label="Term">{{ entry.term }}</td>
+      <td data-label="Severity">
         <form class="inline" hx-post="/wordlist/{{ entry.id }}/severity" hx-target="#wordlist-table" hx-swap="outerHTML">
           <span class="severity-checks">
             <label><input type="radio" name="term_severity" value="child" {% if entry.severity.value == 'child' %}checked{% endif %} onchange="this.form.requestSubmit()"> child</label>
@@ -28,7 +28,7 @@
           {{ state_fields() }}
         </form>
       </td>
-      <td>
+      <td data-label="Enabled">
         <form hx-post="/wordlist/{{ entry.id }}/toggle" hx-target="#wordlist-table" hx-swap="outerHTML">
           <button type="submit" class="{{ 'secondary' if entry.enabled else '' }}">
             {{ 'enabled' if entry.enabled else 'disabled' }}
@@ -36,7 +36,7 @@
           {{ state_fields() }}
         </form>
       </td>
-      <td>
+      <td data-label="">
         <form hx-post="/wordlist/{{ entry.id }}/delete" hx-target="#wordlist-table" hx-swap="outerHTML" hx-confirm="Remove '{{ entry.term }}' from the word list?">
           <button type="submit" class="danger">Delete</button>
           {{ state_fields() }}

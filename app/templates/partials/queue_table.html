@@ -5,22 +5,22 @@
   {% endif %}
 
   <h3>Active</h3>
-  <div class="table-scroll">
+  <div class="table-scroll responsive-table">
   <table>
     <thead><tr><th>Title</th><th>State</th><th>Trigger</th><th>Progress</th><th></th></tr></thead>
     <tbody>
       {% for job in active %}
       <tr>
-        <td>{{ job.title.display_name }}</td>
-        <td><span class="badge badge-{{ job.state.value }}">{{ job.state.value }}</span></td>
-        <td class="muted">{{ job.trigger_source.value }}</td>
-        <td class="muted">
+        <td data-label="Title">{{ job.title.display_name }}</td>
+        <td data-label="State"><span class="badge badge-{{ job.state.value }}">{{ job.state.value }}</span></td>
+        <td data-label="Trigger" class="muted">{{ job.trigger_source.value }}</td>
+        <td data-label="Progress" class="muted">
           {% if job.progress_percent is not none %}
             <progress value="{{ job.progress_percent }}" max="100" style="width: 140px; vertical-align: middle;"></progress>
           {% endif %}
           {{ job.progress_message or '—' }}
         </td>
-        <td>
+        <td data-label="">
           {% if job.state.value == 'queued' or (job.progress_percent or 0) < 97 %}
           <button
             class="small secondary"
@@ -41,21 +41,21 @@
 
   <h3>Waiting on Sonarr/Radarr/Bazarr</h3>
   <p class="muted">Not counted against the concurrency limit -- no ffmpeg work is happening yet.</p>
-  <div class="table-scroll">
+  <div class="table-scroll responsive-table">
   <table>
     <thead><tr><th>Title</th><th>Status</th><th>Since</th></tr></thead>
     <tbody>
       {% for title in waiting %}
       <tr>
-        <td>{{ title.display_name }}</td>
-        <td>
+        <td data-label="Title">{{ title.display_name }}</td>
+        <td data-label="Status">
           {% if title.status == 'awaiting_mkv' %}
             <span class="badge badge-awaiting_mkv">awaiting .mkv</span>
           {% else %}
             <span class="badge badge-awaiting_mkv">awaiting subtitle</span>
           {% endif %}
         </td>
-        <td class="muted">{{ title.replacement_requested_at.strftime('%Y-%m-%d %H:%M') if title.replacement_requested_at else '—' }}</td>
+        <td data-label="Since" class="muted">{{ title.replacement_requested_at.strftime('%Y-%m-%d %H:%M') if title.replacement_requested_at else '—' }}</td>
       </tr>
       {% else %}
       <tr><td colspan="3" class="muted">Nothing waiting.</td></tr>
@@ -65,16 +65,16 @@
   </div>
 
   <h3>Recent</h3>
-  <div class="table-scroll">
+  <div class="table-scroll responsive-table">
   <table>
     <thead><tr><th>Title</th><th>State</th><th>Trigger</th><th>Result</th></tr></thead>
     <tbody>
       {% for job in recent %}
       <tr>
-        <td>{{ job.title.display_name }}</td>
-        <td><span class="badge badge-{{ job.state.value }}">{{ job.state.value }}</span></td>
-        <td class="muted">{{ job.trigger_source.value }}</td>
-        <td class="muted">{{ job.error or job.progress_message or '—' }}</td>
+        <td data-label="Title">{{ job.title.display_name }}</td>
+        <td data-label="State"><span class="badge badge-{{ job.state.value }}">{{ job.state.value }}</span></td>
+        <td data-label="Trigger" class="muted">{{ job.trigger_source.value }}</td>
+        <td data-label="Result" class="muted">{{ job.error or job.progress_message or '—' }}</td>
       </tr>
       {% else %}
       <tr><td colspan="4" class="muted">No jobs run yet.</td></tr>

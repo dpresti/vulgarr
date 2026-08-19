@@ -1,12 +1,12 @@
 {% set current_levels = (season.severity_levels or '').split(',') %}
 <tr id="season-row-{{ season.season_number }}">
-  <td><a class="title-link" href="/library/shows/{{ series_id }}/season/{{ season.season_number }}">Season {{ season.season_number }}</a></td>
-  <td class="muted">{{ season.total }}</td>
-  <td class="muted">{{ season.done_count }}</td>
-  <td class="muted">{{ season.active_count }}</td>
-  <td class="muted">{{ season.failed_count }}</td>
-  <td>{% if season.outdated_count %}<span class="badge badge-outdated">{{ season.outdated_count }} outdated</span>{% else %}<span class="muted">—</span>{% endif %}</td>
-  <td>
+  <td data-label="Season"><a class="title-link" href="/library/shows/{{ series_id }}/season/{{ season.season_number }}">Season {{ season.season_number }}</a></td>
+  <td data-label="Episodes" class="muted">{{ season.total }}</td>
+  <td data-label="Done" class="muted">{{ season.done_count }}</td>
+  <td data-label="Active" class="muted">{{ season.active_count }}</td>
+  <td data-label="Failed" class="muted">{{ season.failed_count }}</td>
+  <td data-label="Outdated">{% if season.outdated_count %}<span class="badge badge-outdated">{{ season.outdated_count }} outdated</span>{% else %}<span class="muted">—</span>{% endif %}</td>
+  <td data-label="Severity">
     <form hx-post="/library/shows/{{ series_id }}/season/{{ season.season_number }}/severity" hx-target="#season-row-{{ season.season_number }}" hx-swap="outerHTML">
       <span class="severity-checks">
         <label><input type="checkbox" name="sev_child" {% if 'child' in current_levels %}checked{% endif %} onchange="this.form.requestSubmit()"> child</label>
@@ -17,14 +17,14 @@
     <div class="muted" style="color: var(--vulgarr-outdated-text); margin-top: 0.3rem;">{{ season.gating_message }}</div>
     {% endif %}
   </td>
-  <td>
+  <td data-label="Precision">
     <form hx-post="/library/shows/{{ series_id }}/season/{{ season.season_number }}/toggle-precise" hx-target="#season-row-{{ season.season_number }}" hx-swap="outerHTML">
       <button type="submit" class="small {{ 'secondary' if not season.precise_mute else '' }}" title="Mute a narrow window around each word instead of the whole subtitle line">
         {{ 'precise' if season.precise_mute else 'whole line' }}
       </button>
     </form>
   </td>
-  <td>
+  <td data-label="">
     <form hx-post="/library/shows/{{ series_id }}/season/{{ season.season_number }}/process" hx-target="#season-row-{{ season.season_number }}" hx-swap="outerHTML">
       <button type="submit" class="small" title="Queue every episode in this season that already has a subtitle">Process</button>
     </form>
