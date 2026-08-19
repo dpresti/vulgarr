@@ -225,18 +225,19 @@
         padding: 0.5rem 0.6rem; border-right: none; border-bottom: 1px solid var(--vulgarr-border);
         position: sticky; top: 0; z-index: 20; overflow: hidden;
       }
-      .sidebar-brand { display: flex; align-items: center; padding: 0; border-bottom: none; margin-bottom: 0; margin-right: 0.4rem; flex-shrink: 0; }
-      .sidebar-brand svg { width: 30px; height: 30px; margin: 0; }
+      .sidebar-brand { display: flex; align-items: center; padding: 0; border-bottom: none; margin-bottom: 0; margin-right: 0.3rem; flex-shrink: 0; }
+      .sidebar-brand svg { width: 32px; height: 32px; margin: 0; }
       .sidebar-brand .brand-wordmark, .sidebar-brand .brand-tagline { display: none; }
       .sidebar-toggle { display: none; }
       .sidebar nav {
-        flex-direction: row; padding: 0; gap: 1px; flex: 1; min-width: 0;
+        flex-direction: row; padding: 0; gap: 0; flex: 1; min-width: 0;
         overflow-x: auto; -webkit-overflow-scrolling: touch; scrollbar-width: none;
+        justify-content: space-between;
       }
       .sidebar nav::-webkit-scrollbar { display: none; }
       .sidebar nav .nav-group { display: contents; }
-      .sidebar nav a { padding: 8px 7px; flex-shrink: 0; }
-      .sidebar nav a i { font-size: 1.2rem; }
+      .sidebar nav a { padding: 12px 10px; flex-shrink: 0; min-width: 44px; min-height: 44px; justify-content: center; }
+      .sidebar nav a i { font-size: 1.5rem; }
       .sidebar nav .nav-label, .sidebar nav .nav-sub-group { display: none; }
       /* .nav-sub-group.open (2 base rules up) is more specific than the plain
          .nav-sub-group hide above, so it wins the cascade and pops the text
