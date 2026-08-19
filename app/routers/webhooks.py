@@ -5,7 +5,6 @@ from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, Request
 
-from app.config import settings as app_settings
 from app.db.models import MediaType, TriggerSource
 from app.db.session import get_session, get_setting
 from app.integrations import bazarr as bazarr_integration
@@ -29,19 +28,22 @@ def _guess_media_type(video_path: Path) -> MediaType:
     return MediaType.episode if _EPISODE_PATH_HINT_RE.search(str(video_path)) else MediaType.movie
 
 
-def _check_token(request: Request) -> None:
-    if not app_settings.webhook_token:
+async def _check_token(request: Request) -> None:
+    async with get_session() as session:
+        token = await get_setting(session, "webhook_token")
+    if not token:
         return
-    if request.query_params.get("token") != app_settings.webhook_token:
+    if request.query_params.get("token") != token:
         raise HTTPException(status_code=401, detail="Invalid or missing webhook token")
 
 
 @router.post("/sonarr")
 async def sonarr_webhook(request: Request):
-    _check_token(request)
+    await _check_token(request)
     async with get_session() as session:
         if not await get_setting(session, "trigger_sonarr_radarr_enabled"):
             return {"status": "ignored", "reason": "sonarr/radarr trigger disabled in settings"}
+        default_subtitle_language = await get_setting(session, "default_subtitle_language")
 
     payload = await request.json()
     parsed = sonarr_integration.parse_import_webhook(payload)
@@ -49,7 +51,7 @@ async def sonarr_webhook(request: Request):
         return {"status": "ignored", "reason": "not an import/upgrade event"}
 
     video_path = parsed["video_path"]
-    subtitle = find_subtitle_for_video(Path(video_path), app_settings.default_subtitle_language)
+    subtitle = find_subtitle_for_video(Path(video_path), default_subtitle_language)
 
     if subtitle is not None:
         async with get_session() as session:
@@ -86,10 +88,11 @@ async def sonarr_webhook(request: Request):
 
 @router.post("/radarr")
 async def radarr_webhook(request: Request):
-    _check_token(request)
+    await _check_token(request)
     async with get_session() as session:
         if not await get_setting(session, "trigger_sonarr_radarr_enabled"):
             return {"status": "ignored", "reason": "sonarr/radarr trigger disabled in settings"}
+        default_subtitle_language = await get_setting(session, "default_subtitle_language")
 
     payload = await request.json()
     parsed = radarr_integration.parse_import_webhook(payload)
@@ -97,7 +100,7 @@ async def radarr_webhook(request: Request):
         return {"status": "ignored", "reason": "not an import/upgrade event"}
 
     video_path = parsed["video_path"]
-    subtitle = find_subtitle_for_video(Path(video_path), app_settings.default_subtitle_language)
+    subtitle = find_subtitle_for_video(Path(video_path), default_subtitle_language)
 
     if subtitle is not None:
         async with get_session() as session:
@@ -127,7 +130,7 @@ async def radarr_webhook(request: Request):
 
 @router.post("/bazarr")
 async def bazarr_webhook(request: Request):
-    _check_token(request)
+    await _check_token(request)
     async with get_session() as session:
         if not await get_setting(session, "trigger_bazarr_enabled"):
             return {"status": "ignored", "reason": "bazarr trigger disabled in settings"}

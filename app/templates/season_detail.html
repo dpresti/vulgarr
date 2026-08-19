@@ -1,6 +1,10 @@
 {% extends "base.html" %}
 {% block content %}
+  {% if came_from == 'library' %}
+  <a class="back-link" href="/library"><i class="ti ti-arrow-left" aria-hidden="true"></i>Back to Library</a>
+  {% else %}
   <a class="back-link" href="/library/shows/{{ series_id }}"><i class="ti ti-arrow-left" aria-hidden="true"></i>Back to {{ series_title or 'Unknown series' }}</a>
+  {% endif %}
   <div class="toolbar">
     <h1>{{ series_title or 'Unknown series' }} &mdash; Season {{ season_number }}</h1>
   </div>

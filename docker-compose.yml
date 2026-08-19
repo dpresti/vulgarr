@@ -7,7 +7,15 @@ services:
       - ${SPF_PORT:-8011}:8000
     environment:
       TZ: ${TZ}
+      # Matches the host user that owns SPF_DATA_DIR/MEDIA_ROOT_HOST_PATH below, so
+      # files this container creates aren't owned by some arbitrary build-time uid.
+      # `id -u`/`id -g` on the host tells you what to set these to.
+      PUID: ${PUID:-1000}
+      PGID: ${PGID:-1000}
       SPF_MEDIA_ROOT: ${SPF_MEDIA_ROOT:-/media}
+      # Sonarr/Radarr/Bazarr URL+API key and the webhook token are only *seeded* from
+      # these on first run -- after that they live in the database and are fully
+      # editable from Settings in the UI without touching this file or restarting.
       SPF_SONARR_URL: http://sonarr:8989
       SPF_SONARR_API_KEY: ${SONARR_API_KEY}
       SPF_RADARR_URL: http://radarr:7878

@@ -2,12 +2,11 @@ import datetime
 from pathlib import Path
 from urllib.parse import urlencode
 
-from fastapi import APIRouter, Form, Request
+from fastapi import APIRouter, Form, Query, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from sqlalchemy import Select, case, func, select, update
 
-from app.config import settings as app_settings
 from app.db.models import MediaType, Title, TriggerSource
 from app.db.session import get_session, get_setting
 from app.domain import Severity, is_mkv_path, parse_severity_levels, serialize_severity_levels
@@ -474,13 +473,13 @@ async def _load_season(session, series_id: int, season_number: int, current_vers
 
 
 @router.get("/title/{title_id}", response_class=HTMLResponse)
-async def title_detail(request: Request, title_id: int):
+async def title_detail(request: Request, title_id: int, from_: str | None = Query(default=None, alias="from")):
     async with get_session() as session:
         current_version = int(await get_setting(session, "wordlist_version"))
         title = await session.get(Title, title_id)
         row = _row_dict(title, current_version)
 
-    return templates.TemplateResponse("title_detail.html", {"request": request, "row": row})
+    return templates.TemplateResponse("title_detail.html", {"request": request, "row": row, "came_from": from_})
 
 
 @router.get("/shows/{series_id}", response_class=HTMLResponse)
@@ -502,7 +501,12 @@ async def show_detail(request: Request, series_id: int):
 
 
 @router.get("/shows/{series_id}/season/{season_number}", response_class=HTMLResponse)
-async def season_detail(request: Request, series_id: int, season_number: int):
+async def season_detail(
+    request: Request,
+    series_id: int,
+    season_number: int,
+    from_: str | None = Query(default=None, alias="from"),
+):
     async with get_session() as session:
         current_version = int(await get_setting(session, "wordlist_version"))
         name_result = await session.execute(
@@ -526,6 +530,7 @@ async def season_detail(request: Request, series_id: int, season_number: int):
             "season_number": season_number,
             "rows": rows,
             "severity_options": SEVERITY_OPTIONS,
+            "came_from": from_,
         },
     )
 
@@ -533,11 +538,15 @@ async def season_detail(request: Request, series_id: int, season_number: int):
 @router.post("/sync")
 async def sync_library(request: Request):
     async with get_session() as session:
-        if app_settings.sonarr_url and app_settings.sonarr_api_key:
-            client = SonarrClient(app_settings.sonarr_url, app_settings.sonarr_api_key)
+        sonarr_url = await get_setting(session, "sonarr_url")
+        sonarr_api_key = await get_setting(session, "sonarr_api_key")
+        radarr_url = await get_setting(session, "radarr_url")
+        radarr_api_key = await get_setting(session, "radarr_api_key")
+        if sonarr_url and sonarr_api_key:
+            client = SonarrClient(sonarr_url, sonarr_api_key)
             await sync_sonarr_library(session, client)
-        if app_settings.radarr_url and app_settings.radarr_api_key:
-            client = RadarrClient(app_settings.radarr_url, app_settings.radarr_api_key)
+        if radarr_url and radarr_api_key:
+            client = RadarrClient(radarr_url, radarr_api_key)
             await sync_radarr_library(session, client)
 
     return RedirectResponse(url="/settings", status_code=303)
@@ -714,25 +723,28 @@ async def search_subtitle_via_bazarr(
     async with get_session() as session:
         current_version = int(await get_setting(session, "wordlist_version"))
         title = await session.get(Title, title_id)
+        bazarr_url = await get_setting(session, "bazarr_url")
+        bazarr_api_key = await get_setting(session, "bazarr_api_key")
+        default_subtitle_language = await get_setting(session, "default_subtitle_language")
 
-        if not app_settings.bazarr_url or not app_settings.bazarr_api_key:
-            message = "Bazarr isn't configured (missing URL/API key)."
+        if not bazarr_url or not bazarr_api_key:
+            message = "Bazarr isn't configured (missing URL/API key) -- set it in Settings."
         elif title.media_type == MediaType.episode and not (title.sonarr_series_id and title.sonarr_episode_id):
             message = "Missing Sonarr series/episode ID -- try syncing the library first."
         elif title.media_type == MediaType.movie and not title.radarr_movie_id:
             message = "Missing Radarr movie ID -- try syncing the library first."
         else:
-            client = BazarrClient(app_settings.bazarr_url, app_settings.bazarr_api_key)
+            client = BazarrClient(bazarr_url, bazarr_api_key)
             try:
                 if title.media_type == MediaType.episode:
                     ok = await client.search_episode_subtitle(
                         series_id=title.sonarr_series_id,
                         episode_id=title.sonarr_episode_id,
-                        language=app_settings.default_subtitle_language,
+                        language=default_subtitle_language,
                     )
                 else:
                     ok = await client.search_movie_subtitle(
-                        radarr_id=title.radarr_movie_id, language=app_settings.default_subtitle_language
+                        radarr_id=title.radarr_movie_id, language=default_subtitle_language
                     )
             except Exception as exc:  # noqa: BLE001 -- surface any connection/API error to the UI
                 ok = False
@@ -741,10 +753,10 @@ async def search_subtitle_via_bazarr(
                 if not ok:
                     message = "Bazarr rejected the search request."
                 else:
-                    subtitle = find_subtitle_for_video(Path(title.video_path), app_settings.default_subtitle_language)
+                    subtitle = find_subtitle_for_video(Path(title.video_path), default_subtitle_language)
                     if subtitle:
                         title.subtitle_path = str(subtitle)
-                        title.subtitle_language = app_settings.default_subtitle_language
+                        title.subtitle_language = default_subtitle_language
                         await session.commit()
                         await job_queue.enqueue(title.id, TriggerSource.manual)
                         message = "Found it! Subtitle downloaded, queued for processing."
@@ -768,6 +780,10 @@ async def search_mkv_replacement(
     async with get_session() as session:
         current_version = int(await get_setting(session, "wordlist_version"))
         title = await session.get(Title, title_id)
+        sonarr_url = await get_setting(session, "sonarr_url")
+        sonarr_api_key = await get_setting(session, "sonarr_api_key")
+        radarr_url = await get_setting(session, "radarr_url")
+        radarr_api_key = await get_setting(session, "radarr_api_key")
 
         if is_mkv_path(title.video_path):
             message = "This file is already .mkv."
@@ -775,17 +791,17 @@ async def search_mkv_replacement(
             message = "Missing Sonarr series/episode ID -- try syncing the library first."
         elif title.media_type == MediaType.movie and not title.radarr_movie_id:
             message = "Missing Radarr movie ID -- try syncing the library first."
-        elif title.media_type == MediaType.episode and not (app_settings.sonarr_url and app_settings.sonarr_api_key):
-            message = "Sonarr isn't configured (missing URL/API key)."
-        elif title.media_type == MediaType.movie and not (app_settings.radarr_url and app_settings.radarr_api_key):
-            message = "Radarr isn't configured (missing URL/API key)."
+        elif title.media_type == MediaType.episode and not (sonarr_url and sonarr_api_key):
+            message = "Sonarr isn't configured (missing URL/API key) -- set it in Settings."
+        elif title.media_type == MediaType.movie and not (radarr_url and radarr_api_key):
+            message = "Radarr isn't configured (missing URL/API key) -- set it in Settings."
         else:
             try:
                 if title.media_type == MediaType.episode:
-                    client = SonarrClient(app_settings.sonarr_url, app_settings.sonarr_api_key)
+                    client = SonarrClient(sonarr_url, sonarr_api_key)
                     await client.trigger_episode_search(title.sonarr_episode_id)
                 else:
-                    client = RadarrClient(app_settings.radarr_url, app_settings.radarr_api_key)
+                    client = RadarrClient(radarr_url, radarr_api_key)
                     await client.trigger_movie_search(title.radarr_movie_id)
             except Exception as exc:  # noqa: BLE001 -- surface any connection/API error to the UI
                 message = f"Search request failed: {exc}"

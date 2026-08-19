@@ -117,6 +117,9 @@ async def process_video(
     most_inclusive_level = levels[0]
     representative_count = len(matches_by_level[most_inclusive_level])
 
+    clean_track_title = await get_setting(session, "clean_track_title")
+    clean_track_language = await get_setting(session, "clean_track_language")
+
     backup_root = app_settings.data_dir / "backups"
     result = await remux_with_clean_track(
         video_path=video_path,
@@ -126,8 +129,8 @@ async def process_video(
         backup_root=backup_root,
         ffmpeg_bin=app_settings.ffmpeg_bin,
         ffprobe_bin=app_settings.ffprobe_bin,
-        clean_track_title=app_settings.clean_track_title,
-        clean_track_language=app_settings.clean_track_language,
+        clean_track_title=clean_track_title,
+        clean_track_language=clean_track_language,
         known_clean_indices=known_clean_indices,
         on_progress=on_progress,
         on_stage=on_stage,

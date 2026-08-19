@@ -3,15 +3,19 @@
   <div class="toolbar">
     <h1>Library</h1>
   </div>
-  <p class="muted" style="margin-top: -0.5rem;">Every fully-processed title (movies and episodes). See <a href="/library/movies">Movies</a> or <a href="/library/shows">TV Shows</a> for the full library regardless of status.</p>
+  <p class="muted" style="margin-top: -0.5rem;">Every fully-processed title (movies and episodes). See the full library regardless of status:</p>
+  <p style="margin: 0.5rem 0 1rem; display: flex; gap: 0.5rem;">
+    <a class="btn-link small" href="/library/movies"><i class="ti ti-movie" aria-hidden="true"></i>Movies</a>
+    <a class="btn-link small" href="/library/shows"><i class="ti ti-device-tv" aria-hidden="true"></i>TV Shows</a>
+  </p>
 
   <form method="get" action="/library" style="margin: 0.75rem 0;">
     <input type="text" name="q" placeholder="Search processed titles…" value="{{ q }}" style="min-width: 320px;">
     <button type="submit">Search</button>
-    {% if q %}<a href="/library" class="muted">clear</a>{% endif %}
+    {% if q %}<a href="/library" class="btn-link small">Clear</a>{% endif %}
   </form>
 
-  {% with rows=movie_rows %}
+  {% with rows=movie_rows, from_page='library' %}
     {% include "partials/poster_grid.html" %}
   {% endwith %}
   {% with total=movie_total, page=movie_page, page_size=movie_page_size, pager_link=movie_pager_qs %}

@@ -37,7 +37,7 @@
     <input type="hidden" name="sort" value="{{ sort or '' }}">
     <input type="hidden" name="dir" value="{{ sort_dir }}">
     <button type="submit">Apply</button>
-    {% if q or severity != 'all' or enabled != 'all' %}<a href="/wordlist" class="muted">clear</a>{% endif %}
+    {% if q or severity != 'all' or enabled != 'all' %}<a href="/wordlist" class="btn-link small">Clear</a>{% endif %}
   </form>
 
   {% include "partials/wordlist_table.html" %}

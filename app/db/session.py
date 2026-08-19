@@ -1,5 +1,8 @@
+import hashlib
+import hmac
 import json
 import re
+import secrets
 from contextlib import asynccontextmanager
 from typing import Any
 
@@ -135,7 +138,11 @@ async def _backfill_episode_grouping_fields(session: AsyncSession) -> None:
 engine = create_async_engine(settings.database_url, echo=False)
 async_session_maker = async_sessionmaker(engine, expire_on_commit=False)
 
-# Defaults for settings that must exist for the app to function.
+# Defaults for settings that must exist for the app to function. Integration
+# URLs/keys and other values that used to be env-only (see app/config.py) are
+# seeded here from the environment on first run, then fully owned by the
+# Settings page from then on -- editing them there no longer requires a
+# redeploy/restart.
 DEFAULT_SETTINGS: dict[str, Any] = {
     "wordlist_version": 1,
     "concurrency_cap": settings.default_concurrency,
@@ -144,8 +151,6 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "off_hours_end": "07:00",
     # Ordered list of enabled trigger sources; earlier entries take priority when
     # de-duplicating near-simultaneous webhook events for the same title.
-    # Bazarr is included but the user's Bazarr instance is currently down, so
-    # sonarr/radarr (import + poll-for-subtitle) is first until that's fixed.
     "trigger_priority": ["sonarr_radarr", "bazarr"],
     "trigger_bazarr_enabled": False,
     "trigger_sonarr_radarr_enabled": True,
@@ -157,7 +162,43 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     # estimated windows) or whole-cue muting (safer, guaranteed to cover the word).
     # Existing titles are unaffected by changing this -- it's only applied at creation.
     "default_precise_mute": False,
+    # Integrations -- seeded from SPF_* env vars once, editable in Settings after that.
+    "sonarr_url": settings.sonarr_url,
+    "sonarr_api_key": settings.sonarr_api_key,
+    "radarr_url": settings.radarr_url,
+    "radarr_api_key": settings.radarr_api_key,
+    "bazarr_url": settings.bazarr_url,
+    "bazarr_api_key": settings.bazarr_api_key,
+    # Never seeded blank -- an unset webhook token used to mean "no auth check at
+    # all" on inbound webhooks. A fresh install with nothing in .env now gets a
+    # random token instead of silently being wide open.
+    "webhook_token": settings.webhook_token or secrets.token_urlsafe(32),
+    "clean_track_title": settings.clean_track_title,
+    "clean_track_language": settings.clean_track_language,
+    "default_subtitle_language": settings.default_subtitle_language,
+    # 0 = keep every backup forever (current/original behavior).
+    "backup_retention_days": 0,
+    # Optional HTTP Basic Auth in front of the whole UI (webhooks are exempt --
+    # they already require their own token). Off by default so existing
+    # deployments behind a trusted network/reverse proxy are unaffected.
+    "auth_enabled": False,
+    "auth_username": "",
+    "auth_password_hash": "",
 }
+
+
+def hash_password(password: str) -> str:
+    salt = secrets.token_hex(16)
+    digest = hashlib.pbkdf2_hmac("sha256", password.encode(), bytes.fromhex(salt), 200_000)
+    return f"{salt}${digest.hex()}"
+
+
+def verify_password(password: str, stored_hash: str) -> bool:
+    if not stored_hash or "$" not in stored_hash:
+        return False
+    salt, _, expected = stored_hash.partition("$")
+    digest = hashlib.pbkdf2_hmac("sha256", password.encode(), bytes.fromhex(salt), 200_000)
+    return hmac.compare_digest(digest.hex(), expected)
 
 
 async def _seed_default_wordlist_if_empty(session: AsyncSession) -> None:

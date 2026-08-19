@@ -64,10 +64,19 @@ async def queue_page(request: Request):
 
 @router.get("/topbar", response_class=HTMLResponse)
 async def queue_topbar(request: Request):
-    active, _recent, _running, _waiting = await _load_jobs()
+    from app.db.session import get_session
+
+    async with get_session() as session:
+        result = await session.execute(
+            select(ProcessingJob)
+            .options(selectinload(ProcessingJob.title))
+            .where(ProcessingJob.state == JobState.processing)
+            .order_by(ProcessingJob.started_at)
+        )
+        processing = result.scalars().all()
     return templates.TemplateResponse(
         "partials/queue_topbar.html",
-        {"request": request, "active": active},
+        {"request": request, "active": processing},
     )
 
 
