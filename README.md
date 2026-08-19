@@ -103,12 +103,12 @@ Then open `http://<host>:<SPF_PORT>/library/movies` (default port `8011`).
 - **Restrict processing to off-hours** — when on, queued jobs wait until the configured window (handles windows that cross midnight).
 - **Automation triggers** — independently enable/disable the Sonarr/Radarr and Bazarr triggers, and set which one takes priority for de-duplication.
 - **Integrations** — Sonarr/Radarr/Bazarr URLs+API keys, the webhook token, default subtitle language, and the clean track's title/language tag. Editable here at any time; `.env` only supplies the first-run defaults.
-- **Backups** — optional retention (in days) for files under `/data/backups`; 0 (default) keeps every backup forever.
+- **Backups** — retention (in days) for files under `/data/backups`; defaults to 7, 0 keeps every backup forever.
 - **Authentication** — optional HTTP Basic Auth in front of the entire UI (off by default). Turn this on if the app is reachable by anyone besides you — e.g. exposed outside your LAN — since nothing here is protected otherwise. Sonarr/Radarr/Bazarr's webhook calls are always exempt (they carry their own `?token=`, not a login).
 
 ## Notes / known trade-offs
 
-- Backups accumulate under `/data/backups` unless you set a retention period in Settings > Backups (off by default, since a backup is the only copy of the untouched original file).
+- Backups accumulate under `/data/backups` for 7 days by default (Settings > Backups); set it to 0 to keep every backup forever instead.
 - `backup_root` (`/data/backups`) should ideally be on the same filesystem as your media mount; otherwise the "move original aside" step becomes a slower copy+delete instead of an instant rename.
 - Subtitle matching mutes the whole subtitle cue's time range (padded slightly), not word-level timing — there's no word-level timestamp data available from a plain `.srt`.
 - There's no per-user accounts/roles — Settings > Authentication is a single shared username/password (or nothing) in front of the whole app, not a multi-user system.

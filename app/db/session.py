@@ -176,8 +176,9 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "clean_track_title": settings.clean_track_title,
     "clean_track_language": settings.clean_track_language,
     "default_subtitle_language": settings.default_subtitle_language,
-    # 0 = keep every backup forever (current/original behavior).
-    "backup_retention_days": 0,
+    # 0 = keep every backup forever. Defaults to 7 so backups don't accumulate
+    # unbounded out of the box; editable in Settings > Backups.
+    "backup_retention_days": 7,
     # Optional HTTP Basic Auth in front of the whole UI (webhooks are exempt --
     # they already require their own token). Off by default so existing
     # deployments behind a trusted network/reverse proxy are unaffected.
