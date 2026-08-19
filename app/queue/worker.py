@@ -1,0 +1,383 @@
+"""Lightweight in-process asyncio job queue.
+
+Deliberately not Celery/Redis: a single asyncio.Queue plus a bounded set of
+worker tasks, backed by the ProcessingJob table for persistence/visibility.
+"""
+
+import asyncio
+import datetime
+import logging
+import time
+from pathlib import Path
+
+from sqlalchemy import select
+
+from app.config import settings as app_settings
+from app.db.models import JobState, MediaType, ProcessingJob, Title, TriggerSource
+from app.db.session import get_session, get_setting
+from app.domain import is_mkv_path, parse_index_list, parse_severity_levels, serialize_index_list
+from app.integrations.bazarr import BazarrClient
+from app.integrations.radarr import RadarrClient
+from app.integrations.sonarr import SonarrClient
+from app.integrations.subtitle_lookup import find_subtitle_for_video
+from app.library import poll_for_subtitle_then_enqueue
+from app.mux.remux import RemuxError
+from app.processing import ProcessingError, process_video
+
+logger = logging.getLogger(__name__)
+
+# How often the ffmpeg progress callback is allowed to actually write to the DB.
+# ffmpeg's -progress stream emits updates far more often than that; without this,
+# a single job would generate a commit per frame.
+_PROGRESS_UPDATE_MIN_INTERVAL_SECONDS = 1.5
+
+# How often to check Sonarr/Radarr for whether a requested mkv replacement has landed
+# yet. This is a real search+grab+import cycle on their end, which can take anywhere
+# from seconds to a long time depending on availability -- no need to check often.
+_REPLACEMENT_CHECK_INTERVAL_SECONDS = 60.0
+
+
+def _format_eta(seconds: float) -> str:
+    seconds = max(0, int(seconds))
+    minutes, seconds = divmod(seconds, 60)
+    hours, minutes = divmod(minutes, 60)
+    if hours:
+        return f"{hours}h {minutes}m remaining"
+    if minutes:
+        return f"{minutes}m {seconds}s remaining"
+    return f"{seconds}s remaining"
+
+
+def _parse_hhmm(value: str) -> datetime.time:
+    hour, minute = value.split(":")
+    return datetime.time(hour=int(hour), minute=int(minute))
+
+
+def is_within_off_hours_window(now: datetime.time, start: datetime.time, end: datetime.time) -> bool:
+    if start <= end:
+        return start <= now < end
+    return now >= start or now < end  # window wraps past midnight
+
+
+class JobQueue:
+    def __init__(self) -> None:
+        self._pending: asyncio.Queue[int] = asyncio.Queue()
+        self._running: dict[int, asyncio.Task] = {}
+        self._dispatcher_task: asyncio.Task | None = None
+        self._stopping = False
+        self._last_replacement_check = 0.0
+
+    async def start(self) -> None:
+        # Re-queue anything left mid-flight from a prior process crash/restart.
+        async with get_session() as session:
+            result = await session.execute(
+                select(ProcessingJob).where(ProcessingJob.state.in_([JobState.queued, JobState.processing]))
+            )
+            for job in result.scalars().all():
+                job.state = JobState.queued
+                job.started_at = None
+                title = await session.get(Title, job.title_id)
+                if title is not None:
+                    title.status = "queued"
+            await session.commit()
+
+            result = await session.execute(
+                select(ProcessingJob.id).where(ProcessingJob.state == JobState.queued)
+            )
+            for (job_id,) in result.all():
+                await self._pending.put(job_id)
+
+        self._dispatcher_task = asyncio.create_task(self._dispatch_loop())
+
+    async def stop(self) -> None:
+        self._stopping = True
+        if self._dispatcher_task:
+            self._dispatcher_task.cancel()
+        for task in list(self._running.values()):
+            task.cancel()
+
+    async def cancel_job(self, job_id: int) -> tuple[bool, str | None]:
+        """Cancel a queued or in-progress job. Returns (success, error_message).
+
+        A job that's already past the backup/swap step (progress nudged to >=97%
+        by on_stage) is refused rather than interrupted -- that step moves the
+        original file aside and swaps the verified replacement in; cutting it off
+        mid-way risks leaving the file in a half-swapped state, and it's normally
+        brief anyway, so it's simpler and safer to just let it finish.
+        """
+        task = self._running.get(job_id)
+        if task is not None:
+            async with get_session() as session:
+                job = await session.get(ProcessingJob, job_id)
+                if job is None or job.state != JobState.processing:
+                    return False, "Job is no longer running"
+                if (job.progress_percent or 0) >= 97:
+                    return False, "Too far along to cancel -- finishing up"
+            # Let _run_job's own CancelledError handler own the state transition,
+            # rather than writing to the job row from this separate session too --
+            # avoids two sessions racing to commit conflicting updates to the same row.
+            task.cancel()
+            return True, None
+
+        async with get_session() as session:
+            job = await session.get(ProcessingJob, job_id)
+            if job is None or job.state != JobState.queued:
+                return False, "Job is not queued or running"
+            job.state = JobState.cancelled
+            job.error = "Cancelled by user"
+            job.finished_at = datetime.datetime.utcnow()
+            title = await session.get(Title, job.title_id)
+            if title is not None:
+                title.status = "cancelled"
+            await session.commit()
+        return True, None
+
+    async def enqueue(self, title_id: int, trigger_source: TriggerSource) -> int:
+        async with get_session() as session:
+            wordlist_version = int(await get_setting(session, "wordlist_version"))
+            job = ProcessingJob(
+                title_id=title_id,
+                state=JobState.queued,
+                trigger_source=trigger_source,
+                wordlist_version=wordlist_version,
+            )
+            session.add(job)
+            title = await session.get(Title, title_id)
+            if title is not None:
+                title.status = "queued"
+            await session.commit()
+            await session.refresh(job)
+        await self._pending.put(job.id)
+        return job.id
+
+    async def _dispatch_loop(self) -> None:
+        while not self._stopping:
+            try:
+                async with get_session() as session:
+                    cap = int(await get_setting(session, "concurrency_cap"))
+                    off_hours_enabled = bool(await get_setting(session, "off_hours_enabled"))
+                    off_start = _parse_hhmm(await get_setting(session, "off_hours_start"))
+                    off_end = _parse_hhmm(await get_setting(session, "off_hours_end"))
+
+                allowed_to_run = True
+                if off_hours_enabled:
+                    now = datetime.datetime.now().time()
+                    allowed_to_run = is_within_off_hours_window(now, off_start, off_end)
+
+                if allowed_to_run:
+                    while len(self._running) < cap and not self._pending.empty():
+                        job_id = self._pending.get_nowait()
+                        task = asyncio.create_task(self._run_job(job_id))
+                        self._running[job_id] = task
+                        task.add_done_callback(lambda t, jid=job_id: self._running.pop(jid, None))
+
+                now_monotonic = time.monotonic()
+                if now_monotonic - self._last_replacement_check >= _REPLACEMENT_CHECK_INTERVAL_SECONDS:
+                    self._last_replacement_check = now_monotonic
+                    await self._check_awaiting_replacements()
+
+                await asyncio.sleep(2)
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger.exception("Dispatcher loop error")
+                await asyncio.sleep(5)
+
+    async def _check_awaiting_replacements(self) -> None:
+        async with get_session() as session:
+            result = await session.execute(select(Title.id).where(Title.status == "awaiting_mkv"))
+            title_ids = [row[0] for row in result.all()]
+        for title_id in title_ids:
+            try:
+                await self._check_one_replacement(title_id)
+            except Exception:
+                logger.exception("Replacement check failed for title %s", title_id)
+
+    async def _check_one_replacement(self, title_id: int) -> None:
+        async with get_session() as session:
+            title = await session.get(Title, title_id)
+            if title is None or title.status != "awaiting_mkv":
+                return
+
+            new_path: str | None = None
+            if title.media_type == MediaType.movie and title.radarr_movie_id:
+                if app_settings.radarr_url and app_settings.radarr_api_key:
+                    client = RadarrClient(app_settings.radarr_url, app_settings.radarr_api_key)
+                    new_path = await client.get_current_movie_file_path(title.radarr_movie_id)
+            elif title.media_type == MediaType.episode and title.sonarr_episode_id:
+                if app_settings.sonarr_url and app_settings.sonarr_api_key:
+                    client = SonarrClient(app_settings.sonarr_url, app_settings.sonarr_api_key)
+                    new_path = await client.get_current_episode_file_path(title.sonarr_episode_id)
+
+            if not new_path or new_path == title.video_path or not is_mkv_path(new_path):
+                return  # nothing changed yet, or the grabbed replacement still isn't mkv
+
+            logger.info("mkv replacement landed for title %s: %s", title_id, new_path)
+            title.video_path = new_path
+            title.has_clean_track = False
+            title.clean_track_audio_indices = None
+            title.replacement_requested_at = None
+            title.last_error = None
+
+            subtitle = find_subtitle_for_video(Path(new_path), app_settings.default_subtitle_language)
+            if subtitle:
+                title.subtitle_path = str(subtitle)
+                title.subtitle_language = app_settings.default_subtitle_language
+                title.status = "queued"
+                await session.commit()
+                await self.enqueue(title_id, TriggerSource.manual)
+                return
+
+            # No subtitle yet for the brand-new file. Trigger a Bazarr search proactively
+            # (Bazarr may not have scanned/searched this just-grabbed file on its own
+            # yet), then fall back to the same bounded polling the Sonarr/Radarr import
+            # webhook uses -- a single immediate check here was the bug: Bazarr's search
+            # can take a few seconds to actually place the file, and checking only once
+            # right away missed it, permanently giving up instead of catching it shortly
+            # after.
+            title.subtitle_path = None
+            title.status = "awaiting_subtitle"
+            media_type = title.media_type
+            display_name = title.display_name
+            sonarr_series_id = title.sonarr_series_id
+            sonarr_episode_id = title.sonarr_episode_id
+            radarr_movie_id = title.radarr_movie_id
+            series_title = title.series_title
+            season_number = title.season_number
+            episode_number = title.episode_number
+            await session.commit()
+
+        if app_settings.bazarr_url and app_settings.bazarr_api_key:
+            bazarr = BazarrClient(app_settings.bazarr_url, app_settings.bazarr_api_key)
+            try:
+                if media_type == MediaType.episode:
+                    await bazarr.search_episode_subtitle(
+                        series_id=sonarr_series_id,
+                        episode_id=sonarr_episode_id,
+                        language=app_settings.default_subtitle_language,
+                    )
+                else:
+                    await bazarr.search_movie_subtitle(
+                        radarr_id=radarr_movie_id, language=app_settings.default_subtitle_language
+                    )
+            except Exception:
+                logger.exception("Bazarr search failed for replacement title %s", title_id)
+
+        asyncio.create_task(
+            poll_for_subtitle_then_enqueue(
+                video_path=new_path,
+                media_type=media_type,
+                display_name=display_name,
+                sonarr_series_id=sonarr_series_id,
+                sonarr_episode_id=sonarr_episode_id,
+                radarr_movie_id=radarr_movie_id,
+                trigger_source=TriggerSource.manual,
+                series_title=series_title,
+                season_number=season_number,
+                episode_number=episode_number,
+            )
+        )
+
+    async def _run_job(self, job_id: int) -> None:
+        async with get_session() as session:
+            job = await session.get(ProcessingJob, job_id)
+            if job is None:
+                return
+            if job.state == JobState.cancelled:
+                # Cancelled while still sitting in self._pending, before this
+                # task started -- nothing to do.
+                return
+            title = await session.get(Title, job.title_id)
+            if title is None:
+                job.state = JobState.failed
+                job.error = "Title no longer exists"
+                job.finished_at = datetime.datetime.utcnow()
+                await session.commit()
+                return
+
+            job.state = JobState.processing
+            job.started_at = datetime.datetime.utcnow()
+            job.progress_message = "Parsing subtitles and matching word list"
+            job.progress_percent = None
+            title.status = "processing"
+            await session.commit()
+
+            job_start_monotonic = time.monotonic()
+            last_update_monotonic = 0.0
+
+            async def on_progress(fraction: float) -> None:
+                nonlocal last_update_monotonic
+                now = time.monotonic()
+                is_final = fraction >= 0.999
+                if not is_final and now - last_update_monotonic < _PROGRESS_UPDATE_MIN_INTERVAL_SECONDS:
+                    return
+                last_update_monotonic = now
+
+                elapsed = now - job_start_monotonic
+                pct = round(fraction * 100, 1)
+                message = f"Muting audio (ffmpeg) -- {pct:.0f}%"
+                if fraction > 0.02 and not is_final:
+                    eta_seconds = elapsed * (1 - fraction) / fraction
+                    message += f", {_format_eta(eta_seconds)}"
+
+                job.progress_percent = pct
+                job.progress_message = message
+                await session.commit()
+
+            async def on_stage(message: str) -> None:
+                job.progress_message = message
+                # Nudge the bar forward past wherever ffmpeg's own progress topped
+                # out (throttling means it rarely reports exactly 100%), so these
+                # short post-mux steps still read as forward progress, not a freeze.
+                job.progress_percent = max(job.progress_percent or 0, 97.0)
+                await session.commit()
+
+            try:
+                if not title.subtitle_path:
+                    raise ProcessingError("No subtitle file associated with this title")
+
+                outcome = await process_video(
+                    session,
+                    video_path=Path(title.video_path),
+                    subtitle_path=Path(title.subtitle_path),
+                    severity_levels=parse_severity_levels(title.severity_levels),
+                    known_clean_indices=parse_index_list(title.clean_track_audio_indices),
+                    precise_mute=title.precise_mute,
+                    on_progress=on_progress,
+                    on_stage=on_stage,
+                )
+
+                job.state = JobState.done
+                job.progress_message = f"Done -- muted {outcome.matched_cue_count} cue(s)"
+                job.progress_percent = 100.0
+                job.finished_at = datetime.datetime.utcnow()
+
+                title.last_processed_at = datetime.datetime.utcnow()
+                title.last_processed_wordlist_version = job.wordlist_version
+                title.matched_cue_count = outcome.matched_cue_count
+                title.has_clean_track = True
+                title.clean_track_audio_indices = serialize_index_list(outcome.clean_track_indices)
+                title.last_error = None
+                title.status = "done"
+
+            except asyncio.CancelledError:
+                job.state = JobState.cancelled
+                job.error = "Cancelled by user"
+                job.finished_at = datetime.datetime.utcnow()
+                title.last_error = None
+                title.status = "cancelled"
+                await session.commit()
+                raise  # required so the Task itself is properly marked cancelled
+
+            except (ProcessingError, RemuxError, Exception) as exc:  # noqa: BLE001 -- surface all failures to the UI
+                logger.exception("Processing failed for title %s", title.id)
+                job.state = JobState.failed
+                job.error = str(exc)
+                job.finished_at = datetime.datetime.utcnow()
+                title.last_error = str(exc)
+                title.status = "failed"
+
+            await session.commit()
+
+
+job_queue = JobQueue()

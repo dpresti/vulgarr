@@ -1,0 +1,7 @@
+{% extends "base.html" %}
+{% block content %}
+  <h1>Queue</h1>
+  <div hx-get="/queue/partial" hx-trigger="every 2s" hx-swap="innerHTML">
+    {% include "partials/queue_table.html" %}
+  </div>
+{% endblock %}

@@ -1,0 +1,47 @@
+<form id="settings-form" hx-post="/settings" hx-target="#settings-form" hx-swap="outerHTML">
+  {% if saved %}<p style="color:#7fe3a0;">Saved.</p>{% endif %}
+
+  <div class="settings-grid">
+    <label for="concurrency_cap">Max concurrent ffmpeg jobs</label>
+    <input type="number" id="concurrency_cap" name="concurrency_cap" min="1" max="16" value="{{ values.concurrency_cap }}">
+
+    <label for="off_hours_enabled">Restrict processing to off-hours</label>
+    <input type="checkbox" id="off_hours_enabled" name="off_hours_enabled" {% if values.off_hours_enabled %}checked{% endif %}>
+
+    <label for="off_hours_start">Off-hours window start</label>
+    <input type="time" id="off_hours_start" name="off_hours_start" value="{{ values.off_hours_start }}">
+
+    <label for="off_hours_end">Off-hours window end</label>
+    <input type="time" id="off_hours_end" name="off_hours_end" value="{{ values.off_hours_end }}">
+
+    <label>Automation triggers</label>
+    <div>
+      <label class="muted">
+        <input type="checkbox" name="trigger_sonarr_radarr_enabled" {% if values.trigger_sonarr_radarr_enabled %}checked{% endif %}>
+        Sonarr/Radarr import (poll for subtitle)
+      </label><br>
+      <label class="muted">
+        <input type="checkbox" name="trigger_bazarr_enabled" {% if values.trigger_bazarr_enabled %}checked{% endif %}>
+        Bazarr subtitle-downloaded event
+      </label>
+    </div>
+
+    <label>Trigger priority</label>
+    <div class="muted">
+      <label><input type="radio" name="trigger_priority_first" value="sonarr_radarr" {% if values.trigger_priority[0] == 'sonarr_radarr' %}checked{% endif %}> Sonarr/Radarr first</label>
+      <label style="margin-left:1rem"><input type="radio" name="trigger_priority_first" value="bazarr" {% if values.trigger_priority[0] == 'bazarr' %}checked{% endif %}> Bazarr first</label>
+      <div>Used to de-duplicate near-simultaneous events for the same title, not to block either source.</div>
+    </div>
+
+    <label for="default_precise_mute">Default mute precision for new titles</label>
+    <div>
+      <label class="muted" title="Mute a narrow window around each word instead of the whole subtitle line">
+        <input type="checkbox" id="default_precise_mute" name="default_precise_mute" {% if values.default_precise_mute %}checked{% endif %}>
+        Precise mute by default (word-level estimate, not whole line)
+      </label>
+      <div class="muted">Only applies to titles discovered after this is changed -- existing titles keep whatever they're already set to, editable individually or per-show.</div>
+    </div>
+  </div>
+
+  <p><button type="submit">Save settings</button></p>
+</form>

@@ -1,0 +1,55 @@
+{% extends "base.html" %}
+{% block content %}
+  <p><a href="/library">&laquo; Library</a></p>
+  {% set current_levels = current_severity.split(',') %}
+  <div class="toolbar">
+    <h1>{{ series_title or 'Unknown series' }}</h1>
+    <div>
+      {% if severity_saved %}<span style="color:#7fe3a0;">Saved.</span>{% endif %}
+      <form class="inline" method="post" action="/library/shows/{{ series_id }}/severity">
+        <span class="muted">Tracks to generate for this show:</span>
+        <span class="severity-checks">
+          <label><input type="checkbox" name="sev_mild" {% if 'mild' in current_levels %}checked{% endif %}> mild</label>
+          <label><input type="checkbox" name="sev_moderate" {% if 'moderate' in current_levels %}checked{% endif %}> moderate</label>
+          <label><input type="checkbox" name="sev_strong" {% if 'strong' in current_levels %}checked{% endif %}> strong</label>
+        </span>
+        <button type="submit">Apply to all episodes</button>
+      </form>
+      <form class="inline" method="post" action="/library/shows/{{ series_id }}/toggle-precise" style="margin-top: 0.4rem;">
+        <label class="muted" title="Mute a narrow window around each word instead of the whole subtitle line">
+          <input type="checkbox" name="precise_mute" value="true" {% if current_precise_mute %}checked{% endif %}> Precise mute (word-level estimate, not whole line)
+        </label>
+        <button type="submit">Apply to all episodes</button>
+      </form>
+    </div>
+  </div>
+
+  <table>
+    <thead>
+      <tr>
+        <th>Season</th>
+        <th>Episodes</th>
+        <th>Done</th>
+        <th>Active</th>
+        <th>Failed</th>
+        <th>Outdated</th>
+        <th></th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for season in seasons %}
+      <tr>
+        <td>Season {{ season.season_number }}</td>
+        <td class="muted">{{ season.total }}</td>
+        <td class="muted">{{ season.done_count }}</td>
+        <td class="muted">{{ season.active_count }}</td>
+        <td class="muted">{{ season.failed_count }}</td>
+        <td>{% if season.outdated_count %}<span class="badge badge-outdated">{{ season.outdated_count }} outdated</span>{% else %}<span class="muted">—</span>{% endif %}</td>
+        <td><a href="/library/shows/{{ series_id }}/season/{{ season.season_number }}"><button type="button">View episodes</button></a></td>
+      </tr>
+      {% else %}
+      <tr><td colspan="7" class="muted">No seasons found.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+{% endblock %}

@@ -1,0 +1,18 @@
+{% if active %}
+<div id="topbar-jobs">
+  {% for job in active %}
+  <div class="topbar-job">
+    <span class="topbar-job-title">{{ job.title.display_name }}</span>
+    {% if job.progress_percent is not none %}
+    <progress value="{{ job.progress_percent }}" max="100"></progress>
+    <span class="topbar-job-pct">{{ job.progress_percent | round(0, 'floor') | int }}%</span>
+    {% else %}
+    <span class="badge badge-{{ job.state.value }}">{{ job.state.value }}</span>
+    {% endif %}
+    <span class="topbar-job-msg muted">{{ job.progress_message or '' }}</span>
+  </div>
+  {% endfor %}
+</div>
+{% else %}
+<div id="topbar-jobs"></div>
+{% endif %}
