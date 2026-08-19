@@ -99,6 +99,8 @@
     .btn-link.small { padding: 0.2rem 0.6rem; font-size: 0.78rem; }
     .main-wrap { flex: 1; min-width: 0; }
     main { padding: 1.5rem; max-width: 1100px; }
+    .search-bar { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; margin: 0.75rem 0; }
+    .search-bar input[type=text] { flex: 1; min-width: 120px; }
     .table-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; }
     table { width: 100%; border-collapse: collapse; margin-top: 1rem; }
     th, td { text-align: left; padding: 0.45rem 0.75rem; border-bottom: 1px solid var(--vulgarr-border); vertical-align: middle; }
@@ -315,6 +317,27 @@
       }
       .responsive-table td[data-label=""]::before { display: none; }
       .responsive-table td[data-label=""] { padding-top: 0.35rem; }
+
+      /* ---- mobile: a couple of tables read better as a 2-column grid of
+         fields than a single label:value-per-line list (Word List's 4 short
+         fields, Queue's title/state/trigger/result). Each cell goes back to
+         label-above-value (block) since the grid itself is what's doing the
+         compacting here, not the inline label trick above. ---- */
+      .responsive-table .card-grid tr { display: grid; grid-template-columns: 1fr 1fr; column-gap: 0.7rem; row-gap: 0.4rem; }
+      .responsive-table .card-grid td { display: block; padding: 0; }
+      .responsive-table .card-grid td::before { display: block; margin-bottom: 0.15rem; }
+      /* First field (the title/name) spans the full width above the 2-column
+         grid of the remaining fields, for tables where that field is the
+         primary identifier and/or the others don't divide evenly by 2. */
+      .responsive-table .card-grid-lead td:first-child { grid-column: 1 / -1; }
+      /* Queue's Recent table: Title/State read top-left/top-right in document
+         order already, but Trigger/Result need swapping to land as
+         bottom-right/bottom-left instead of the document-order bottom-left/
+         bottom-right -- `order` reflows auto-placed grid items without
+         touching the underlying table's real column order (used by the
+         non-mobile <table> too). */
+      .responsive-table .card-grid-reorder td:nth-child(3) { order: 4; }
+      .responsive-table .card-grid-reorder td:nth-child(4) { order: 3; }
     }
 
     /* A second, tighter tier for the smallest phones (e.g. iPhone SE-class,

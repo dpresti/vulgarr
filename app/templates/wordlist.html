@@ -22,7 +22,7 @@
     <input type="hidden" name="sort_dir" value="{{ sort_dir }}">
   </form>
 
-  <form method="get" action="/wordlist" class="inline" style="margin: 0.75rem 0;">
+  <form method="get" action="/wordlist" class="search-bar">
     <input type="text" name="q" placeholder="Search terms…" value="{{ q }}">
     <select name="severity">
       <option value="all" {% if severity == 'all' %}selected{% endif %}>All severities</option>

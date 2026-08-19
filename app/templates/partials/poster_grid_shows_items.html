@@ -11,7 +11,9 @@
       <div class="poster-scrim"><span class="meta-line">{{ show.done_count }} / {{ show.total }} processed</span></div>
     </div>
     <div class="poster-title">{{ show.series_title or 'Unknown series' }}</div>
+    {% if show.done_count %}
     <div class="poster-progress"><div class="poster-progress-fill" style="width: {{ pct }}%"></div></div>
+    {% endif %}
   </a>
 {% else %}
   <p class="muted">No shows found.</p>
