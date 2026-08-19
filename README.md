@@ -3,7 +3,7 @@
 </p>
 
 <h1 align="center">Vulgarr</h1>
-<p align="center">A self-hosted, Radarr/Sonarr-styled profanity filter for your Plex/Jellyfin library.</p>
+<p align="center">A self-hosted, Radarr/Sonarr-styled clean-audio-track generator for your Plex/Jellyfin library.</p>
 
 Vulgarr adds a second, selectable **"Clean"** audio track to movies and
 episodes by muting the audio under profane subtitle cues. Detection is
