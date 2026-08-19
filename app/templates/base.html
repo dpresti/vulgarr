@@ -161,6 +161,7 @@
     /* ---- poster grid (Library / Movies / TV Shows) ---- */
     .poster-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(148px, 1fr)); gap: 1.35rem 1.1rem; margin-top: 1.25rem; }
     .poster-card { display: block; text-decoration: none; color: inherit; }
+    .load-more-sentinel { grid-column: 1 / -1; display: flex; justify-content: center; align-items: center; min-height: 48px; padding: 1rem 0; }
     .poster-frame {
       position: relative; aspect-ratio: 2 / 3; border-radius: 8px; overflow: hidden;
       background: var(--vulgarr-bg-elevated); border: 1px solid var(--vulgarr-border);
@@ -246,6 +247,12 @@
       .sidebar nav .nav-sub-group.open { display: none; }
       .sidebar nav .nav-mobile-only { display: flex; }
       main { padding: 1rem; }
+
+      /* ---- mobile: a fixed min-width is exactly the kind of thing that forces
+         the page wider than the viewport (blank scrollable space to the right of
+         everything) -- no responsive rule can shrink an inline style, so this
+         only works because those are all a real .wide-input/.input-* class now. */
+      .wide-input, .input-md, .input-sm { width: 100%; max-width: 100%; min-width: 0; box-sizing: border-box; }
 
       /* ---- mobile: stack label/input pairs instead of a fixed 320px column ---- */
       .settings-grid { grid-template-columns: 1fr; max-width: 100%; }
