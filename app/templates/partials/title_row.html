@@ -16,6 +16,7 @@
   <td class="muted">{{ row.title.matched_cue_count if row.title.matched_cue_count is not none else '—' }}</td>
   <td>
     <form hx-post="/library/{{ row.title.id }}/severity" hx-target="#title-row-{{ row.title.id }}" hx-swap="outerHTML">
+      {% if season_context %}<input type="hidden" name="short_label" value="true">{% endif %}
       <span class="severity-checks">
         <label><input type="checkbox" name="sev_mild" {% if 'mild' in current_levels %}checked{% endif %} onchange="this.form.requestSubmit()"> mild</label>
         <label><input type="checkbox" name="sev_moderate" {% if 'moderate' in current_levels %}checked{% endif %} onchange="this.form.requestSubmit()"> moderate</label>
@@ -26,6 +27,7 @@
     <div class="muted" style="color: var(--vulgarr-outdated-text); margin-top: 0.3rem;">
       {{ row.severity_error }}
       <form class="inline" hx-post="/library/{{ row.title.id }}/search-mkv-replacement" hx-target="#title-row-{{ row.title.id }}" hx-swap="outerHTML">
+        {% if season_context %}<input type="hidden" name="short_label" value="true">{% endif %}
         <button type="submit" class="small secondary">Search for .mkv replacement</button>
       </form>
     </div>
@@ -35,6 +37,7 @@
   </td>
   <td>
     <form hx-post="/library/{{ row.title.id }}/toggle-precise" hx-target="#title-row-{{ row.title.id }}" hx-swap="outerHTML">
+      {% if season_context %}<input type="hidden" name="short_label" value="true">{% endif %}
       <button type="submit" class="small {{ 'secondary' if not row.title.precise_mute else '' }}" title="Mute a narrow window around each word instead of the whole subtitle line">
         {{ 'precise' if row.title.precise_mute else 'whole line' }}
       </button>
@@ -48,11 +51,13 @@
         <span class="muted">waiting on Bazarr…</span>
       {% elif not row.has_subtitle %}
       <form class="inline" hx-post="/library/{{ row.title.id }}/search-subtitle" hx-target="#title-row-{{ row.title.id }}" hx-swap="outerHTML" hx-indicator="#bazarr-indicator-{{ row.title.id }}">
+        {% if season_context %}<input type="hidden" name="short_label" value="true">{% endif %}
         <button type="submit" class="small" title="Search Bazarr for a subtitle, then queue for processing if found">Search Bazarr &amp; Process</button>
         <span id="bazarr-indicator-{{ row.title.id }}" class="htmx-indicator muted">searching…</span>
       </form>
       {% else %}
       <form class="inline" hx-post="/library/{{ row.title.id }}/process" hx-target="#title-row-{{ row.title.id }}" hx-swap="outerHTML">
+        {% if season_context %}<input type="hidden" name="short_label" value="true">{% endif %}
         <button type="submit" class="small">
           {% if row.status == 'not_processed' %}Process{% else %}Reprocess{% endif %}
         </button>

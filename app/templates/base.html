@@ -56,9 +56,12 @@
     .sidebar nav a i { font-size: 1.1rem; }
     .sidebar nav a:hover { color: var(--vulgarr-text-primary); }
     .sidebar nav a.active { background: var(--vulgarr-bg-elevated); color: var(--vulgarr-text-primary); }
-    .sidebar nav summary { padding: 0; margin: 0; }
-    .sidebar nav summary a { display: inline-flex; width: calc(100% - 1.3rem); }
+    .sidebar nav .nav-sub-group { display: none; flex-direction: column; gap: 2px; }
+    .sidebar nav .nav-sub-group.open { display: flex; }
     .sidebar nav .nav-sub { padding-left: 2.2rem; font-size: 0.85rem; font-weight: 500; }
+    .back-link { display: inline-flex; align-items: center; gap: 4px; color: var(--vulgarr-text-secondary); text-decoration: none; font-size: 0.85rem; font-weight: 600; margin-bottom: 0.75rem; }
+    .back-link:hover { color: var(--vulgarr-text-primary); }
+    .back-link i { font-size: 1.1rem; }
     .main-wrap { flex: 1; min-width: 0; }
     main { padding: 1.5rem; max-width: 1100px; }
     table { width: 100%; border-collapse: collapse; margin-top: 1rem; }
@@ -66,6 +69,8 @@
     th { color: var(--vulgarr-text-secondary); font-size: 0.85rem; text-transform: uppercase; }
     th a { color: inherit; text-decoration: none; }
     th a:hover { color: var(--vulgarr-accent); }
+    .title-link { color: var(--vulgarr-text-primary); text-decoration: none; font-weight: 600; }
+    .title-link:hover { color: var(--vulgarr-accent); }
     tbody tr:hover { background: var(--vulgarr-bg-row-hover); }
     .badge { display: inline-block; padding: 0.15rem 0.5rem; border-radius: 999px; font-size: 0.75rem; font-weight: 600; }
     .badge-done { background: var(--vulgarr-success-bg); color: var(--vulgarr-success-text); }
@@ -126,19 +131,6 @@
         for (let i = idx; i < boxes.length; i++) if (boxes[i]) boxes[i].checked = false;
       }
     }
-
-    // Remember collapsed/expanded <details> sections across page loads (e.g. clicking
-    // a sort link is a full navigation, which would otherwise reset every section back
-    // to its default-open state).
-    document.addEventListener("DOMContentLoaded", () => {
-      document.querySelectorAll("details[data-persist]").forEach((el) => {
-        const key = "spf-details-" + el.dataset.persist;
-        const stored = localStorage.getItem(key);
-        if (stored === "false") el.open = false;
-        else if (stored === "true") el.open = true;
-        el.addEventListener("toggle", () => localStorage.setItem(key, el.open));
-      });
-    });
   </script>
 </head>
 <body>
@@ -164,13 +156,13 @@
         <div class="brand-tagline">PROFANITY FILTER</div>
       </a>
       <nav>
-        <details class="nav-group" data-persist="library-nav" open>
-          <summary>
-            <a href="/library" class="{{ 'active' if request.url.path == '/library' else '' }}"><i class="ti ti-movie" aria-hidden="true"></i>Library</a>
-          </summary>
-          <a href="/library/movies" class="nav-sub {{ 'active' if request.url.path.startswith('/library/movies') else '' }}">Movies</a>
-          <a href="/library/shows" class="nav-sub {{ 'active' if request.url.path.startswith('/library/shows') else '' }}">TV shows</a>
-        </details>
+        <div class="nav-group">
+          <a href="/library" class="{{ 'active' if request.url.path == '/library' else '' }}"><i class="ti ti-movie" aria-hidden="true"></i>Library</a>
+          <div class="nav-sub-group {{ 'open' if request.url.path.startswith('/library') else '' }}">
+            <a href="/library/movies" class="nav-sub {{ 'active' if request.url.path.startswith('/library/movies') else '' }}">Movies</a>
+            <a href="/library/shows" class="nav-sub {{ 'active' if request.url.path.startswith('/library/shows') else '' }}">TV shows</a>
+          </div>
+        </div>
         <a href="/wordlist" class="{{ 'active' if request.url.path.startswith('/wordlist') else '' }}"><i class="ti ti-list" aria-hidden="true"></i>Word list</a>
         <a href="/queue" class="{{ 'active' if request.url.path.startswith('/queue') else '' }}"><i class="ti ti-activity" aria-hidden="true"></i>Activity</a>
         <a href="/settings" class="{{ 'active' if request.url.path.startswith('/settings') else '' }}"><i class="ti ti-settings" aria-hidden="true"></i>Settings</a>
