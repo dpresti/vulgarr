@@ -20,7 +20,7 @@ Because this is stream-copy plus one small filtered audio track, most of a file'
 ## Design decisions made with the user
 
 - **Track delivery**: in-place remux with a verify-then-backup-then-swap safety net (not a sidecar file), because neither Plex nor Jellyfin exposes an external sidecar audio file as a selectable track in the player's audio menu -- only a real extra stream in the container shows up there.
-- **Automation trigger**: both Sonarr/Radarr's import webhook (poll for a subtitle to appear, since Bazarr may not have fetched one yet) and Bazarr's subtitle-downloaded event are supported and independently toggleable in Settings, with a selectable priority used only to de-duplicate near-simultaneous events for the same title. Bazarr's trigger defaults to **off** since the user's Bazarr instance was down at build time -- flip it on in Settings once it's back.
+- **Automation trigger**: both Sonarr/Radarr's import webhook (poll for a subtitle to appear, since Bazarr may not have fetched one yet) and Bazarr's subtitle-downloaded event are supported and independently toggleable in Settings, with a selectable priority used only to de-duplicate near-simultaneous events for the same title. Currently deployed with only the Sonarr/Radarr trigger on; Bazarr's own trigger is left off by choice (Settings > Automation) -- flip it on there if you want processing to also kick off the moment Bazarr fetches a subtitle on its own schedule, not just on Sonarr/Radarr import.
 
 ## Local dev
 
@@ -37,21 +37,21 @@ pytest tests/ -q
 
 ## Wiring into an existing Sonarr/Radarr/Bazarr/Plex/Jellyfin stack
 
-1. **Compose**: merge [`docker-compose.snippet.yml`](docker-compose.snippet.yml) into your existing compose file. Use the *exact same* media volume mount(s) and host paths your Sonarr/Radarr/Bazarr/Plex/Jellyfin services already use -- this service resolves file paths returned by the Sonarr/Radarr APIs directly, so a path mismatch means it won't find files that exist.
+1. **Compose**: this repo's [`docker-compose.yml`](docker-compose.yml) is the actual file this service runs from (Dockge-managed, under `/docker/stack/profanity-filter/` on erwin) -- it already joins the `media_default` network so it's reachable from Sonarr/Radarr/Bazarr by container name, and mounts the same media roots those services use (`/path/to/your/media:/plex` and `/path/to/second/media/root/:/path/to/second/media/root`). If wiring this into a *different* stack, match whatever media volume mount(s)/host paths your Sonarr/Radarr/Bazarr/Plex/Jellyfin services already use -- this service resolves file paths returned by the Sonarr/Radarr APIs directly, so a path mismatch means it won't find files that exist.
 
-2. **API keys**: set `SONARR_API_KEY` / `RADARR_API_KEY` / `BAZARR_API_KEY` env vars (Settings > General > Security in each app). Set `SPF_WEBHOOK_TOKEN` to a random string and append `?token=<that value>` to the webhook URLs below -- otherwise anyone on your network can trigger processing.
+2. **API keys**: set `SONARR_API_KEY` / `RADARR_API_KEY` / `BAZARR_API_KEY` in `.env` (not committed -- see `.gitignore`) from Settings > General > Security in each app. Set `SPF_WEBHOOK_TOKEN` to a random string and append `?token=<that value>` to the webhook URLs below -- otherwise anyone on the network can trigger processing.
 
-3. **Sonarr**: Settings > Connect > add Webhook. URL: `http://subtitle-profanity-filter:8000/webhooks/sonarr?token=<token>`. Trigger on: *On Import*, *On Upgrade*.
+3. **Sonarr**: Settings > Connect > add Webhook. URL: `http://profanity-filter:8000/webhooks/sonarr?token=<token>`. Trigger on: *On Import*, *On Upgrade*.
 
-4. **Radarr**: same as Sonarr, URL: `http://subtitle-profanity-filter:8000/webhooks/radarr?token=<token>`.
+4. **Radarr**: same as Sonarr, URL: `http://profanity-filter:8000/webhooks/radarr?token=<token>`.
 
-5. **Bazarr** (once it's working again): Settings > Subtitles > Custom Post-Processing. Enable it, and set the command to a `curl` call using Bazarr's template variables, e.g.:
+5. **Bazarr**: Settings > Subtitles > Custom Post-Processing. Enable it, and set the command to a `curl` call using Bazarr's template variables, e.g.:
    ```
-   curl -s -X POST "http://subtitle-profanity-filter:8000/webhooks/bazarr?token=<token>&video_path={{directory}}/{{episode}}&subtitle_path={{subtitles}}&language={{subtitles_language_code2}}"
+   curl -s -X POST "http://profanity-filter:8000/webhooks/bazarr?token=<token>&video_path={{directory}}/{{episode}}&subtitle_path={{subtitles}}&language={{subtitles_language_code2}}"
    ```
-   (Bazarr's exact variable names vary by version -- check Settings > Subtitles > Custom Post-Processing for the list available in your version and adjust.) Then flip "Bazarr subtitle-downloaded event" on in this app's Settings page.
+   (Bazarr's exact variable names vary by version -- check Settings > Subtitles > Custom Post-Processing for the list available in your version and adjust.) Then flip "Bazarr subtitle-downloaded event" on in this app's Settings page if you want this trigger active.
 
-6. **First run**: open `http://<erwin>:8420/library` and click "Sync from Sonarr/Radarr" to pull in the existing library (this only reads metadata/paths via the Sonarr/Radarr APIs -- it does not process anything). Then go to `/wordlist` and build out your word list before processing anything for real.
+6. **First run**: open `http://erwin:8011/library` (port `8011` on the host, mapped from the container's `8000` -- see `docker-compose.yml`) and click "Sync from Sonarr/Radarr" to pull in the existing library (this only reads metadata/paths via the Sonarr/Radarr APIs -- it does not process anything). Then go to `/wordlist` and build out your word list before processing anything for real.
 
 7. **Plex/Jellyfin**: nothing to configure -- once a title has been processed, refresh/rescan that item's metadata (or wait for the next library scan) and the "Clean" audio track will appear in the audio track picker like any other track.
 
