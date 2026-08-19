@@ -1,7 +1,7 @@
 <div id="queue-content">
   <p><strong>Processing {{ running }} of {{ total_active }}</strong> {% if total_active == 0 %}<span class="muted">— queue is empty</span>{% endif %}</p>
   {% if cancel_error %}
-  <p class="muted" style="color: #f0a25c;">Couldn't cancel: {{ cancel_error }}</p>
+  <p class="muted" style="color: var(--vulgarr-outdated-text);">Couldn't cancel: {{ cancel_error }}</p>
   {% endif %}
 
   <h3>Active</h3>
