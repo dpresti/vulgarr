@@ -2,7 +2,7 @@ import datetime
 from pathlib import Path
 from urllib.parse import urlencode
 
-from fastapi import APIRouter, Form, Query, Request
+from fastapi import APIRouter, Form, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from sqlalchemy import Select, case, func, select, update
@@ -594,6 +594,8 @@ async def title_detail(request: Request, title_id: int, from_: str | None = Quer
     async with get_session() as session:
         current_version = int(await get_setting(session, "wordlist_version"))
         title = await session.get(Title, title_id)
+        if title is None:
+            raise HTTPException(status_code=404, detail="Title not found")
         pending_ids = await _pending_scene_title_ids(session, [title_id])
         row = _row_dict(title, current_version, has_pending_scenes=title_id in pending_ids)
     last_job, last_job_duration = await _load_last_job(title_id)
@@ -736,6 +738,8 @@ async def process_title(
     async with get_session() as session:
         current_version = int(await get_setting(session, "wordlist_version"))
         title = await session.get(Title, title_id)
+        if title is None:
+            return HTMLResponse("")
         pending_ids = await _pending_scene_title_ids(session, [title_id])
         row = _row_dict(title, current_version, short_label=short_label, has_pending_scenes=title_id in pending_ids)
 
@@ -820,6 +824,8 @@ async def set_title_severity(
     async with get_session() as session:
         current_version = int(await get_setting(session, "wordlist_version"))
         title = await session.get(Title, title_id)
+        if title is None:
+            return HTMLResponse("")
 
         # Always save the requested selection, even if it can't be fully honored yet --
         # otherwise picking multiple severities on a non-mkv file would be silently
@@ -870,6 +876,8 @@ async def set_title_precise_mode(
     async with get_session() as session:
         current_version = int(await get_setting(session, "wordlist_version"))
         title = await session.get(Title, title_id)
+        if title is None:
+            return HTMLResponse("")
         if precise_mode in PRECISE_MODES:
             title.precise_mode = precise_mode
         await session.commit()
@@ -906,6 +914,8 @@ async def search_subtitle_via_bazarr(
     async with get_session() as session:
         current_version = int(await get_setting(session, "wordlist_version"))
         title = await session.get(Title, title_id)
+        if title is None:
+            return HTMLResponse("")
         bazarr_url = await get_setting(session, "bazarr_url")
         bazarr_api_key = await get_setting(session, "bazarr_api_key")
         default_subtitle_language = await get_setting(session, "default_subtitle_language")
@@ -967,6 +977,8 @@ async def search_mkv_replacement(
     async with get_session() as session:
         current_version = int(await get_setting(session, "wordlist_version"))
         title = await session.get(Title, title_id)
+        if title is None:
+            return HTMLResponse("")
         sonarr_url = await get_setting(session, "sonarr_url")
         sonarr_api_key = await get_setting(session, "sonarr_api_key")
         radarr_url = await get_setting(session, "radarr_url")

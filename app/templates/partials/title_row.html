@@ -51,6 +51,7 @@
   </td>
   <td data-label="">
     <div class="row-actions">
+      <a class="btn-link small" href="/library/title/{{ row.title.id }}/scene-review">Scenes</a>
       {% if row.status == 'awaiting_mkv' %}
         <span class="muted">waiting on Sonarr/Radarr…</span>
       {% elif row.status == 'awaiting_subtitle' %}

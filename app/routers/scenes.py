@@ -65,6 +65,22 @@ async def scene_review_refresh(request: Request, title_id: int):
     return await _render_scene_review(request, title_id)
 
 
+@router.get("/library/title/{title_id}/scene-review", response_class=HTMLResponse)
+async def scene_review_page(request: Request, title_id: int):
+    """Standalone scene-review page. Movies already get this inline on their own
+    detail page (title_detail_card.html), but episodes have no standalone detail
+    page at all -- title_href() routes them straight to their season's table
+    (app/domain.py) -- so this is the only entry point for episodes."""
+    async with get_session() as session:
+        title = await session.get(Title, title_id)
+        if title is None:
+            raise HTTPException(status_code=404)
+        context = await _scene_review_context(session, title_id)
+    return templates.TemplateResponse(
+        "scene_review_page.html", {"request": request, "title": title, **context}
+    )
+
+
 @router.post("/library/title/{title_id}/scan-scenes", response_class=HTMLResponse)
 async def scan_scenes(request: Request, title_id: int):
     async with get_session() as session:
