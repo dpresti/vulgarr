@@ -36,6 +36,8 @@ SETTING_KEYS = [
     "scene_min_duration_seconds",
     "scene_merge_gap_seconds",
     "scene_scan_concurrency_cap",
+    "blur_video_crf",
+    "blur_video_preset",
 ]
 
 
@@ -81,6 +83,8 @@ async def update_settings(
     scene_min_duration_seconds: float = Form(1.0),
     scene_merge_gap_seconds: float = Form(2.0),
     scene_scan_concurrency_cap: int = Form(1),
+    blur_video_crf: int = Form(23),
+    blur_video_preset: str = Form("medium"),
 ):
     trigger_priority_second = "bazarr" if trigger_priority_first == "sonarr_radarr" else "sonarr_radarr"
 
@@ -128,6 +132,8 @@ async def update_settings(
         await set_setting(session, "scene_min_duration_seconds", max(0.0, scene_min_duration_seconds))
         await set_setting(session, "scene_merge_gap_seconds", max(0.0, scene_merge_gap_seconds))
         await set_setting(session, "scene_scan_concurrency_cap", max(1, scene_scan_concurrency_cap))
+        await set_setting(session, "blur_video_crf", max(0, min(51, blur_video_crf)))
+        await set_setting(session, "blur_video_preset", blur_video_preset.strip() or "medium")
 
     values = await _load_all()
     return templates.TemplateResponse(

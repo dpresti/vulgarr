@@ -56,12 +56,24 @@ async def _scene_review_context(session, title_id: int) -> dict:
         )
     ).scalar_one_or_none()
 
+    # Same reasoning as scan_job above, for the blur/Apply side.
+    blur_job = (
+        await session.execute(
+            select(SceneJob)
+            .where(SceneJob.title_id == title_id, SceneJob.kind == SceneJobKind.blur)
+            .order_by(SceneJob.created_at.desc())
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+
     return {
         "title_id": title_id,
         "scene_scan_status": title.scene_scan_status if title else "not_scanned",
         "scenes": scenes,
         "scene_detection_enabled": scene_detection_enabled,
         "scan_job": scan_job,
+        "blur_job": blur_job,
+        "vulgarr_edit_path": title.vulgarr_edit_path if title else None,
     }
 
 
@@ -103,6 +115,25 @@ async def scan_scenes(request: Request, title_id: int):
         scene_detection_enabled = bool(await get_setting(session, "scene_detection_enabled"))
     if scene_detection_enabled:
         await scene_job_queue.enqueue_scan_if_not_already_active(title_id)
+    return await _render_scene_review(request, title_id)
+
+
+@router.post("/library/title/{title_id}/apply-scenes", response_class=HTMLResponse)
+async def apply_scenes(request: Request, title_id: int):
+    """Blurs+mutes every approved-and-unapplied scene into the "Vulgarr Edit"
+    sibling file. Real work happens in the queue worker (apply_scene_blur via
+    SceneJobKind.blur) -- this just enqueues, same shape as scan-scenes above."""
+    async with get_session() as session:
+        pending = await session.execute(
+            select(DetectedScene).where(
+                DetectedScene.title_id == title_id,
+                DetectedScene.status == SceneReviewStatus.approved,
+                DetectedScene.applied_at.is_(None),
+            )
+        )
+        has_approved_unapplied = pending.first() is not None
+    if has_approved_unapplied:
+        await scene_job_queue.enqueue_blur_if_not_already_active(title_id)
     return await _render_scene_review(request, title_id)
 
 

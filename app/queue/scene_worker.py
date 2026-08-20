@@ -15,7 +15,7 @@ from sqlalchemy import select
 from app.db.models import JobState, SceneJob, SceneJobKind, Title
 from app.db.session import get_session, get_setting
 from app.queue.worker import is_within_off_hours_window
-from app.scenes.pipeline import scan_for_scenes
+from app.scenes.pipeline import apply_scene_blur, scan_for_scenes
 
 logger = logging.getLogger(__name__)
 
@@ -135,6 +135,32 @@ class SceneJobQueue:
         await self.enqueue_scan(title_id)
         return True
 
+    async def enqueue_blur(self, title_id: int) -> int:
+        async with get_session() as session:
+            job = SceneJob(title_id=title_id, kind=SceneJobKind.blur, state=JobState.queued)
+            session.add(job)
+            await session.commit()
+            await session.refresh(job)
+        await self._pending.put(job.id)
+        return job.id
+
+    async def enqueue_blur_if_not_already_active(self, title_id: int) -> bool:
+        """Same dedup reasoning as enqueue_scan_if_not_already_active -- a
+        double-click on "Apply" shouldn't queue a second multi-hour re-encode for
+        the same title."""
+        async with get_session() as session:
+            existing = await session.execute(
+                select(SceneJob).where(
+                    SceneJob.title_id == title_id,
+                    SceneJob.kind == SceneJobKind.blur,
+                    SceneJob.state.in_([JobState.queued, JobState.processing]),
+                )
+            )
+            if existing.scalar_one_or_none() is not None:
+                return False
+        await self.enqueue_blur(title_id)
+        return True
+
     async def _dispatch_loop(self) -> None:
         while not self._stopping:
             try:
@@ -178,17 +204,21 @@ class SceneJobQueue:
                 await session.commit()
                 return
 
+            is_scan = job.kind == SceneJobKind.scan
             job.state = JobState.processing
             job.started_at = datetime.datetime.utcnow()
-            job.progress_message = "Scanning for scenes"
             job.progress_percent = 0.0
-            title.scene_scan_status = "scanning"
+            if is_scan:
+                job.progress_message = "Scanning for scenes"
+                title.scene_scan_status = "scanning"
+            else:
+                job.progress_message = "Blurring video"
             await session.commit()
 
             job_start_monotonic = time.monotonic()
             last_update_monotonic = 0.0
 
-            async def on_progress(done: int, total: int) -> None:
+            async def on_scan_progress(done: int, total: int) -> None:
                 nonlocal last_update_monotonic
                 if total <= 0:
                     return
@@ -207,32 +237,62 @@ class SceneJobQueue:
                 job.progress_message = message
                 await session.commit()
 
-            try:
-                if job.kind != SceneJobKind.scan:
-                    raise NotImplementedError(f"SceneJobKind.{job.kind.value} not yet implemented")
+            # 97% floor mirrors app.queue.worker's mute-pipeline design exactly --
+            # the last few points are reserved for the post-encode verify/publish
+            # stage below (on_blur_stage), so those steps still read as forward
+            # progress instead of the bar looking frozen while they run.
+            async def on_blur_progress(fraction: float) -> None:
+                nonlocal last_update_monotonic
+                now = time.monotonic()
+                is_final = fraction >= 0.999
+                if not is_final and now - last_update_monotonic < _PROGRESS_UPDATE_MIN_INTERVAL_SECONDS:
+                    return
+                last_update_monotonic = now
+                job.progress_percent = round(fraction * 97.0, 1)
+                message = f"Blurring video (ffmpeg) -- {round(fraction * 100):.0f}%"
+                if fraction > 0.02 and not is_final:
+                    elapsed = now - job_start_monotonic
+                    eta_seconds = elapsed * (1 - fraction) / fraction
+                    message += f", {_format_eta(eta_seconds)}"
+                job.progress_message = message
+                await session.commit()
 
-                outcome = await scan_for_scenes(session, title, on_progress=on_progress)
+            async def on_blur_stage(message: str) -> None:
+                job.progress_message = message
+                job.progress_percent = max(job.progress_percent or 0, 97.0)
+                await session.commit()
+
+            try:
+                if is_scan:
+                    scan_outcome = await scan_for_scenes(session, title, on_progress=on_scan_progress)
+                    job.progress_message = f"Done -- found {scan_outcome.candidate_count} candidate scene(s)"
+                    title.scene_scan_status = "scanned" if scan_outcome.candidate_count else "no_scenes_found"
+                else:
+                    blur_outcome = await apply_scene_blur(
+                        session, title, on_progress=on_blur_progress, on_stage=on_blur_stage
+                    )
+                    job.progress_message = f"Done -- blurred {blur_outcome.scene_count} scene(s)"
 
                 job.state = JobState.done
-                job.progress_message = f"Done -- found {outcome.candidate_count} candidate scene(s)"
                 job.progress_percent = 100.0
                 job.finished_at = datetime.datetime.utcnow()
-                title.scene_scan_status = "scanned" if outcome.candidate_count else "no_scenes_found"
 
             except asyncio.CancelledError:
                 job.state = JobState.cancelled
                 job.error = "Cancelled by user"
                 job.finished_at = datetime.datetime.utcnow()
-                title.scene_scan_status = "not_scanned"
+                if is_scan:
+                    title.scene_scan_status = "not_scanned"
                 await session.commit()
                 raise  # required so the Task itself is properly marked cancelled
 
             except Exception as exc:  # noqa: BLE001 -- surface all failures to the UI
-                logger.exception("Scene scan failed for title %s", title.id)
+                logger.exception("Scene %s failed for title %s", job.kind.value, title.id)
                 job.state = JobState.failed
                 job.error = str(exc)
                 job.finished_at = datetime.datetime.utcnow()
-                title.scene_scan_status = "scan_failed"
+                if is_scan:
+                    title.scene_scan_status = "scan_failed"
 
             await session.commit()
 
