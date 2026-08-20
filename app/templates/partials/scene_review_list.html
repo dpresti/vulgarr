@@ -1,5 +1,5 @@
 <div id="scene-review-{{ title_id }}"
-  {% if scene_scan_status in ('queued', 'scanning') %}
+  {% if scene_scan_status in ('queued', 'scanning') or (blur_job and blur_job.state.value in ('queued', 'processing')) %}
   hx-get="/library/title/{{ title_id }}/scenes" hx-trigger="every 3s" hx-swap="outerHTML"
   {% endif %}
 >
@@ -46,11 +46,36 @@
     </div>
 
     {% set approved_unapplied = scenes | selectattr('status.value', 'equalto', 'approved') | selectattr('applied_at', 'none') | list %}
-    <div style="margin-top: 0.75rem;">
-      <button type="button" class="small" disabled title="Blur/mute execution is coming in a later update">
-        Apply {{ approved_unapplied | length }} approved scene(s)
-      </button>
+    {% set blur_active = blur_job and blur_job.state.value in ('queued', 'processing') %}
+    <div style="margin-top: 0.75rem; display: flex; align-items: center; gap: 0.6rem; flex-wrap: wrap;">
+      <form hx-post="/library/title/{{ title_id }}/apply-scenes" hx-target="#scene-review-{{ title_id }}" hx-swap="outerHTML">
+        <button type="submit" class="small" {% if blur_active or not approved_unapplied %}disabled{% endif %}>
+          {% if blur_active %}
+            <span class="spinner"></span> Applying…
+          {% else %}
+            Apply {{ approved_unapplied | length }} approved scene(s)
+          {% endif %}
+        </button>
+      </form>
+      {% if blur_active %}
+      <form hx-post="/scene-jobs/{{ blur_job.id }}/cancel" hx-target="#scene-review-{{ title_id }}" hx-swap="outerHTML" hx-confirm="Cancel applying blur?">
+        <button type="submit" class="small danger">Cancel</button>
+      </form>
+      {% endif %}
     </div>
+
+    {% if blur_active %}
+      <div class="muted" style="margin-top: 0.4rem; display: flex; align-items: center; gap: 0.5rem;">
+        {% if blur_job.progress_percent is not none %}
+        <progress value="{{ blur_job.progress_percent }}" max="100" style="width: 160px; vertical-align: middle;"></progress>
+        {% endif %}
+        <span>{{ blur_job.progress_message or 'Applying…' }}</span>
+      </div>
+    {% elif blur_job and blur_job.state.value == 'failed' %}
+      <div class="muted" style="color: var(--vulgarr-danger-text); margin-top: 0.4rem;">Last apply failed{% if blur_job.error %}: {{ blur_job.error }}{% else %} -- try again{% endif %}.</div>
+    {% elif vulgarr_edit_path %}
+      <div class="muted" style="margin-top: 0.4rem; color: var(--vulgarr-success-text);">"Vulgarr Edit" version ready -- pick it up on your next Sonarr/Radarr rescan.</div>
+    {% endif %}
     {% endif %}
   {% endif %}
 </div>

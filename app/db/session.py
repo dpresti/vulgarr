@@ -221,6 +221,12 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     # the way two adjacent profane words wouldn't.
     "scene_merge_gap_seconds": 2.0,
     "scene_scan_concurrency_cap": 1,
+    # x264 quality (lower = better quality/bigger file) for the "Vulgarr Edit"
+    # sibling file's re-encode -- unlike the mute pipeline, this is the one place
+    # in the app that can't stream-copy video, so this is a genuine, exposed
+    # speed/quality tradeoff rather than an internal implementation detail.
+    "blur_video_crf": 23,
+    "blur_video_preset": "medium",
     # Optional HTTP Basic Auth in front of the whole UI (webhooks are exempt --
     # they already require their own token). Off by default so existing
     # deployments behind a trusted network/reverse proxy are unaffected.

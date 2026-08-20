@@ -119,6 +119,22 @@
 
     <label for="scene_scan_concurrency_cap">Max concurrent scans</label>
     <input type="number" id="scene_scan_concurrency_cap" name="scene_scan_concurrency_cap" min="1" max="4" value="{{ values.scene_scan_concurrency_cap }}" class="input-sm">
+
+    <label for="blur_video_crf">Blur video quality (CRF)</label>
+    <div>
+      <input type="number" id="blur_video_crf" name="blur_video_crf" min="0" max="51" value="{{ values.blur_video_crf }}" class="input-sm">
+      <div class="muted">Lower = better quality, bigger file. Only affects the "Vulgarr Edit" sibling file's re-encode -- 23 is a reasonable default.</div>
+    </div>
+
+    <label for="blur_video_preset">Blur encode speed (preset)</label>
+    <div>
+      <select id="blur_video_preset" name="blur_video_preset" class="input-md">
+        {% for p in ["ultrafast", "superfast", "veryfast", "faster", "fast", "medium", "slow", "slower", "veryslow"] %}
+        <option value="{{ p }}" {% if values.blur_video_preset == p %}selected{% endif %}>{{ p }}</option>
+        {% endfor %}
+      </select>
+      <div class="muted">Faster presets finish sooner but produce a larger file at the same quality.</div>
+    </div>
   </div>
 
   <h2 style="margin-top: 1.75rem;">Backups</h2>
