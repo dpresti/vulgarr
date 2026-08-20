@@ -63,6 +63,17 @@
           <div class="detail-label">Muted cues</div>
           <div class="detail-stat">{{ row.title.matched_cue_count if row.title.matched_cue_count is not none else '—' }}</div>
         </div>
+        {% if last_job %}
+        <div class="detail-section">
+          <div class="detail-label">Last processed</div>
+          <div class="detail-stat">{{ row.title.last_processed_at.strftime('%Y-%m-%d %H:%M') if row.title.last_processed_at else '—' }}</div>
+          <div class="muted" style="margin-top: 0.2rem;">Triggered by {{ last_job.trigger_source.value }}</div>
+        </div>
+        <div class="detail-section">
+          <div class="detail-label">Time to finish</div>
+          <div class="detail-stat">{{ last_job_duration or '—' }}</div>
+        </div>
+        {% endif %}
       </div>
       <div class="detail-actions">
         {% if row.status == 'awaiting_mkv' %}

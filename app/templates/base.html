@@ -83,6 +83,17 @@
     html.sidebar-collapsed .sidebar-brand { padding: 0 0 1.25rem; }
     html.sidebar-collapsed .brand-wordmark, html.sidebar-collapsed .brand-tagline,
     html.sidebar-collapsed .nav-label, html.sidebar-collapsed .nav-sub-group { display: none; }
+    /* .nav-sub-group.open (in the main nav rules above) is more specific than the
+       plain .nav-sub-group hide just above -- it wins the cascade and pops the text
+       sub-menu open on top of the icon-only rail whenever a /library/* route is
+       active, same issue the mobile breakpoint below already has its own override
+       for. This repeats that exact selector to override it back off here too. */
+    html.sidebar-collapsed .nav-sub-group.open { display: none; }
+    /* With the text sub-menu gone, collapsed desktop still needs *some* way to reach
+       Movies/TV Shows -- reuse the same standalone icon links the mobile icon bar
+       already has (nav-mobile-only, hidden on desktop by default below) instead of
+       inventing a second set of icon-only sub-links. */
+    html.sidebar-collapsed .nav-mobile-only { display: flex; }
     html.sidebar-collapsed .sidebar nav a { justify-content: center; padding: 10px 0; }
     html.sidebar-collapsed .sidebar-toggle i { transform: rotate(180deg); }
 
@@ -160,10 +171,11 @@
     summary:hover h2 { color: var(--vulgarr-accent); }
     summary h2 { transition: color 0.1s; }
     .topbar-job {
-      display: flex; align-items: center; gap: 0.6rem;
+      display: flex; align-items: center; gap: 0.6rem; cursor: pointer;
       padding: 0.4rem 1.5rem; background: var(--vulgarr-bg-elevated); border-bottom: 1px solid var(--vulgarr-border);
       font-size: 0.82rem;
     }
+    .topbar-job:hover { background: var(--vulgarr-bg-row-hover); }
     .topbar-job-title { font-weight: 600; white-space: nowrap; }
     .topbar-job progress { width: 120px; }
     .topbar-job-pct { color: var(--vulgarr-text-secondary); width: 2.5em; }
@@ -334,14 +346,6 @@
          grid of the remaining fields, for tables where that field is the
          primary identifier and/or the others don't divide evenly by 2. */
       .responsive-table .card-grid-lead td:first-child { grid-column: 1 / -1; }
-      /* Queue's Recent table: Title/State read top-left/top-right in document
-         order already, but Trigger/Result need swapping to land as
-         bottom-right/bottom-left instead of the document-order bottom-left/
-         bottom-right -- `order` reflows auto-placed grid items without
-         touching the underlying table's real column order (used by the
-         non-mobile <table> too). */
-      .responsive-table .card-grid-reorder td:nth-child(3) { order: 4; }
-      .responsive-table .card-grid-reorder td:nth-child(4) { order: 3; }
       /* A field that should keep spanning the full card width even inside a
          2-column grid table (a merged summary line, typically). */
       .responsive-table .card-grid td.span-full { grid-column: 1 / -1; }
@@ -451,8 +455,8 @@
         <div class="nav-group">
           <a href="/library" title="Library" class="{{ 'active' if request.url.path == '/library' else '' }}"><i class="ti ti-layout-grid" aria-hidden="true"></i><span class="nav-label">Library</span></a>
           <div class="nav-sub-group {{ 'open' if request.url.path.startswith('/library') else '' }}">
-            <a href="/library/movies" class="nav-sub {{ 'active' if request.url.path.startswith('/library/movies') else '' }}">Movies</a>
-            <a href="/library/shows" class="nav-sub {{ 'active' if request.url.path.startswith('/library/shows') else '' }}">TV shows</a>
+            <a href="/library/movies" class="nav-sub {{ 'active' if request.url.path.startswith('/library/movies') else '' }}"><i class="ti ti-movie" aria-hidden="true"></i>Movies</a>
+            <a href="/library/shows" class="nav-sub {{ 'active' if request.url.path.startswith('/library/shows') else '' }}"><i class="ti ti-device-tv" aria-hidden="true"></i>TV shows</a>
           </div>
         </div>
         <a href="/library/movies" title="Movies" class="nav-mobile-only {{ 'active' if request.url.path.startswith('/library/movies') else '' }}"><i class="ti ti-movie" aria-hidden="true"></i><span class="nav-label">Movies</span></a>

@@ -15,8 +15,8 @@ templates = Jinja2Templates(directory="app/templates")
 _SEVERITY_RANK = {"child": 0, "teen": 1}
 
 
-def _severity_from_field(severity: str) -> Severity:
-    return Severity.teen if severity == "teen" else Severity.child
+def _severity_from_checkboxes(sev_child: bool, sev_teen: bool) -> Severity:
+    return Severity.teen if sev_teen else Severity.child
 
 
 def _escape_like(value: str) -> str:
@@ -143,7 +143,8 @@ async def _rerender_table(request: Request, q, severity, enabled, sort, sort_dir
 async def add_term(
     request: Request,
     term: str = Form(...),
-    term_severity: str = Form("child"),
+    sev_child: bool = Form(True),
+    sev_teen: bool = Form(False),
     match_whole_word: bool = Form(True),
     q: str | None = Form(None),
     severity: str | None = Form(None),
@@ -152,7 +153,7 @@ async def add_term(
     sort_dir: str = Form("asc"),
 ):
     term = term.strip().lower()
-    new_severity = _severity_from_field(term_severity)
+    new_severity = _severity_from_checkboxes(sev_child, sev_teen)
     async with get_session() as session:
         if term:
             existing = await session.execute(select(WordListEntry).where(WordListEntry.term == term))
@@ -188,14 +189,15 @@ async def toggle_term(
 async def update_severity(
     request: Request,
     entry_id: int,
-    term_severity: str = Form("child"),
+    sev_child: bool = Form(False),
+    sev_teen: bool = Form(False),
     q: str | None = Form(None),
     severity: str | None = Form(None),
     enabled: str | None = Form(None),
     sort: str | None = Form(None),
     sort_dir: str = Form("asc"),
 ):
-    new_severity = _severity_from_field(term_severity)
+    new_severity = _severity_from_checkboxes(sev_child, sev_teen)
     async with get_session() as session:
         entry = await session.get(WordListEntry, entry_id)
         if entry is not None:

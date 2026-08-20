@@ -5,10 +5,13 @@ from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
 from app.db.models import JobState, ProcessingJob, Title
+from app.domain import format_duration, title_href
 from app.queue.worker import job_queue
 
 router = APIRouter(prefix="/queue", tags=["queue"])
 templates = Jinja2Templates(directory="app/templates")
+templates.env.globals["title_href"] = title_href
+templates.env.globals["format_duration"] = format_duration
 
 # Titles waiting on an external system (Sonarr/Radarr grabbing an .mkv replacement,
 # or Bazarr fetching a subtitle) -- not ProcessingJob rows, so they never occupy a

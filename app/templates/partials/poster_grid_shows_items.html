@@ -8,6 +8,7 @@
         <div class="poster-placeholder">{{ (show.series_title or '?')[:1] }}</div>
       {% endif %}
       <span class="type-pip">TV</span>
+      <span class="status-pip pip-{{ show.pip }}" title="{{ show.pip_label }}"></span>
       <div class="poster-scrim"><span class="meta-line">{{ show.done_count }} / {{ show.total }} processed</span></div>
     </div>
     <div class="poster-title">{{ show.series_title or 'Unknown series' }}</div>

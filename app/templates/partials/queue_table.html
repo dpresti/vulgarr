@@ -11,7 +11,7 @@
     <tbody>
       {% for job in active %}
       <tr>
-        <td data-label="Title">{{ job.title.display_name }}</td>
+        <td data-label="Title"><a class="title-link" href="{{ title_href(job.title) }}">{{ job.title.display_name }}</a></td>
         <td data-label="State"><span class="badge badge-{{ job.state.value }}">{{ job.state.value }}</span></td>
         <td data-label="Trigger" class="muted">{{ job.trigger_source.value }}</td>
         <td data-label="Progress" class="muted">
@@ -47,7 +47,7 @@
     <tbody>
       {% for title in waiting %}
       <tr>
-        <td data-label="Title">{{ title.display_name }}</td>
+        <td data-label="Title"><a class="title-link" href="{{ title_href(title) }}">{{ title.display_name }}</a></td>
         <td data-label="Status">
           {% if title.status == 'awaiting_mkv' %}
             <span class="badge badge-awaiting_mkv">awaiting .mkv</span>
@@ -66,18 +66,19 @@
 
   <h3>Recent</h3>
   <div class="table-scroll responsive-table">
-  <table class="card-grid card-grid-reorder">
-    <thead><tr><th>Title</th><th>State</th><th>Trigger</th><th>Result</th></tr></thead>
+  <table class="card-grid">
+    <thead><tr><th>Title</th><th>State</th><th>Trigger</th><th>Duration</th><th>Result</th></tr></thead>
     <tbody>
       {% for job in recent %}
       <tr>
-        <td data-label="Title">{{ job.title.display_name }}</td>
+        <td data-label="Title"><a class="title-link" href="{{ title_href(job.title) }}">{{ job.title.display_name }}</a></td>
         <td data-label="State"><span class="badge badge-{{ job.state.value }}">{{ job.state.value }}</span></td>
         <td data-label="Trigger" class="muted">{{ job.trigger_source.value }}</td>
+        <td data-label="Duration" class="muted">{{ format_duration((job.finished_at - job.started_at).total_seconds()) if job.started_at and job.finished_at else '—' }}</td>
         <td data-label="Result" class="muted">{{ job.error or job.progress_message or '—' }}</td>
       </tr>
       {% else %}
-      <tr><td colspan="4" class="muted">No jobs run yet.</td></tr>
+      <tr><td colspan="5" class="muted">No jobs run yet.</td></tr>
       {% endfor %}
     </tbody>
   </table>
