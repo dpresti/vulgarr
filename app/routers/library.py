@@ -7,10 +7,11 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from sqlalchemy import Select, case, func, select, update
 
-from app.db.models import MediaType, ProcessingJob, Title, TriggerSource
+from app.db.models import DetectedScene, MediaType, ProcessingJob, Title, TriggerSource
 from app.db.session import get_session, get_setting
 from app.domain import (
     PRECISE_MODES,
+    SceneReviewStatus,
     Severity,
     format_duration,
     is_mkv_path,
@@ -54,6 +55,21 @@ def _is_htmx(request: Request) -> bool:
     return request.headers.get("hx-request") == "true"
 
 
+async def _pending_scene_title_ids(session, title_ids: list[int]) -> set[int]:
+    """Which of title_ids have at least one DetectedScene still awaiting review.
+    Batched (one query for however many ids are passed) rather than per-row, so
+    list pages don't pay an N+1 cost -- callers rendering many rows should collect
+    ids first and check membership in the returned set."""
+    if not title_ids:
+        return set()
+    result = await session.execute(
+        select(DetectedScene.title_id)
+        .where(DetectedScene.title_id.in_(title_ids), DetectedScene.status == SceneReviewStatus.pending)
+        .distinct()
+    )
+    return {row[0] for row in result.all()}
+
+
 def _outdated_case(current_version: int):
     return case(
         (
@@ -85,19 +101,24 @@ _PIP_LABELS = {
     "not_processed": "not processed",
     "outdated": "outdated word list",
     "no_subtitle": "no subtitle",
+    "scenes_pending_review": "scenes pending review",
 }
 
 
-def _pip_state(status: str, outdated: bool, has_subtitle: bool) -> str:
+def _pip_state(status: str, outdated: bool, has_subtitle: bool, has_pending_scenes: bool = False) -> str:
     """Single-glance poster status, in priority order: an active/failed job always wins
-    (most actionable), then an outdated or missing-subtitle title (both blockers on an
-    otherwise-fine title), then plain done/not-processed."""
+    (most actionable), then pending scene-detection review (also actionable, and
+    independent of the mute pipeline's own state), then an outdated or
+    missing-subtitle title (both blockers on an otherwise-fine title), then plain
+    done/not-processed."""
     if status == "failed":
         return "failed"
     if status == "processing":
         return "processing"
     if status in ("queued", "awaiting_mkv", "awaiting_subtitle"):
         return "queued"
+    if has_pending_scenes:
+        return "scenes_pending_review"
     if outdated:
         return "outdated"
     if not has_subtitle:
@@ -126,7 +147,11 @@ def _show_pip_state(total: int, done_count: int, failed_count: int, active_count
 
 
 def _row_dict(
-    title: Title, current_version: int, bazarr_message: str | None = None, short_label: bool = False
+    title: Title,
+    current_version: int,
+    bazarr_message: str | None = None,
+    short_label: bool = False,
+    has_pending_scenes: bool = False,
 ) -> dict:
     # subtitle_path can go stale if the .srt is deleted/moved outside the app (e.g.
     # manually removed from Bazarr) -- check the file is actually still there rather
@@ -150,7 +175,7 @@ def _row_dict(
         _short_episode_label(title) if short_label and title.media_type == MediaType.episode else title.display_name
     )
     outdated = is_outdated(title, current_version)
-    pip = _pip_state(title.status, outdated, has_subtitle)
+    pip = _pip_state(title.status, outdated, has_subtitle, has_pending_scenes)
 
     return {
         "title": title,
@@ -161,6 +186,7 @@ def _row_dict(
         "is_mkv": is_mkv,
         "severity_error": severity_error,
         "has_subtitle": has_subtitle,
+        "has_pending_scenes": has_pending_scenes,
         "pip": pip,
         "pip_label": _PIP_LABELS[pip],
     }
@@ -182,6 +208,22 @@ async def _load_last_job(title_id: int) -> tuple[ProcessingJob | None, str | Non
     return last_job, last_job_duration
 
 
+async def _load_scene_review_context(title_id: int) -> dict:
+    async with get_session() as session:
+        title = await session.get(Title, title_id)
+        scenes_result = await session.execute(
+            select(DetectedScene).where(DetectedScene.title_id == title_id).order_by(DetectedScene.start_seconds)
+        )
+        scenes = scenes_result.scalars().all()
+        scene_detection_enabled = bool(await get_setting(session, "scene_detection_enabled"))
+    return {
+        "title_id": title_id,
+        "scene_scan_status": title.scene_scan_status if title else "not_scanned",
+        "scenes": scenes,
+        "scene_detection_enabled": scene_detection_enabled,
+    }
+
+
 async def _render_title(request: Request, row: dict, detail_view: bool, **extra):
     """Single-title action routes are called both from a table row (title_row.html)
     and from the title detail page (title_detail_card.html) -- render whichever one
@@ -189,9 +231,17 @@ async def _render_title(request: Request, row: dict, detail_view: bool, **extra)
     that page's forms carries."""
     if detail_view:
         last_job, last_job_duration = await _load_last_job(row["title"].id)
+        scene_context = await _load_scene_review_context(row["title"].id)
         return templates.TemplateResponse(
             "partials/title_detail_card.html",
-            {"request": request, "row": row, "last_job": last_job, "last_job_duration": last_job_duration, **extra},
+            {
+                "request": request,
+                "row": row,
+                "last_job": last_job,
+                "last_job_duration": last_job_duration,
+                **scene_context,
+                **extra,
+            },
         )
     return templates.TemplateResponse(
         "partials/title_row.html", {"request": request, "row": row, "severity_options": SEVERITY_OPTIONS, **extra}
@@ -222,7 +272,9 @@ async def _load_movies(
     result = await session.execute(
         base.order_by(order, Title.display_name.collate("NOCASE")).offset((page - 1) * PAGE_SIZE).limit(PAGE_SIZE)
     )
-    rows = [_row_dict(t, current_version) for t in result.scalars().all()]
+    titles = result.scalars().all()
+    pending_ids = await _pending_scene_title_ids(session, [t.id for t in titles])
+    rows = [_row_dict(t, current_version, has_pending_scenes=t.id in pending_ids) for t in titles]
     return rows, total
 
 
@@ -244,7 +296,9 @@ async def _load_processed(
     result = await session.execute(
         base.order_by(order, Title.display_name.collate("NOCASE")).offset((page - 1) * PAGE_SIZE).limit(PAGE_SIZE)
     )
-    rows = [_row_dict(t, current_version) for t in result.scalars().all()]
+    titles = result.scalars().all()
+    pending_ids = await _pending_scene_title_ids(session, [t.id for t in titles])
+    rows = [_row_dict(t, current_version, has_pending_scenes=t.id in pending_ids) for t in titles]
     return rows, total
 
 
@@ -540,12 +594,21 @@ async def title_detail(request: Request, title_id: int, from_: str | None = Quer
     async with get_session() as session:
         current_version = int(await get_setting(session, "wordlist_version"))
         title = await session.get(Title, title_id)
-        row = _row_dict(title, current_version)
+        pending_ids = await _pending_scene_title_ids(session, [title_id])
+        row = _row_dict(title, current_version, has_pending_scenes=title_id in pending_ids)
     last_job, last_job_duration = await _load_last_job(title_id)
+    scene_context = await _load_scene_review_context(title_id)
 
     return templates.TemplateResponse(
         "title_detail.html",
-        {"request": request, "row": row, "came_from": from_, "last_job": last_job, "last_job_duration": last_job_duration},
+        {
+            "request": request,
+            "row": row,
+            "came_from": from_,
+            "last_job": last_job,
+            "last_job_duration": last_job_duration,
+            **scene_context,
+        },
     )
 
 
@@ -559,7 +622,8 @@ async def title_row_refresh(request: Request, title_id: int, season_context: boo
         title = await session.get(Title, title_id)
         if title is None:
             return HTMLResponse("")
-        row = _row_dict(title, current_version, short_label=season_context)
+        pending_ids = await _pending_scene_title_ids(session, [title_id])
+        row = _row_dict(title, current_version, short_label=season_context, has_pending_scenes=title_id in pending_ids)
 
     return templates.TemplateResponse(
         "partials/title_row.html",
@@ -581,7 +645,8 @@ async def title_card_refresh(request: Request, title_id: int, from_page: str | N
         title = await session.get(Title, title_id)
         if title is None:
             return HTMLResponse("")
-        row = _row_dict(title, current_version)
+        pending_ids = await _pending_scene_title_ids(session, [title_id])
+        row = _row_dict(title, current_version, has_pending_scenes=title_id in pending_ids)
 
     return templates.TemplateResponse(
         "partials/poster_card.html", {"request": request, "row": row, "from_page": from_page}
@@ -625,7 +690,11 @@ async def season_detail(
             .where(Title.sonarr_series_id == series_id, Title.season_number == season_number)
             .order_by(Title.episode_number)
         )
-        rows = [_row_dict(t, current_version, short_label=True) for t in result.scalars().all()]
+        titles = result.scalars().all()
+        pending_ids = await _pending_scene_title_ids(session, [t.id for t in titles])
+        rows = [
+            _row_dict(t, current_version, short_label=True, has_pending_scenes=t.id in pending_ids) for t in titles
+        ]
 
     return templates.TemplateResponse(
         "season_detail.html",
@@ -667,7 +736,8 @@ async def process_title(
     async with get_session() as session:
         current_version = int(await get_setting(session, "wordlist_version"))
         title = await session.get(Title, title_id)
-        row = _row_dict(title, current_version, short_label=short_label)
+        pending_ids = await _pending_scene_title_ids(session, [title_id])
+        row = _row_dict(title, current_version, short_label=short_label, has_pending_scenes=title_id in pending_ids)
 
     return await _render_title(request, row, detail_view)
 
@@ -761,7 +831,8 @@ async def set_title_severity(
         await session.commit()
         await session.refresh(title)
 
-        row = _row_dict(title, current_version, short_label=short_label)
+        pending_ids = await _pending_scene_title_ids(session, [title_id])
+        row = _row_dict(title, current_version, short_label=short_label, has_pending_scenes=title_id in pending_ids)
 
     return await _render_title(request, row, detail_view, severity_saved=detail_view)
 
@@ -803,7 +874,8 @@ async def set_title_precise_mode(
             title.precise_mode = precise_mode
         await session.commit()
         await session.refresh(title)
-        row = _row_dict(title, current_version, short_label=short_label)
+        pending_ids = await _pending_scene_title_ids(session, [title_id])
+        row = _row_dict(title, current_version, short_label=short_label, has_pending_scenes=title_id in pending_ids)
 
     return await _render_title(request, row, detail_view, precise_saved=detail_view)
 
@@ -875,7 +947,11 @@ async def search_subtitle_via_bazarr(
                         message = "Searched, but no subtitle was found by any provider."
 
         await session.refresh(title)
-        row = _row_dict(title, current_version, bazarr_message=message, short_label=short_label)
+        pending_ids = await _pending_scene_title_ids(session, [title_id])
+        row = _row_dict(
+            title, current_version, bazarr_message=message, short_label=short_label,
+            has_pending_scenes=title_id in pending_ids,
+        )
 
     return await _render_title(request, row, detail_view)
 
@@ -923,6 +999,10 @@ async def search_mkv_replacement(
                 message = "Search triggered -- will auto-process once an .mkv release is grabbed."
 
         await session.refresh(title)
-        row = _row_dict(title, current_version, bazarr_message=message, short_label=short_label)
+        pending_ids = await _pending_scene_title_ids(session, [title_id])
+        row = _row_dict(
+            title, current_version, bazarr_message=message, short_label=short_label,
+            has_pending_scenes=title_id in pending_ids,
+        )
 
     return await _render_title(request, row, detail_view)

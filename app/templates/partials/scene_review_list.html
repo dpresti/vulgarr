@@ -1,0 +1,42 @@
+<div id="scene-review-{{ title_id }}"
+  {% if scene_scan_status in ('queued', 'scanning') %}
+  hx-get="/library/title/{{ title_id }}/scenes" hx-trigger="every 3s" hx-swap="outerHTML"
+  {% endif %}
+>
+  {% if not scene_detection_enabled %}
+    <div class="muted">Scene detection is disabled -- enable it in Settings to scan for candidate scenes.</div>
+  {% else %}
+    <form hx-post="/library/title/{{ title_id }}/scan-scenes" hx-target="#scene-review-{{ title_id }}" hx-swap="outerHTML">
+      <button type="submit" class="small secondary" {% if scene_scan_status in ('queued', 'scanning') %}disabled{% endif %}>
+        {% if scene_scan_status in ('queued', 'scanning') %}
+          <span class="spinner"></span> Scanning…
+        {% elif scene_scan_status == 'not_scanned' %}
+          Scan for scenes
+        {% else %}
+          Rescan for scenes
+        {% endif %}
+      </button>
+    </form>
+
+    {% if scene_scan_status == 'scan_failed' %}
+      <div class="muted" style="color: var(--vulgarr-danger-text); margin-top: 0.4rem;">Last scan failed -- try again.</div>
+    {% elif scene_scan_status == 'no_scenes_found' %}
+      <div class="muted" style="margin-top: 0.4rem;">No candidate scenes found.</div>
+    {% endif %}
+
+    {% if scenes %}
+    <div class="scene-review-list" style="margin-top: 0.75rem;">
+      {% for scene in scenes %}
+        {% include "partials/scene_review_row.html" %}
+      {% endfor %}
+    </div>
+
+    {% set approved_unapplied = scenes | selectattr('status.value', 'equalto', 'approved') | selectattr('applied_at', 'none') | list %}
+    <div style="margin-top: 0.75rem;">
+      <button type="button" class="small" disabled title="Blur/mute execution is coming in a later update">
+        Apply {{ approved_unapplied | length }} approved scene(s)
+      </button>
+    </div>
+    {% endif %}
+  {% endif %}
+</div>

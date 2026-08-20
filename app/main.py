@@ -9,7 +9,7 @@ from app.auth import BasicAuthMiddleware
 from app.db.session import init_db
 from app.queue.scene_worker import scene_job_queue
 from app.queue.worker import job_queue
-from app.routers import library, queue, settings as settings_router, webhooks, wordlist
+from app.routers import library, queue, scenes, settings as settings_router, webhooks, wordlist
 
 logging.basicConfig(level=logging.INFO)
 
@@ -29,6 +29,7 @@ app.add_middleware(BasicAuthMiddleware)
 app.mount("/static", StaticFiles(directory="app/static"), name="static")
 
 app.include_router(library.router)
+app.include_router(scenes.router)
 app.include_router(wordlist.router)
 app.include_router(queue.router)
 app.include_router(settings_router.router)
