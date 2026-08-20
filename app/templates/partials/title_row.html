@@ -1,4 +1,9 @@
-<tr id="title-row-{{ row.title.id }}">
+<tr id="title-row-{{ row.title.id }}"
+  {% if row.status in ('queued', 'processing', 'awaiting_mkv', 'awaiting_subtitle') %}
+  hx-get="/library/{{ row.title.id }}/row{{ '?season_context=true' if season_context else '' }}"
+  hx-trigger="every 3s" hx-swap="outerHTML"
+  {% endif %}
+>
   {% set current_levels = row.title.severity_levels.split(',') %}
   <td data-label="Title">{{ row.display_name }}</td>
   <td data-label="Status">
@@ -7,9 +12,9 @@
   </td>
   <td data-label="Subtitle" class="muted">
     {% if row.has_subtitle %}
-      yes
+      found
     {% else %}
-      no
+      not found
       {% if row.bazarr_message %}<div class="muted">{{ row.bazarr_message }}</div>{% endif %}
     {% endif %}
   </td>

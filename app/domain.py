@@ -68,6 +68,26 @@ def is_mkv_path(video_path: str) -> bool:
     return video_path.lower().endswith(".mkv")
 
 
+def title_href(title) -> str:
+    """Library URL for a Title row -- a movie goes straight to its own page, an
+    episode goes to its season (there's no standalone per-episode page)."""
+    if title.media_type == MediaType.movie:
+        return f"/library/title/{title.id}"
+    return f"/library/shows/{title.sonarr_series_id}/season/{title.season_number}"
+
+
+def format_duration(seconds: float) -> str:
+    """Human-readable elapsed duration, e.g. "1h 2m 3s" / "4m 5s" / "6s"."""
+    seconds = max(0, int(seconds))
+    minutes, seconds = divmod(seconds, 60)
+    hours, minutes = divmod(minutes, 60)
+    if hours:
+        return f"{hours}h {minutes}m {seconds}s"
+    if minutes:
+        return f"{minutes}m {seconds}s"
+    return f"{seconds}s"
+
+
 class TriggerSource(str, enum.Enum):
     manual = "manual"
     sonarr = "sonarr"

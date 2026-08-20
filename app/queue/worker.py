@@ -33,10 +33,19 @@ logger = logging.getLogger(__name__)
 _PROGRESS_UPDATE_MIN_INTERVAL_SECONDS = 1.5
 
 # Whisper forced alignment (a real ffmpeg extract + model inference per matched cue)
-# runs before the ffmpeg mux step and is typically the slower of the two phases for a
-# high-profanity title -- reserve most of the bar for it, leaving room for muting and
-# the final verify/backup nudge (see on_stage's 97% floor below) after.
-_WHISPER_ALIGN_MAX_PERCENT = 85.0
+# runs before the ffmpeg mux step, as "Step 1/2" -- muting/muxing is "Step 2/2". Split
+# evenly down the middle rather than weighting toward alignment: unlike a straight
+# fraction-of-total-time split, an even split keeps the boundary predictable regardless
+# of how a given title's cue count/length happens to balance against mux time.
+_WHISPER_ALIGN_MAX_PERCENT = 50.0
+
+# Alignment's own per-cue ETA was volatile enough early in a job to look broken (see
+# the ffmpeg-ETA-instability note this mirrors below) and cues aren't uniform-length
+# work anyway, so Step 1 shows raw progress only, no ETA. Step 2's ETA instead waits
+# until this many percentage points into its own phase before showing anything, then
+# bases the estimate on the elapsed time for those first points -- avoids the same
+# nonsense-number-when-fraction-is-near-zero problem ffmpeg's own progress stream has.
+_MUX_ETA_WARMUP_PERCENT = 2.0
 
 # How often to check Sonarr/Radarr for whether a requested mkv replacement has landed
 # yet. This is a real search+grab+import cycle on their end, which can take anywhere
@@ -369,16 +378,22 @@ class JobQueue:
             title.status = "processing"
             await session.commit()
 
-            job_start_monotonic = time.monotonic()
             last_update_monotonic = 0.0
             mux_phase_start_monotonic: float | None = None
-            # Whisper mode already spends 0-85% on the alignment phase before ffmpeg
-            # ever starts -- the mux step continues from there instead of restarting
-            # its own percent/ETA from 0, which previously made the bar (and the ETA,
-            # computed off the whole job's elapsed time including however long
-            # alignment took) jump backwards the moment muting began.
-            mux_base_percent = _WHISPER_ALIGN_MAX_PERCENT if title.precise_mode == "whisper" else 0.0
+            # Whisper mode already spends Step 1 (0-50%) on alignment before ffmpeg ever
+            # starts -- Step 2 continues the bar from there instead of restarting its own
+            # percent/ETA from 0, which previously made the bar (and the ETA, computed
+            # off the whole job's elapsed time including however long alignment took)
+            # jump backwards the moment muting began.
+            is_whisper = title.precise_mode == "whisper"
+            mux_base_percent = _WHISPER_ALIGN_MAX_PERCENT if is_whisper else 0.0
             mux_percent_span = 97.0 - mux_base_percent
+            mux_step_prefix = "Step 2/2: " if is_whisper else ""
+            # Phase-local fraction at which Step 2's ETA turns on -- e.g. whisper mode's
+            # 47-point span (50-97%) means 2 points in is ~4.3% fraction; non-whisper's
+            # full 97-point span means the same 2 points is ~2%, matching the plain
+            # ffmpeg-only threshold this replaced.
+            mux_eta_warmup_fraction = _MUX_ETA_WARMUP_PERCENT / mux_percent_span
 
             async def on_progress(fraction: float) -> None:
                 nonlocal last_update_monotonic, mux_phase_start_monotonic
@@ -392,8 +407,8 @@ class JobQueue:
 
                 elapsed = now - mux_phase_start_monotonic
                 pct = round(mux_base_percent + fraction * mux_percent_span, 1)
-                message = f"Muting audio (ffmpeg) -- {round(fraction * 100):.0f}%"
-                if fraction > 0.02 and not is_final:
+                message = f"{mux_step_prefix}Muting audio (ffmpeg) -- {round(fraction * 100):.0f}%"
+                if fraction > mux_eta_warmup_fraction and not is_final:
                     eta_seconds = elapsed * (1 - fraction) / fraction
                     message += f", {_format_eta(eta_seconds)}"
 
@@ -412,14 +427,11 @@ class JobQueue:
                 last_update_monotonic = now
 
                 fraction = done / total
-                message = f"Aligning word timing (Whisper) -- {done}/{total} cues"
-                if fraction > 0.02 and not is_final:
-                    elapsed = now - job_start_monotonic
-                    eta_seconds = elapsed * (1 - fraction) / fraction
-                    message += f", {_format_eta(eta_seconds)}"
-
+                # No ETA here -- cues vary too much in length/difficulty for an early
+                # done/total ratio to predict remaining time, and Step 2 already covers
+                # ETA once there's ffmpeg progress to base one on.
                 job.progress_percent = round(fraction * _WHISPER_ALIGN_MAX_PERCENT, 1)
-                job.progress_message = message
+                job.progress_message = f"Step 1/2: Aligning word timing (Whisper) -- {done}/{total} cues"
                 await session.commit()
 
             async def on_stage(message: str) -> None:

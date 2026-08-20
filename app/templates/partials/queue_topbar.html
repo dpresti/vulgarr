@@ -1,8 +1,8 @@
 {% if active %}
 <div id="topbar-jobs">
   {% for job in active %}
-  <div class="topbar-job">
-    <span class="topbar-job-title">{{ job.title.display_name }}</span>
+  <div class="topbar-job" onclick="window.location='/queue'" title="Go to Activity">
+    <a class="topbar-job-title title-link" href="{{ title_href(job.title) }}" onclick="event.stopPropagation()">{{ job.title.display_name }}</a>
     {% if job.progress_percent is not none %}
     <progress value="{{ job.progress_percent }}" max="100"></progress>
     <span class="topbar-job-pct">{{ job.progress_percent | round(0, 'floor') | int }}%</span>

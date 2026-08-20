@@ -10,8 +10,8 @@
   <form class="inline" hx-post="/wordlist" hx-target="#wordlist-table" hx-swap="outerHTML">
     <input type="text" name="term" placeholder="term, e.g. poop" required>
     <span class="severity-checks">
-      <label><input type="radio" name="term_severity" value="child" checked> child</label>
-      <label><input type="radio" name="term_severity" value="teen"> teen</label>
+      <label><input type="checkbox" name="sev_child" checked onchange="cascadeSeverity(this)"> child</label>
+      <label><input type="checkbox" name="sev_teen" onchange="cascadeSeverity(this)"> teen</label>
     </span>
     <label class="muted"><input type="checkbox" name="match_whole_word" checked> whole word</label>
     <button type="submit">Add term</button>

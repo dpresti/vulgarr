@@ -7,9 +7,17 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from sqlalchemy import Select, case, func, select, update
 
-from app.db.models import MediaType, Title, TriggerSource
+from app.db.models import MediaType, ProcessingJob, Title, TriggerSource
 from app.db.session import get_session, get_setting
-from app.domain import PRECISE_MODES, Severity, is_mkv_path, parse_severity_levels, serialize_severity_levels
+from app.domain import (
+    PRECISE_MODES,
+    Severity,
+    format_duration,
+    is_mkv_path,
+    parse_severity_levels,
+    serialize_severity_levels,
+    title_href,
+)
 from app.integrations.bazarr import BazarrClient
 from app.integrations.radarr import RadarrClient
 from app.integrations.sonarr import SonarrClient
@@ -19,6 +27,8 @@ from app.queue.worker import job_queue
 
 router = APIRouter(prefix="/library", tags=["library"])
 templates = Jinja2Templates(directory="app/templates")
+templates.env.globals["title_href"] = title_href
+templates.env.globals["format_duration"] = format_duration
 
 PAGE_SIZE = 100
 SEVERITY_OPTIONS = list(Severity)
@@ -97,6 +107,24 @@ def _pip_state(status: str, outdated: bool, has_subtitle: bool) -> str:
     return "not_processed"
 
 
+def _show_pip_state(total: int, done_count: int, failed_count: int, active_count: int, outdated_count: int) -> str:
+    """Aggregate counterpart to _pip_state for a show card, which represents many
+    episodes at once rather than one title -- same priority order (an active/failed
+    episode always wins), collapsed to a single representative dot. No "queued" vs
+    "processing" distinction (the underlying query counts them together) or
+    "no_subtitle" state (not meaningful in aggregate) -- both fold into the closest
+    single-title equivalent below."""
+    if failed_count:
+        return "failed"
+    if active_count:
+        return "processing"
+    if outdated_count:
+        return "outdated"
+    if total and done_count == total:
+        return "done"
+    return "not_processed"
+
+
 def _row_dict(
     title: Title, current_version: int, bazarr_message: str | None = None, short_label: bool = False
 ) -> dict:
@@ -138,14 +166,32 @@ def _row_dict(
     }
 
 
-def _render_title(request: Request, row: dict, detail_view: bool, **extra):
+async def _load_last_job(title_id: int) -> tuple[ProcessingJob | None, str | None]:
+    async with get_session() as session:
+        last_job = (
+            await session.execute(
+                select(ProcessingJob)
+                .where(ProcessingJob.title_id == title_id)
+                .order_by(ProcessingJob.created_at.desc())
+                .limit(1)
+            )
+        ).scalar_one_or_none()
+    last_job_duration = None
+    if last_job is not None and last_job.started_at and last_job.finished_at:
+        last_job_duration = format_duration((last_job.finished_at - last_job.started_at).total_seconds())
+    return last_job, last_job_duration
+
+
+async def _render_title(request: Request, row: dict, detail_view: bool, **extra):
     """Single-title action routes are called both from a table row (title_row.html)
     and from the title detail page (title_detail_card.html) -- render whichever one
     the caller came from, identified by the hidden detail_view form field each of
     that page's forms carries."""
     if detail_view:
+        last_job, last_job_duration = await _load_last_job(row["title"].id)
         return templates.TemplateResponse(
-            "partials/title_detail_card.html", {"request": request, "row": row, **extra}
+            "partials/title_detail_card.html",
+            {"request": request, "row": row, "last_job": last_job, "last_job_duration": last_job_duration, **extra},
         )
     return templates.TemplateResponse(
         "partials/title_row.html", {"request": request, "row": row, "severity_options": SEVERITY_OPTIONS, **extra}
@@ -258,6 +304,11 @@ async def _load_shows(
         query.order_by(order, Title.series_title.collate("NOCASE")).offset((page - 1) * PAGE_SIZE).limit(PAGE_SIZE)
     )
     shows = [dict(row._mapping) for row in result.all()]
+    for show in shows:
+        show["pip"] = _show_pip_state(
+            show["total"], show["done_count"], show["failed_count"], show["active_count"], show["outdated_count"]
+        )
+        show["pip_label"] = _PIP_LABELS[show["pip"]]
     return shows, total
 
 
@@ -490,8 +541,51 @@ async def title_detail(request: Request, title_id: int, from_: str | None = Quer
         current_version = int(await get_setting(session, "wordlist_version"))
         title = await session.get(Title, title_id)
         row = _row_dict(title, current_version)
+    last_job, last_job_duration = await _load_last_job(title_id)
 
-    return templates.TemplateResponse("title_detail.html", {"request": request, "row": row, "came_from": from_})
+    return templates.TemplateResponse(
+        "title_detail.html",
+        {"request": request, "row": row, "came_from": from_, "last_job": last_job, "last_job_duration": last_job_duration},
+    )
+
+
+@router.get("/{title_id}/row", response_class=HTMLResponse)
+async def title_row_refresh(request: Request, title_id: int, season_context: bool = False):
+    """Self-polling target for a single title_row.html <tr> (see its hx-get) -- lets a
+    row still in the movies/season table pick up a status change (e.g. queued ->
+    processing) without the user reloading the whole page."""
+    async with get_session() as session:
+        current_version = int(await get_setting(session, "wordlist_version"))
+        title = await session.get(Title, title_id)
+        if title is None:
+            return HTMLResponse("")
+        row = _row_dict(title, current_version, short_label=season_context)
+
+    return templates.TemplateResponse(
+        "partials/title_row.html",
+        {
+            "request": request,
+            "row": row,
+            "severity_options": SEVERITY_OPTIONS,
+            "season_context": season_context,
+        },
+    )
+
+
+@router.get("/{title_id}/card", response_class=HTMLResponse)
+async def title_card_refresh(request: Request, title_id: int, from_page: str | None = None):
+    """Self-polling target for a single poster_card.html (see its hx-get) -- same idea
+    as title_row_refresh above, for the poster-grid views (Movies, Library)."""
+    async with get_session() as session:
+        current_version = int(await get_setting(session, "wordlist_version"))
+        title = await session.get(Title, title_id)
+        if title is None:
+            return HTMLResponse("")
+        row = _row_dict(title, current_version)
+
+    return templates.TemplateResponse(
+        "partials/poster_card.html", {"request": request, "row": row, "from_page": from_page}
+    )
 
 
 @router.get("/shows/{series_id}", response_class=HTMLResponse)
@@ -575,7 +669,7 @@ async def process_title(
         title = await session.get(Title, title_id)
         row = _row_dict(title, current_version, short_label=short_label)
 
-    return _render_title(request, row, detail_view)
+    return await _render_title(request, row, detail_view)
 
 
 async def _bulk_enqueue_titles(session, *conditions) -> tuple[int, int]:
@@ -669,7 +763,7 @@ async def set_title_severity(
 
         row = _row_dict(title, current_version, short_label=short_label)
 
-    return _render_title(request, row, detail_view, severity_saved=detail_view)
+    return await _render_title(request, row, detail_view, severity_saved=detail_view)
 
 
 @router.post("/shows/{series_id}/season/{season_number}/severity", response_class=HTMLResponse)
@@ -711,7 +805,7 @@ async def set_title_precise_mode(
         await session.refresh(title)
         row = _row_dict(title, current_version, short_label=short_label)
 
-    return _render_title(request, row, detail_view, precise_saved=detail_view)
+    return await _render_title(request, row, detail_view, precise_saved=detail_view)
 
 
 @router.post("/shows/{series_id}/season/{season_number}/set-precise-mode", response_class=HTMLResponse)
@@ -783,7 +877,7 @@ async def search_subtitle_via_bazarr(
         await session.refresh(title)
         row = _row_dict(title, current_version, bazarr_message=message, short_label=short_label)
 
-    return _render_title(request, row, detail_view)
+    return await _render_title(request, row, detail_view)
 
 
 @router.post("/{title_id}/search-mkv-replacement", response_class=HTMLResponse)
@@ -831,4 +925,4 @@ async def search_mkv_replacement(
         await session.refresh(title)
         row = _row_dict(title, current_version, bazarr_message=message, short_label=short_label)
 
-    return _render_title(request, row, detail_view)
+    return await _render_title(request, row, detail_view)

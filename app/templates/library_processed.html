@@ -15,9 +15,10 @@
     {% if q %}<a href="/library" class="btn-link small">Clear</a>{% endif %}
   </form>
 
+  {% include "partials/pip_legend.html" %}
+
   {% with rows=movie_rows, from_page='library', next_url=next_url %}
     {% include "partials/poster_grid.html" %}
   {% endwith %}
   <p class="muted">{{ movie_total }} title(s)</p>
-  {% include "partials/pip_legend.html" %}
 {% endblock %}
