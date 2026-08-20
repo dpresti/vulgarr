@@ -167,6 +167,8 @@
     .secret-field .eye-toggle:hover { color: var(--vulgarr-text-primary); background: none; }
     .severity-checks { display: inline-flex; gap: 0.75rem; }
     .severity-checks label { font-size: 0.85rem; color: var(--vulgarr-text-secondary); white-space: nowrap; }
+    .scene-thumb { width: 120px; aspect-ratio: 16 / 9; object-fit: cover; border-radius: 6px; background: var(--vulgarr-bg-elevated); border: 1px solid var(--vulgarr-border); flex-shrink: 0; }
+    .scene-preview video { width: 100%; max-width: 480px; border-radius: 6px; display: block; }
     .row-actions { display: flex; align-items: center; gap: 0.5rem; }
     details { margin-top: 1.5rem; }
     details:first-of-type { margin-top: 0; }
@@ -427,6 +429,43 @@
       const revealed = input.type === "text";
       input.type = revealed ? "password" : "text";
       icon.className = revealed ? "ti ti-eye" : "ti ti-eye-off";
+    }
+
+    // Scene-review preview player: a candidate scene's approve/reject decision
+    // shouldn't be based on the classifier's confidence number alone -- this lets
+    // the reviewer actually watch the flagged window (plus a few seconds of
+    // padding on each side, to judge whether the boundaries themselves look
+    // right) before deciding. The <video> element is created lazily on first
+    // open (not eagerly for every row) so opening the review list doesn't kick
+    // off N simultaneous video loads, and torn down on close to stop playback
+    // and release the connection.
+    const SCENE_PREVIEW_PAD_SECONDS = 3;
+    function toggleScenePreview(button, containerId, titleId, start, end) {
+      const container = document.getElementById(containerId);
+      if (!container) return;
+
+      if (container.style.display !== "none") {
+        container.style.display = "none";
+        container.innerHTML = "";
+        button.textContent = "Preview";
+        return;
+      }
+
+      const padStart = Math.max(0, start - SCENE_PREVIEW_PAD_SECONDS);
+      const padEnd = end + SCENE_PREVIEW_PAD_SECONDS;
+      const video = document.createElement("video");
+      video.controls = true;
+      video.src = `/library/title/${titleId}/video`;
+      video.poster = `/library/title/${titleId}/scene-thumbnail?t=${((start + end) / 2).toFixed(1)}`;
+      video.addEventListener("loadedmetadata", () => { video.currentTime = padStart; });
+      video.addEventListener("timeupdate", () => {
+        if (video.currentTime >= padEnd) video.pause();
+      });
+      container.innerHTML = "";
+      container.appendChild(video);
+      container.style.display = "block";
+      button.textContent = "Hide preview";
+      video.play().catch(() => {}); // autoplay can still be blocked in some browsers -- controls remain usable either way
     }
   </script>
 </head>

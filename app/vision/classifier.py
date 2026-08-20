@@ -41,7 +41,10 @@ def _get_detector():
     return _bundle["detector"]
 
 
-def _extract_frame(ffmpeg_bin: str, video_path: Path, timestamp: float, out_path: Path) -> None:
+def extract_frame(ffmpeg_bin: str, video_path: Path, timestamp: float, out_path: Path) -> None:
+    """Blocking -- callers on the event loop must offload via asyncio.to_thread.
+    Shared by the scan pipeline (below) and the scene-review thumbnail endpoint
+    (app/routers/scenes.py)."""
     proc = subprocess.run(
         [
             ffmpeg_bin, "-nostdin", "-loglevel", "error",
@@ -68,7 +71,7 @@ def _classify_frame_blocking(ffmpeg_bin: str, video_path: Path, timestamp: float
     detector = _get_detector()
     with tempfile.TemporaryDirectory() as tmpdir:
         frame_path = Path(tmpdir) / "frame.jpg"
-        _extract_frame(ffmpeg_bin, video_path, timestamp, frame_path)
+        extract_frame(ffmpeg_bin, video_path, timestamp, frame_path)
         detections = detector.detect(str(frame_path))
     return frame_confidence(detections)
 
