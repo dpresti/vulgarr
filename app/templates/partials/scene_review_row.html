@@ -1,0 +1,17 @@
+<div class="scene-review-row" style="display: flex; align-items: center; gap: 0.75rem; flex-wrap: wrap; padding: 0.5rem 0; border-bottom: 1px solid var(--vulgarr-border);">
+  <span class="badge badge-{{ 'done' if scene.status.value == 'approved' else ('failed' if scene.status.value == 'rejected' else 'queued') }}">{{ scene.status.value }}</span>
+  <span class="muted">confidence {{ (scene.peak_confidence * 100) | round | int }}%</span>
+
+  <form class="inline" hx-post="/scenes/{{ scene.id }}/adjust" hx-target="#scene-review-{{ title_id }}" hx-swap="outerHTML">
+    <label class="muted">Start <input type="number" name="start_seconds" step="0.1" min="0" value="{{ '%.1f'|format(scene.start_seconds) }}" class="input-sm"></label>
+    <label class="muted">End <input type="number" name="end_seconds" step="0.1" min="0" value="{{ '%.1f'|format(scene.end_seconds) }}" class="input-sm"></label>
+    <button type="submit" class="small secondary">Save</button>
+  </form>
+
+  <form class="inline" hx-post="/scenes/{{ scene.id }}/approve" hx-target="#scene-review-{{ title_id }}" hx-swap="outerHTML">
+    <button type="submit" class="small {{ 'secondary' if scene.status.value == 'approved' else '' }}">Approve</button>
+  </form>
+  <form class="inline" hx-post="/scenes/{{ scene.id }}/reject" hx-target="#scene-review-{{ title_id }}" hx-swap="outerHTML" hx-confirm="Reject this candidate scene?">
+    <button type="submit" class="small {{ 'secondary' if scene.status.value == 'rejected' else 'danger' }}">Reject</button>
+  </form>
+</div>

@@ -75,6 +75,14 @@
         </div>
         {% endif %}
       </div>
+
+      {% if scene_detection_enabled %}
+      <div class="detail-section" style="margin-top: 0.5rem;">
+        <div class="detail-label">Scene review</div>
+        {% include "partials/scene_review_list.html" %}
+      </div>
+      {% endif %}
+
       <div class="detail-actions">
         {% if row.status == 'awaiting_mkv' %}
           <span class="muted">waiting on Sonarr/Radarr…</span>

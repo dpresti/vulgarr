@@ -209,9 +209,11 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     # manual review; a stricter default would risk silently missing real scenes
     # rather than just producing an extra reviewable candidate.
     "scene_confidence_threshold": 0.5,
-    # How often to sample a frame during a scan. 2s intervals measured ~11 minutes
-    # of classifier time for a 2-hour movie on real homelab hardware -- comfortably
-    # practical, no need for a coarser default.
+    # How often to sample a frame during a scan. A real end-to-end scan (ffmpeg
+    # seek+extract+classify per sample, not just classifier inference) measured
+    # ~1-1.4s/frame on real homelab hardware -- a 2-hour movie at this interval is
+    # more like 60-85 minutes than "a few minutes." Real, but a background/off-hours
+    # job, not something to expect finishing quickly -- see off_hours_enabled.
     "scene_frame_interval_seconds": 2.0,
     "scene_min_duration_seconds": 1.0,
     # Wider than the audio pipeline's cue-merge gap (0.25s) -- a visual scene

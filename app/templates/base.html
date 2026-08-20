@@ -45,6 +45,8 @@
       --vulgarr-outdated-text: #F0A25C;
       --vulgarr-nosub-bg: #4D4A1F;
       --vulgarr-nosub-text: #E8D44D;
+      --vulgarr-scenereview-bg: #3A2650;
+      --vulgarr-scenereview-text: #C8A0F0;
     }
     /* Defense in depth: several places surface raw external text -- ffmpeg
        errors, Sonarr/Radarr/Bazarr exception messages, file paths -- that can
@@ -135,6 +137,7 @@
     .badge-not_processed { background: var(--vulgarr-bg-elevated); color: var(--vulgarr-text-secondary); }
     .badge-outdated { background: var(--vulgarr-outdated-bg); color: var(--vulgarr-outdated-text); margin-left: 0.4rem; }
     .badge-no_subtitle { background: var(--vulgarr-nosub-bg); color: var(--vulgarr-nosub-text); }
+    .badge-scenes_pending_review { background: var(--vulgarr-scenereview-bg); color: var(--vulgarr-scenereview-text); }
     .badge-child { background: var(--vulgarr-info-bg); color: var(--vulgarr-info-text); }
     .badge-teen { background: var(--vulgarr-danger-bg); color: var(--vulgarr-danger-text); }
     progress { accent-color: var(--vulgarr-accent); background: var(--vulgarr-border); border-radius: 4px; height: 0.6rem; }
@@ -201,6 +204,7 @@
     .pip-not_processed { background: var(--vulgarr-text-muted); }
     .pip-outdated { background: var(--vulgarr-outdated-text); }
     .pip-no_subtitle { background: var(--vulgarr-nosub-text); }
+    .pip-scenes_pending_review { background: var(--vulgarr-scenereview-text); }
     .type-pip { position: absolute; top: 7px; left: 7px; font-size: 0.6rem; font-weight: 800; letter-spacing: .03em; color: var(--vulgarr-text-primary); background: rgba(20,20,25,.72); padding: 1px 5px; border-radius: 4px; }
     .poster-scrim {
       position: absolute; inset: auto 0 0 0; padding: 0.5rem 0.5rem 0.4rem;
