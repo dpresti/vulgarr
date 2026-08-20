@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Awaitable, Callable
 
+from app.common.intervals import merge_intervals
 from app.subtitles.matcher import CueMatch
 
 # Called after each cue's alignment attempt (success or per-cue fallback) with
@@ -38,17 +39,7 @@ class MuteInterval:
 
 
 def _merge_raw_intervals(raw: list[tuple[float, float]], merge_gap_seconds: float) -> list[MuteInterval]:
-    if not raw:
-        return []
-    raw.sort(key=lambda pair: pair[0])
-    merged: list[list[float]] = [list(raw[0])]
-    for start, end in raw[1:]:
-        last = merged[-1]
-        if start <= last[1] + merge_gap_seconds:
-            last[1] = max(last[1], end)
-        else:
-            merged.append([start, end])
-    return [MuteInterval(start=s, end=e) for s, e in merged]
+    return [MuteInterval(start=s, end=e) for s, e in merge_intervals(raw, merge_gap_seconds)]
 
 
 def build_mute_intervals(

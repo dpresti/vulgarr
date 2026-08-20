@@ -64,6 +64,17 @@ class JobState(str, enum.Enum):
     cancelled = "cancelled"
 
 
+class SceneReviewStatus(str, enum.Enum):
+    pending = "pending"
+    approved = "approved"
+    rejected = "rejected"
+
+
+class SceneJobKind(str, enum.Enum):
+    scan = "scan"
+    blur = "blur"
+
+
 def is_mkv_path(video_path: str) -> bool:
     return video_path.lower().endswith(".mkv")
 
