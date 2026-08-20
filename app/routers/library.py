@@ -9,7 +9,7 @@ from sqlalchemy import Select, case, func, select, update
 
 from app.db.models import MediaType, Title, TriggerSource
 from app.db.session import get_session, get_setting
-from app.domain import Severity, is_mkv_path, next_precise_mode, parse_severity_levels, serialize_severity_levels
+from app.domain import PRECISE_MODES, Severity, is_mkv_path, parse_severity_levels, serialize_severity_levels
 from app.integrations.bazarr import BazarrClient
 from app.integrations.radarr import RadarrClient
 from app.integrations.sonarr import SonarrClient
@@ -428,15 +428,6 @@ async def shows_page(
     )
 
 
-async def _current_season_precise_mode(session, series_id: int, season_number: int) -> str:
-    result = await session.execute(
-        select(Title.precise_mode)
-        .where(Title.sonarr_series_id == series_id, Title.season_number == season_number)
-        .limit(1)
-    )
-    return result.scalar_one_or_none() or "whole_line"
-
-
 async def _non_mkv_gating_message(session, *conditions, levels: str) -> str | None:
     """Same gating concept as the per-movie one in _row_dict, but for a bulk
     show/season action: how many of the affected episodes aren't .mkv and will
@@ -703,14 +694,19 @@ async def set_season_severity(
     )
 
 
-@router.post("/{title_id}/toggle-precise", response_class=HTMLResponse)
-async def cycle_title_precise_mode(
-    request: Request, title_id: int, short_label: bool = Form(False), detail_view: bool = Form(False)
+@router.post("/{title_id}/set-precise-mode", response_class=HTMLResponse)
+async def set_title_precise_mode(
+    request: Request,
+    title_id: int,
+    precise_mode: str = Form(...),
+    short_label: bool = Form(False),
+    detail_view: bool = Form(False),
 ):
     async with get_session() as session:
         current_version = int(await get_setting(session, "wordlist_version"))
         title = await session.get(Title, title_id)
-        title.precise_mode = next_precise_mode(title.precise_mode)
+        if precise_mode in PRECISE_MODES:
+            title.precise_mode = precise_mode
         await session.commit()
         await session.refresh(title)
         row = _row_dict(title, current_version, short_label=short_label)
@@ -718,16 +714,16 @@ async def cycle_title_precise_mode(
     return _render_title(request, row, detail_view, precise_saved=detail_view)
 
 
-@router.post("/shows/{series_id}/season/{season_number}/toggle-precise", response_class=HTMLResponse)
-async def cycle_season_precise_mode(request: Request, series_id: int, season_number: int):
+@router.post("/shows/{series_id}/season/{season_number}/set-precise-mode", response_class=HTMLResponse)
+async def set_season_precise_mode(request: Request, series_id: int, season_number: int, precise_mode: str = Form(...)):
     async with get_session() as session:
-        current = await _current_season_precise_mode(session, series_id, season_number)
-        await session.execute(
-            update(Title)
-            .where(Title.sonarr_series_id == series_id, Title.season_number == season_number)
-            .values(precise_mode=next_precise_mode(current))
-        )
-        await session.commit()
+        if precise_mode in PRECISE_MODES:
+            await session.execute(
+                update(Title)
+                .where(Title.sonarr_series_id == series_id, Title.season_number == season_number)
+                .values(precise_mode=precise_mode)
+            )
+            await session.commit()
         current_version = int(await get_setting(session, "wordlist_version"))
         season = await _load_season(session, series_id, season_number, current_version)
 

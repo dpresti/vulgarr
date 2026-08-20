@@ -371,18 +371,28 @@ class JobQueue:
 
             job_start_monotonic = time.monotonic()
             last_update_monotonic = 0.0
+            mux_phase_start_monotonic: float | None = None
+            # Whisper mode already spends 0-85% on the alignment phase before ffmpeg
+            # ever starts -- the mux step continues from there instead of restarting
+            # its own percent/ETA from 0, which previously made the bar (and the ETA,
+            # computed off the whole job's elapsed time including however long
+            # alignment took) jump backwards the moment muting began.
+            mux_base_percent = _WHISPER_ALIGN_MAX_PERCENT if title.precise_mode == "whisper" else 0.0
+            mux_percent_span = 97.0 - mux_base_percent
 
             async def on_progress(fraction: float) -> None:
-                nonlocal last_update_monotonic
+                nonlocal last_update_monotonic, mux_phase_start_monotonic
                 now = time.monotonic()
+                if mux_phase_start_monotonic is None:
+                    mux_phase_start_monotonic = now
                 is_final = fraction >= 0.999
                 if not is_final and now - last_update_monotonic < _PROGRESS_UPDATE_MIN_INTERVAL_SECONDS:
                     return
                 last_update_monotonic = now
 
-                elapsed = now - job_start_monotonic
-                pct = round(fraction * 100, 1)
-                message = f"Muting audio (ffmpeg) -- {pct:.0f}%"
+                elapsed = now - mux_phase_start_monotonic
+                pct = round(mux_base_percent + fraction * mux_percent_span, 1)
+                message = f"Muting audio (ffmpeg) -- {round(fraction * 100):.0f}%"
                 if fraction > 0.02 and not is_final:
                     eta_seconds = elapsed * (1 - fraction) / fraction
                     message += f", {_format_eta(eta_seconds)}"

@@ -3,6 +3,7 @@
 # production "vulgarr" service -- nothing here touches the real database or
 # media library. Run alongside prod with:
 #   docker compose -f docker-compose.dev.yml up -d --build
+name: vulgarr-dev
 services:
   vulgarr-dev:
     build: .
@@ -14,11 +15,16 @@ services:
       TZ: ${TZ:-UTC}
       PUID: ${PUID:-1000}
       PGID: ${PGID:-1000}
-      SPF_MEDIA_ROOT: /media
+      SPF_MEDIA_ROOT: /plex
       SPF_DEFAULT_SUBTITLE_LANGUAGE: en
     volumes:
       - ./data-dev:/data
-      - ./dev-media:/media
+      # Real media, same container-side paths as production's docker-compose.yml, so
+      # the copied-from-prod DB's stored paths resolve. Explicitly requested for
+      # real end-to-end testing before merging -- NOT read-only, since a real
+      # reprocess needs to move/swap the file in place same as production does.
+      - /Fileserver/PLEX:/plex
+      - /yountnfs:/yountnfs
     networks:
       - media_default
 networks:

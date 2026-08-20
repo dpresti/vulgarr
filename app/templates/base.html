@@ -142,6 +142,7 @@
     .wide-input { min-width: 320px; }
     .input-md { width: 200px; }
     .input-sm { width: 100px; }
+    .input-precise { width: 150px; }
     .secret-field { position: relative; display: inline-block; }
     .secret-field input { padding-right: 2.3rem; }
     .secret-field .eye-toggle {
@@ -262,7 +263,7 @@
          the page wider than the viewport (blank scrollable space to the right of
          everything) -- no responsive rule can shrink an inline style, so this
          only works because those are all a real .wide-input/.input-* class now. */
-      .wide-input, .input-md, .input-sm { width: 100%; max-width: 100%; min-width: 0; box-sizing: border-box; }
+      .wide-input, .input-md, .input-sm, .input-precise { width: 100%; max-width: 100%; min-width: 0; box-sizing: border-box; }
 
       /* ---- mobile: stack label/input pairs instead of a fixed 320px column ---- */
       .settings-grid { grid-template-columns: 1fr; max-width: 100%; }

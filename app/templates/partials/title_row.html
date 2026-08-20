@@ -35,11 +35,13 @@
     {% endif %}
   </td>
   <td data-label="Mute precision">
-    <form hx-post="/library/{{ row.title.id }}/toggle-precise" hx-target="#title-row-{{ row.title.id }}" hx-swap="outerHTML">
+    <form hx-post="/library/{{ row.title.id }}/set-precise-mode" hx-target="#title-row-{{ row.title.id }}" hx-swap="outerHTML">
       {% if season_context %}<input type="hidden" name="short_label" value="true">{% endif %}
-      <button type="submit" class="small {{ 'secondary' if row.title.precise_mode == 'whole_line' else '' }}" title="Cycles: whole line -> precise (estimate) -> precise (whisper forced alignment)">
-        {% if row.title.precise_mode == 'whisper' %}precise (whisper){% elif row.title.precise_mode == 'estimate' %}precise{% else %}whole line{% endif %}
-      </button>
+      <select name="precise_mode" class="input-precise" onchange="this.form.requestSubmit()" title="How precisely to time each muted word">
+        <option value="whole_line" {% if row.title.precise_mode == 'whole_line' %}selected{% endif %}>Whole line</option>
+        <option value="estimate" {% if row.title.precise_mode == 'estimate' %}selected{% endif %}>Precise (estimate)</option>
+        <option value="whisper" {% if row.title.precise_mode == 'whisper' %}selected{% endif %}>Precise (Whisper)</option>
+      </select>
     </form>
   </td>
   <td data-label="">
