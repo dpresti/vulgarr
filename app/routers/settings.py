@@ -30,6 +30,12 @@ SETTING_KEYS = [
     "backup_retention_days",
     "auth_enabled",
     "auth_username",
+    "scene_detection_enabled",
+    "scene_confidence_threshold",
+    "scene_frame_interval_seconds",
+    "scene_min_duration_seconds",
+    "scene_merge_gap_seconds",
+    "scene_scan_concurrency_cap",
 ]
 
 
@@ -69,6 +75,12 @@ async def update_settings(
     auth_enabled: bool = Form(False),
     auth_username: str = Form(""),
     auth_password: str = Form(""),
+    scene_detection_enabled: bool = Form(False),
+    scene_confidence_threshold: float = Form(0.5),
+    scene_frame_interval_seconds: float = Form(2.0),
+    scene_min_duration_seconds: float = Form(1.0),
+    scene_merge_gap_seconds: float = Form(2.0),
+    scene_scan_concurrency_cap: int = Form(1),
 ):
     trigger_priority_second = "bazarr" if trigger_priority_first == "sonarr_radarr" else "sonarr_radarr"
 
@@ -109,6 +121,13 @@ async def update_settings(
             existing_hash = "set"
         await set_setting(session, "auth_username", auth_username)
         await set_setting(session, "auth_enabled", bool(auth_enabled and auth_username and existing_hash))
+
+        await set_setting(session, "scene_detection_enabled", scene_detection_enabled)
+        await set_setting(session, "scene_confidence_threshold", max(0.0, min(1.0, scene_confidence_threshold)))
+        await set_setting(session, "scene_frame_interval_seconds", max(0.5, scene_frame_interval_seconds))
+        await set_setting(session, "scene_min_duration_seconds", max(0.0, scene_min_duration_seconds))
+        await set_setting(session, "scene_merge_gap_seconds", max(0.0, scene_merge_gap_seconds))
+        await set_setting(session, "scene_scan_concurrency_cap", max(1, scene_scan_concurrency_cap))
 
     values = await _load_all()
     return templates.TemplateResponse(

@@ -31,6 +31,9 @@ _COLUMNS_ADDED_LATER = [
     ("titles", "replacement_requested_at", "DATETIME"),
     ("titles", "poster_url", "VARCHAR(1024)"),
     ("processing_jobs", "progress_percent", "FLOAT"),
+    ("titles", "scene_scan_status", "VARCHAR(20) NOT NULL DEFAULT 'not_scanned'"),
+    ("titles", "vulgarr_edit_path", "VARCHAR(1024)"),
+    ("titles", "vulgarr_edit_generated_at", "DATETIME"),
 ]
 
 _DISPLAY_NAME_EPISODE_RE = re.compile(r"^(?P<series>.+) - S(?P<season>\d+)E(?P<episode>\d+)(?: - .*)?$")
@@ -198,6 +201,24 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     # 0 = keep every backup forever. Defaults to 7 so backups don't accumulate
     # unbounded out of the box; editable in Settings > Backups.
     "backup_retention_days": 7,
+    # Scene detection/blur -- off by default (real CPU/storage cost, and every
+    # detected scene requires manual review before anything happens to a file).
+    "scene_detection_enabled": False,
+    # Minimum per-frame classifier confidence to count as a hit at all -- kept on
+    # the permissive side deliberately, since every candidate still goes through
+    # manual review; a stricter default would risk silently missing real scenes
+    # rather than just producing an extra reviewable candidate.
+    "scene_confidence_threshold": 0.5,
+    # How often to sample a frame during a scan. 2s intervals measured ~11 minutes
+    # of classifier time for a 2-hour movie on real homelab hardware -- comfortably
+    # practical, no need for a coarser default.
+    "scene_frame_interval_seconds": 2.0,
+    "scene_min_duration_seconds": 1.0,
+    # Wider than the audio pipeline's cue-merge gap (0.25s) -- a visual scene
+    # tolerates a brief cutaway shot without splitting into two separate candidates
+    # the way two adjacent profane words wouldn't.
+    "scene_merge_gap_seconds": 2.0,
+    "scene_scan_concurrency_cap": 1,
     # Optional HTTP Basic Auth in front of the whole UI (webhooks are exempt --
     # they already require their own token). Off by default so existing
     # deployments behind a trusted network/reverse proxy are unaffected.

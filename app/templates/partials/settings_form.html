@@ -93,6 +93,34 @@
     <input type="text" id="clean_track_language" name="clean_track_language" value="{{ values.clean_track_language }}" class="input-sm">
   </div>
 
+  <h2 style="margin-top: 1.75rem;">Scene Detection</h2>
+  <p class="muted" style="margin-top: -0.5rem;">Detects candidate explicit-content scenes via a local frame classifier -- every candidate requires manual review before anything happens to a file (no auto-approve). Off by default: real CPU cost per scan, and produces a full second encoded "Vulgarr Edit" copy of the movie/episode once you apply approved scenes.</p>
+  <div class="settings-grid">
+    <label for="scene_detection_enabled">Enable scene detection</label>
+    <input type="checkbox" id="scene_detection_enabled" name="scene_detection_enabled" {% if values.scene_detection_enabled %}checked{% endif %}>
+
+    <label for="scene_confidence_threshold">Confidence threshold</label>
+    <div>
+      <input type="number" id="scene_confidence_threshold" name="scene_confidence_threshold" min="0" max="1" step="0.05" value="{{ values.scene_confidence_threshold }}" class="input-sm">
+      <div class="muted">Minimum per-frame classifier score (0-1) to count as a hit. Kept permissive by default -- every candidate is reviewed manually either way, so a stricter value only risks missing real scenes.</div>
+    </div>
+
+    <label for="scene_frame_interval_seconds">Frame sample interval (seconds)</label>
+    <input type="number" id="scene_frame_interval_seconds" name="scene_frame_interval_seconds" min="0.5" step="0.5" value="{{ values.scene_frame_interval_seconds }}" class="input-sm">
+
+    <label for="scene_min_duration_seconds">Minimum scene duration (seconds)</label>
+    <input type="number" id="scene_min_duration_seconds" name="scene_min_duration_seconds" min="0" step="0.5" value="{{ values.scene_min_duration_seconds }}" class="input-sm">
+
+    <label for="scene_merge_gap_seconds">Merge gap (seconds)</label>
+    <div>
+      <input type="number" id="scene_merge_gap_seconds" name="scene_merge_gap_seconds" min="0" step="0.5" value="{{ values.scene_merge_gap_seconds }}" class="input-sm">
+      <div class="muted">Nearby hits within this many seconds of each other are merged into one candidate scene.</div>
+    </div>
+
+    <label for="scene_scan_concurrency_cap">Max concurrent scans</label>
+    <input type="number" id="scene_scan_concurrency_cap" name="scene_scan_concurrency_cap" min="1" max="4" value="{{ values.scene_scan_concurrency_cap }}" class="input-sm">
+  </div>
+
   <h2 style="margin-top: 1.75rem;">Backups</h2>
   <div class="settings-grid">
     <label for="backup_retention_days">Delete backups older than (days)</label>
