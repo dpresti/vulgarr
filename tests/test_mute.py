@@ -153,3 +153,23 @@ def test_whisper_mode_falls_back_to_estimate_per_cue_on_alignment_failure(monkey
 
 def test_whisper_mode_empty_matches_yields_no_intervals():
     assert asyncio.run(build_mute_intervals_whisper([], Path("/fake.mkv"), "ffmpeg")) == []
+
+
+def test_whisper_mode_reports_progress_per_cue(monkeypatch):
+    matches = [
+        real_match("this has some shit in it", 0.0, 2.0, term="shit", i=1),
+        real_match("god damn it works", 3.0, 5.0, term="damn", i=2),
+    ]
+
+    async def fake_align(video_path, ffmpeg_bin, m):
+        return None  # forces the fallback path -- progress should still fire
+
+    monkeypatch.setattr("app.audio.forced_align.align_matches_for_cue", fake_align)
+
+    calls = []
+
+    async def on_progress(done, total):
+        calls.append((done, total))
+
+    asyncio.run(build_mute_intervals_whisper(matches, Path("/fake.mkv"), "ffmpeg", on_progress=on_progress))
+    assert calls == [(1, 2), (2, 2)]

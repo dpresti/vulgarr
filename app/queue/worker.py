@@ -32,6 +32,12 @@ logger = logging.getLogger(__name__)
 # a single job would generate a commit per frame.
 _PROGRESS_UPDATE_MIN_INTERVAL_SECONDS = 1.5
 
+# Whisper forced alignment (a real ffmpeg extract + model inference per matched cue)
+# runs before the ffmpeg mux step and is typically the slower of the two phases for a
+# high-profanity title -- reserve most of the bar for it, leaving room for muting and
+# the final verify/backup nudge (see on_stage's 97% floor below) after.
+_WHISPER_ALIGN_MAX_PERCENT = 85.0
+
 # How often to check Sonarr/Radarr for whether a requested mkv replacement has landed
 # yet. This is a real search+grab+import cycle on their end, which can take anywhere
 # from seconds to a long time depending on availability -- no need to check often.
@@ -385,6 +391,27 @@ class JobQueue:
                 job.progress_message = message
                 await session.commit()
 
+            async def on_align_progress(done: int, total: int) -> None:
+                nonlocal last_update_monotonic
+                if total <= 0:
+                    return
+                now = time.monotonic()
+                is_final = done >= total
+                if not is_final and now - last_update_monotonic < _PROGRESS_UPDATE_MIN_INTERVAL_SECONDS:
+                    return
+                last_update_monotonic = now
+
+                fraction = done / total
+                message = f"Aligning word timing (Whisper) -- {done}/{total} cues"
+                if fraction > 0.02 and not is_final:
+                    elapsed = now - job_start_monotonic
+                    eta_seconds = elapsed * (1 - fraction) / fraction
+                    message += f", {_format_eta(eta_seconds)}"
+
+                job.progress_percent = round(fraction * _WHISPER_ALIGN_MAX_PERCENT, 1)
+                job.progress_message = message
+                await session.commit()
+
             async def on_stage(message: str) -> None:
                 job.progress_message = message
                 # Nudge the bar forward past wherever ffmpeg's own progress topped
@@ -406,6 +433,7 @@ class JobQueue:
                     precise_mode=title.precise_mode,
                     on_progress=on_progress,
                     on_stage=on_stage,
+                    on_align_progress=on_align_progress,
                 )
 
                 job.state = JobState.done

@@ -2,8 +2,14 @@
 
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Awaitable, Callable
 
 from app.subtitles.matcher import CueMatch
+
+# Called after each cue's alignment attempt (success or per-cue fallback) with
+# (cues_done_so_far, total_cues) -- lets the caller surface real progress during
+# what can be a slow, per-cue loop (a real audio extract + model inference each).
+AlignProgressCallback = Callable[[int, int], Awaitable[None]]
 
 # Small padding around each muted cue smooths the mute boundary (avoids an
 # audible "click" right at the edge of the subtitle timestamp, since subtitle
@@ -84,19 +90,24 @@ async def build_mute_intervals_whisper(
     ffmpeg_bin: str,
     pad_seconds: float = WHISPER_PAD_SECONDS,
     merge_gap_seconds: float = DEFAULT_MERGE_GAP_SECONDS,
+    on_progress: AlignProgressCallback | None = None,
 ) -> list[MuteInterval]:
     """Like build_mute_intervals(precise=True), but locates each matched word's real
     position in the audio via forced alignment (app.audio.forced_align) instead of
     estimating it from the word's position within the cue's text. Falls back to the
     proportional estimate on a per-cue basis if alignment fails for that cue (e.g. a
-    cue whose audio doesn't actually contain clean, alignable speech)."""
+    cue whose audio doesn't actually contain clean, alignable speech).
+
+    Each cue involves a real ffmpeg audio extract plus a model inference, so this can
+    be slow (seconds per cue) -- on_progress(done, total), relative to this call's own
+    `matches`, lets the caller surface that rather than looking frozen."""
     from app.audio.forced_align import align_matches_for_cue
 
     if not matches:
         return []
 
     raw: list[tuple[float, float]] = []
-    for m in matches:
+    for i, m in enumerate(matches):
         windows = await align_matches_for_cue(video_path, ffmpeg_bin, m)
         if windows is None:
             raw.extend(
@@ -105,9 +116,11 @@ async def build_mute_intervals_whisper(
                     [m], precise=True, pad_seconds=PRECISE_PAD_SECONDS, merge_gap_seconds=0.0
                 )
             )
-            continue
-        for w in windows:
-            raw.append((max(0.0, w.start - pad_seconds), w.end + pad_seconds))
+        else:
+            for w in windows:
+                raw.append((max(0.0, w.start - pad_seconds), w.end + pad_seconds))
+        if on_progress is not None:
+            await on_progress(i + 1, len(matches))
 
     return _merge_raw_intervals(raw, merge_gap_seconds)
 
