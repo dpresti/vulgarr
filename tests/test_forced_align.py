@@ -103,3 +103,24 @@ def test_align_matches_for_cue_success_passes_through(monkeypatch):
     # Window padding applied and clamped at 0 on the low side.
     assert captured["window_start"] == pytest.approx(max(0.0, 10.0 - 0.75))
     assert captured["window_end"] == pytest.approx(12.0 + 0.75)
+
+
+def test_align_matches_for_cue_drops_words_the_aligner_cant_tokenize(monkeypatch):
+    # Real-world case: MMS_FA's CTC vocabulary has no digits, so "1" would otherwise
+    # KeyError in the tokenizer and poison alignment for the entire cue -- including
+    # "shit", which is perfectly alignable on its own. It should just be excluded
+    # from the aligner input, not take the whole cue down with it.
+    match = real_match("bring me 1 shit sandwich right now", 5.0, 8.0, term="shit")
+
+    captured = {}
+
+    def _fake_align_blocking(ffmpeg_bin, video_path, window_start, window_end, words, spans):
+        captured["words"] = words
+        return [WordWindow(start=6.0, end=6.3)]
+
+    monkeypatch.setattr("app.audio.forced_align._align_blocking", _fake_align_blocking)
+    result = asyncio.run(align_matches_for_cue(Path("/fake.mkv"), "ffmpeg", match))
+
+    assert result == [WordWindow(start=6.0, end=6.3)]
+    assert "1" not in [w[0] for w in captured["words"]]
+    assert "shit" in [w[0] for w in captured["words"]]

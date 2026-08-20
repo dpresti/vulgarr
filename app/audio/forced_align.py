@@ -30,6 +30,15 @@ ALIGN_SAMPLE_RATE = 16000
 WINDOW_PAD_SECONDS = 0.75
 
 _WORD_RE = re.compile(r"\S+")
+# MMS_FA's CTC vocabulary is lowercase letters, apostrophe, hyphen, and asterisk only
+# (no digits) -- a word containing anything else (e.g. "1", "20", a stray symbol
+# normalize_cue_text didn't strip) can't be tokenized at all. Rather than let one such
+# word anywhere in a cue poison alignment for the *whole* cue (including a perfectly
+# alignable matched word elsewhere in the same line), such words are dropped from the
+# aligner input entirely -- a MatchSpan that only overlaps a dropped word still
+# correctly falls back to the estimate method (via the "no covering word" check
+# below), same as any other alignment failure.
+_ALIGNABLE_WORD_RE = re.compile(r"^[a-z'\-*]+$")
 
 _bundle: dict = {}
 
@@ -39,8 +48,22 @@ def _get_bundle() -> dict:
     is a real model download+load (a few hundred MB, cached under $TORCH_HOME after
     the first run) so it only happens once per process, on first actual use."""
     if "model" not in _bundle:
+        import os
+
         import torch
         from torchaudio.pipelines import MMS_FA
+
+        # More threads is faster per call in isolation (measured ~1.7s/cue at the
+        # full core count vs ~11.5s/cue single-threaded on this host) -- but each
+        # cue's inference is one blocking call on a background thread inside a
+        # single-process app that's also serving HTTP requests (queue status
+        # polling, DB commits between cues) on the same CPU. Letting torch claim
+        # every core starves that other work of scheduling time, which measured far
+        # worse in practice (~9s/cue during a real job with the queue page open)
+        # than the raw per-call cost alone would suggest. Cap it so the app always
+        # has real headroom, trading a modest amount of best-case per-cue speed for
+        # much better throughput once you account for that contention.
+        torch.set_num_threads(max(1, (os.cpu_count() or 4) // 2))
 
         _bundle["torch"] = torch
         _bundle["model"] = MMS_FA.get_model()
@@ -146,7 +169,7 @@ async def align_matches_for_cue(video_path: Path, ffmpeg_bin: str, match: CueMat
     if not match.spans or not match.normalized_length:
         return None
 
-    words = _tokenize_with_offsets(normalize_cue_text(match.cue.text))
+    words = [w for w in _tokenize_with_offsets(normalize_cue_text(match.cue.text)) if _ALIGNABLE_WORD_RE.match(w[0])]
     if not words:
         return None
 
