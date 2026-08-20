@@ -21,10 +21,25 @@ logger = logging.getLogger(__name__)
 
 _PROGRESS_UPDATE_MIN_INTERVAL_SECONDS = 1.5
 
+# A scan's per-frame ETA is far more stable than the audio pipeline's ffmpeg-progress
+# ETA (uniform-cost work, not variable-length cues), so no warm-up-fraction gating is
+# needed here -- shown as soon as there's more than one frame's worth of data.
+
 
 def _parse_hhmm(value: str) -> datetime.time:
     hour, minute = value.split(":")
     return datetime.time(hour=int(hour), minute=int(minute))
+
+
+def _format_eta(seconds: float) -> str:
+    seconds = max(0, int(seconds))
+    minutes, seconds = divmod(seconds, 60)
+    hours, minutes = divmod(minutes, 60)
+    if hours:
+        return f"{hours}h {minutes}m remaining"
+    if minutes:
+        return f"{minutes}m {seconds}s remaining"
+    return f"{seconds}s remaining"
 
 
 class SceneJobQueue:
@@ -61,6 +76,34 @@ class SceneJobQueue:
         for task in list(self._running.values()):
             task.cancel()
 
+    async def cancel_job(self, job_id: int) -> tuple[bool, str | None]:
+        """Mirrors JobQueue.cancel_job -- same >=97% "too far along" refusal, more
+        important here than for a scan (harmless to abandon mid-way) once blur jobs
+        (a real file-swap tail step) start using this same queue/dispatcher."""
+        task = self._running.get(job_id)
+        if task is not None:
+            async with get_session() as session:
+                job = await session.get(SceneJob, job_id)
+                if job is None or job.state != JobState.processing:
+                    return False, "Job is no longer running"
+                if (job.progress_percent or 0) >= 97:
+                    return False, "Too far along to cancel -- finishing up"
+            task.cancel()
+            return True, None
+
+        async with get_session() as session:
+            job = await session.get(SceneJob, job_id)
+            if job is None or job.state != JobState.queued:
+                return False, "Job is not queued or running"
+            job.state = JobState.cancelled
+            job.error = "Cancelled by user"
+            job.finished_at = datetime.datetime.utcnow()
+            title = await session.get(Title, job.title_id)
+            if title is not None and job.kind == SceneJobKind.scan:
+                title.scene_scan_status = "not_scanned"
+            await session.commit()
+        return True, None
+
     async def enqueue_scan(self, title_id: int) -> int:
         async with get_session() as session:
             job = SceneJob(title_id=title_id, kind=SceneJobKind.scan, state=JobState.queued)
@@ -72,6 +115,25 @@ class SceneJobQueue:
             await session.refresh(job)
         await self._pending.put(job.id)
         return job.id
+
+    async def enqueue_scan_if_not_already_active(self, title_id: int) -> bool:
+        """Mirrors app.library.enqueue_if_not_already_active -- used by both the
+        single-title scan button and the bulk season/show scan actions, so a
+        double-click or an overlapping bulk trigger doesn't queue a second scan for
+        a title that's already queued/processing. Returns whether it actually
+        enqueued (vs. skipped as a duplicate)."""
+        async with get_session() as session:
+            existing = await session.execute(
+                select(SceneJob).where(
+                    SceneJob.title_id == title_id,
+                    SceneJob.kind == SceneJobKind.scan,
+                    SceneJob.state.in_([JobState.queued, JobState.processing]),
+                )
+            )
+            if existing.scalar_one_or_none() is not None:
+                return False
+        await self.enqueue_scan(title_id)
+        return True
 
     async def _dispatch_loop(self) -> None:
         while not self._stopping:
@@ -123,6 +185,7 @@ class SceneJobQueue:
             title.scene_scan_status = "scanning"
             await session.commit()
 
+            job_start_monotonic = time.monotonic()
             last_update_monotonic = 0.0
 
             async def on_progress(done: int, total: int) -> None:
@@ -134,8 +197,14 @@ class SceneJobQueue:
                 if not is_final and now - last_update_monotonic < _PROGRESS_UPDATE_MIN_INTERVAL_SECONDS:
                     return
                 last_update_monotonic = now
-                job.progress_percent = round(100 * done / total, 1)
-                job.progress_message = f"Scanning for scenes -- frame {done}/{total}"
+                fraction = done / total
+                job.progress_percent = round(100 * fraction, 1)
+                message = f"Scanning for scenes -- frame {done}/{total}"
+                if fraction > 0 and not is_final:
+                    elapsed = now - job_start_monotonic
+                    eta_seconds = elapsed * (1 - fraction) / fraction
+                    message += f", {_format_eta(eta_seconds)}"
+                job.progress_message = message
                 await session.commit()
 
             try:
