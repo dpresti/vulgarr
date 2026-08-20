@@ -22,8 +22,9 @@ DEFAULT_PAD_SECONDS = 0.15
 PRECISE_PAD_SECONDS = 0.4
 # Whisper forced-alignment mode locates the word in the real audio rather than
 # estimating from text position, so it needs much less safety margin than the
-# estimate above -- same magnitude as the default whole-cue padding.
-WHISPER_PAD_SECONDS = 0.15
+# estimate above -- alignment boundaries land close enough to the real word that
+# only a touch of edge softening is needed, not real slop coverage.
+WHISPER_PAD_SECONDS = 0.2
 # Cues whose (padded) intervals are within this gap of each other are merged
 # into one interval, both to avoid a click-unmute-click and to keep the
 # generated ffmpeg filter expression shorter.
