@@ -20,7 +20,8 @@ RUN mkdir -p /data && chown spf:spf /data
 # entrypoint.sh.
 
 ENV SPF_DATA_DIR=/data \
-    SPF_MEDIA_ROOT=/media
+    SPF_MEDIA_ROOT=/media \
+    TORCH_HOME=/data/torch_cache
 
 EXPOSE 8000
 ENTRYPOINT ["/entrypoint.sh"]

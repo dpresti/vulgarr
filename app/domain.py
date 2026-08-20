@@ -48,6 +48,14 @@ def serialize_index_list(indices: list[int]) -> str:
     return ",".join(str(i) for i in indices)
 
 
+# Mute-precision modes, selectable per title/season. "whole_line" mutes the cue's
+# whole on-screen duration (safest, no assumption about word position). "estimate"
+# narrows to a proportional guess of the word's position within the cue's text.
+# "whisper" narrows to the word's real position in the audio via forced alignment
+# (app.audio.forced_align) -- more accurate than the estimate, but slower to process.
+PRECISE_MODES: list[str] = ["whole_line", "estimate", "whisper"]
+
+
 class JobState(str, enum.Enum):
     queued = "queued"
     processing = "processing"

@@ -19,10 +19,12 @@
     {% endif %}
   </td>
   <td data-label="Precision">
-    <form hx-post="/library/shows/{{ series_id }}/season/{{ season.season_number }}/toggle-precise" hx-target="#season-row-{{ season.season_number }}" hx-swap="outerHTML">
-      <button type="submit" class="small {{ 'secondary' if not season.precise_mute else '' }}" title="Mute a narrow window around each word instead of the whole subtitle line">
-        {{ 'precise' if season.precise_mute else 'whole line' }}
-      </button>
+    <form hx-post="/library/shows/{{ series_id }}/season/{{ season.season_number }}/set-precise-mode" hx-target="#season-row-{{ season.season_number }}" hx-swap="outerHTML">
+      <select name="precise_mode" class="input-precise" onchange="this.form.requestSubmit()" title="How precisely to time each muted word">
+        <option value="whole_line" {% if season.precise_mode == 'whole_line' %}selected{% endif %}>Whole line</option>
+        <option value="estimate" {% if season.precise_mode == 'estimate' %}selected{% endif %}>Precise (estimate)</option>
+        <option value="whisper" {% if season.precise_mode == 'whisper' %}selected{% endif %}>Precise (Whisper)</option>
+      </select>
     </form>
   </td>
   <td data-label="">

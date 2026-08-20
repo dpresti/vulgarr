@@ -2,6 +2,8 @@ __pycache__/
 *.pyc
 .venv/
 data/
+data-dev/
+dev-media/
 localdata/
 .env
 .pytest_cache/

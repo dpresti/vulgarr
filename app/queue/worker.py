@@ -32,6 +32,12 @@ logger = logging.getLogger(__name__)
 # a single job would generate a commit per frame.
 _PROGRESS_UPDATE_MIN_INTERVAL_SECONDS = 1.5
 
+# Whisper forced alignment (a real ffmpeg extract + model inference per matched cue)
+# runs before the ffmpeg mux step and is typically the slower of the two phases for a
+# high-profanity title -- reserve most of the bar for it, leaving room for muting and
+# the final verify/backup nudge (see on_stage's 97% floor below) after.
+_WHISPER_ALIGN_MAX_PERCENT = 85.0
+
 # How often to check Sonarr/Radarr for whether a requested mkv replacement has landed
 # yet. This is a real search+grab+import cycle on their end, which can take anywhere
 # from seconds to a long time depending on availability -- no need to check often.
@@ -365,23 +371,54 @@ class JobQueue:
 
             job_start_monotonic = time.monotonic()
             last_update_monotonic = 0.0
+            mux_phase_start_monotonic: float | None = None
+            # Whisper mode already spends 0-85% on the alignment phase before ffmpeg
+            # ever starts -- the mux step continues from there instead of restarting
+            # its own percent/ETA from 0, which previously made the bar (and the ETA,
+            # computed off the whole job's elapsed time including however long
+            # alignment took) jump backwards the moment muting began.
+            mux_base_percent = _WHISPER_ALIGN_MAX_PERCENT if title.precise_mode == "whisper" else 0.0
+            mux_percent_span = 97.0 - mux_base_percent
 
             async def on_progress(fraction: float) -> None:
-                nonlocal last_update_monotonic
+                nonlocal last_update_monotonic, mux_phase_start_monotonic
                 now = time.monotonic()
+                if mux_phase_start_monotonic is None:
+                    mux_phase_start_monotonic = now
                 is_final = fraction >= 0.999
                 if not is_final and now - last_update_monotonic < _PROGRESS_UPDATE_MIN_INTERVAL_SECONDS:
                     return
                 last_update_monotonic = now
 
-                elapsed = now - job_start_monotonic
-                pct = round(fraction * 100, 1)
-                message = f"Muting audio (ffmpeg) -- {pct:.0f}%"
+                elapsed = now - mux_phase_start_monotonic
+                pct = round(mux_base_percent + fraction * mux_percent_span, 1)
+                message = f"Muting audio (ffmpeg) -- {round(fraction * 100):.0f}%"
                 if fraction > 0.02 and not is_final:
                     eta_seconds = elapsed * (1 - fraction) / fraction
                     message += f", {_format_eta(eta_seconds)}"
 
                 job.progress_percent = pct
+                job.progress_message = message
+                await session.commit()
+
+            async def on_align_progress(done: int, total: int) -> None:
+                nonlocal last_update_monotonic
+                if total <= 0:
+                    return
+                now = time.monotonic()
+                is_final = done >= total
+                if not is_final and now - last_update_monotonic < _PROGRESS_UPDATE_MIN_INTERVAL_SECONDS:
+                    return
+                last_update_monotonic = now
+
+                fraction = done / total
+                message = f"Aligning word timing (Whisper) -- {done}/{total} cues"
+                if fraction > 0.02 and not is_final:
+                    elapsed = now - job_start_monotonic
+                    eta_seconds = elapsed * (1 - fraction) / fraction
+                    message += f", {_format_eta(eta_seconds)}"
+
+                job.progress_percent = round(fraction * _WHISPER_ALIGN_MAX_PERCENT, 1)
                 job.progress_message = message
                 await session.commit()
 
@@ -403,9 +440,10 @@ class JobQueue:
                     subtitle_path=Path(title.subtitle_path),
                     severity_levels=parse_severity_levels(title.severity_levels),
                     known_clean_indices=parse_index_list(title.clean_track_audio_indices),
-                    precise_mute=title.precise_mute,
+                    precise_mode=title.precise_mode,
                     on_progress=on_progress,
                     on_stage=on_stage,
+                    on_align_progress=on_align_progress,
                 )
 
                 job.state = JobState.done

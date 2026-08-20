@@ -7,7 +7,7 @@ from pathlib import Path
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.audio.mute import MuteInterval, build_mute_intervals
+from app.audio.mute import AlignProgressCallback, MuteInterval, build_mute_intervals, build_mute_intervals_whisper
 from app.config import settings as app_settings
 from app.db.models import WordListEntry
 from app.db.session import get_setting
@@ -82,9 +82,10 @@ async def process_video(
     subtitle_path: Path,
     severity_levels: list[Severity] | None = None,
     known_clean_indices: list[int] | None = None,
-    precise_mute: bool = False,
+    precise_mode: str = "whole_line",
     on_progress: ProgressCallback | None = None,
     on_stage: StageCallback | None = None,
+    on_align_progress: AlignProgressCallback | None = None,
 ) -> ProcessingOutcome:
     """Run the full pipeline for one file, generating one clean track per severity level.
     Raises ProcessingError/RemuxError on failure."""
@@ -101,16 +102,36 @@ async def process_video(
     if duration_error:
         raise ProcessingError(duration_error)
 
-    intervals_by_level: list[tuple[Severity, list[MuteInterval]]] = []
     matches_by_level: dict[Severity, list[CueMatch]] = {}
     for level in levels:
         terms = await load_active_terms(session, min_severity=level)
         if not terms:
             raise ProcessingError(f"Word list is empty at the '{level.value}' severity level -- nothing to filter")
         matcher = ProfanityMatcher(terms)
-        matches = matcher.match_all(cues)
-        matches_by_level[level] = matches
-        intervals_by_level.append((level, build_mute_intervals(matches, precise=precise_mute)))
+        matches_by_level[level] = matcher.match_all(cues)
+
+    # Precomputed across every selected level up front, so on_align_progress can
+    # report one accurate running count for the whole job even when multiple levels
+    # each re-align their (mostly overlapping) matches.
+    whisper_grand_total = sum(len(m) for m in matches_by_level.values()) if precise_mode == "whisper" else 0
+
+    intervals_by_level: list[tuple[Severity, list[MuteInterval]]] = []
+    level_offset = 0
+    for level in levels:
+        matches = matches_by_level[level]
+        if precise_mode == "whisper":
+
+            async def _level_align_progress(done_in_level: int, _total_in_level: int, _offset: int = level_offset) -> None:
+                if on_align_progress is not None:
+                    await on_align_progress(_offset + done_in_level, whisper_grand_total)
+
+            intervals = await build_mute_intervals_whisper(
+                matches, video_path, app_settings.ffmpeg_bin, on_progress=_level_align_progress
+            )
+        else:
+            intervals = build_mute_intervals(matches, precise=(precise_mode == "estimate"))
+        intervals_by_level.append((level, intervals))
+        level_offset += len(matches)
 
     # Report the count for whichever selected level catches the most (the lowest-rank
     # one selected), since that's the most complete picture of what's being filtered.

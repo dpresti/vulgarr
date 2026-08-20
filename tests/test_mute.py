@@ -1,4 +1,10 @@
-from app.audio.mute import build_mute_intervals, build_volume_filter
+import asyncio
+from pathlib import Path
+
+import pytest
+
+from app.audio.forced_align import WordWindow
+from app.audio.mute import build_mute_intervals, build_mute_intervals_whisper, build_volume_filter
 from app.domain import Severity
 from app.subtitles.matcher import CueMatch, ProfanityMatcher, WordListTerm
 from app.subtitles.parser import SubtitleCue
@@ -113,3 +119,57 @@ def test_precise_mode_handles_repeated_term_in_one_cue():
     intervals = build_mute_intervals([match], precise=True, merge_gap_seconds=0.0)
     assert len(intervals) == 2
     assert intervals[0].start < intervals[1].start
+
+
+def test_whisper_mode_uses_aligned_word_window(monkeypatch):
+    match = real_match("this has some shit in it", 10.0, 12.0, term="shit")
+
+    async def fake_align(video_path, ffmpeg_bin, m):
+        return [WordWindow(start=10.8, end=11.0)]
+
+    monkeypatch.setattr("app.audio.forced_align.align_matches_for_cue", fake_align)
+    intervals = asyncio.run(
+        build_mute_intervals_whisper([match], Path("/fake.mkv"), "ffmpeg", pad_seconds=0.1)
+    )
+    assert len(intervals) == 1
+    assert intervals[0].start == pytest.approx(10.7)
+    assert intervals[0].end == pytest.approx(11.1)
+
+
+def test_whisper_mode_falls_back_to_estimate_per_cue_on_alignment_failure(monkeypatch):
+    # Alignment failing for one cue shouldn't fail the whole job -- it should fall
+    # back to the proportional-estimate window for just that cue.
+    match = real_match("this is a really really long sentence that ends in the word fuck", 100.0, 110.0)
+
+    async def fake_align(video_path, ffmpeg_bin, m):
+        return None
+
+    monkeypatch.setattr("app.audio.forced_align.align_matches_for_cue", fake_align)
+    whisper_intervals = asyncio.run(build_mute_intervals_whisper([match], Path("/fake.mkv"), "ffmpeg"))
+    estimate_intervals = build_mute_intervals([match], precise=True, pad_seconds=0.4, merge_gap_seconds=0.0)
+
+    assert whisper_intervals == estimate_intervals
+
+
+def test_whisper_mode_empty_matches_yields_no_intervals():
+    assert asyncio.run(build_mute_intervals_whisper([], Path("/fake.mkv"), "ffmpeg")) == []
+
+
+def test_whisper_mode_reports_progress_per_cue(monkeypatch):
+    matches = [
+        real_match("this has some shit in it", 0.0, 2.0, term="shit", i=1),
+        real_match("god damn it works", 3.0, 5.0, term="damn", i=2),
+    ]
+
+    async def fake_align(video_path, ffmpeg_bin, m):
+        return None  # forces the fallback path -- progress should still fire
+
+    monkeypatch.setattr("app.audio.forced_align.align_matches_for_cue", fake_align)
+
+    calls = []
+
+    async def on_progress(done, total):
+        calls.append((done, total))
+
+    asyncio.run(build_mute_intervals_whisper(matches, Path("/fake.mkv"), "ffmpeg", on_progress=on_progress))
+    assert calls == [(1, 2), (2, 2)]
