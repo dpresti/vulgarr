@@ -5,8 +5,12 @@
     <h1>{{ series_title or 'Unknown series' }}</h1>
     <div>
       {% if process_message %}<div class="muted">{{ process_message }}</div>{% endif %}
-      <form method="post" action="/library/shows/{{ series_id }}/process">
+      {% if scan_message %}<div class="muted">{{ scan_message }}</div>{% endif %}
+      <form method="post" action="/library/shows/{{ series_id }}/process" class="inline">
         <button type="submit" class="secondary" title="Queue every episode in this show that already has a subtitle">Process all episodes</button>
+      </form>
+      <form method="post" action="/library/shows/{{ series_id }}/scan-scenes" class="inline">
+        <button type="submit" class="secondary" title="Scan every episode in this show for candidate scenes">Scan all for scenes</button>
       </form>
     </div>
   </div>

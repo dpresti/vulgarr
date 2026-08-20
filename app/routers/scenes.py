@@ -10,9 +10,9 @@ from fastapi.templating import Jinja2Templates
 from sqlalchemy import select
 
 from app.config import settings as app_settings
-from app.db.models import DetectedScene, Title
+from app.db.models import DetectedScene, SceneJob, Title
 from app.db.session import get_session, get_setting
-from app.domain import SceneReviewStatus
+from app.domain import SceneJobKind, SceneReviewStatus
 from app.queue.scene_worker import scene_job_queue
 from app.vision.classifier import extract_frame
 
@@ -41,11 +41,27 @@ async def _scene_review_context(session, title_id: int) -> dict:
     )
     scenes = scenes_result.scalars().all()
     scene_detection_enabled = bool(await get_setting(session, "scene_detection_enabled"))
+
+    # The most recent job for this title, whatever its state -- while it's still
+    # queued/processing this is what drives the real progress%/message shown
+    # instead of a bare "Scanning…" spinner; once done it's still useful context
+    # (e.g. a failed job's error message) even though scene_scan_status alone
+    # already reflects the outcome.
+    scan_job = (
+        await session.execute(
+            select(SceneJob)
+            .where(SceneJob.title_id == title_id, SceneJob.kind == SceneJobKind.scan)
+            .order_by(SceneJob.created_at.desc())
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+
     return {
         "title_id": title_id,
         "scene_scan_status": title.scene_scan_status if title else "not_scanned",
         "scenes": scenes,
         "scene_detection_enabled": scene_detection_enabled,
+        "scan_job": scan_job,
     }
 
 
@@ -86,8 +102,90 @@ async def scan_scenes(request: Request, title_id: int):
     async with get_session() as session:
         scene_detection_enabled = bool(await get_setting(session, "scene_detection_enabled"))
     if scene_detection_enabled:
-        await scene_job_queue.enqueue_scan(title_id)
+        await scene_job_queue.enqueue_scan_if_not_already_active(title_id)
     return await _render_scene_review(request, title_id)
+
+
+@router.post("/library/shows/{series_id}/scan-scenes", response_class=HTMLResponse)
+async def scan_scenes_show(request: Request, series_id: int):
+    from app.db.models import MediaType
+    from app.routers.library import SEVERITY_OPTIONS, _load_seasons
+
+    async with get_session() as session:
+        scene_detection_enabled = bool(await get_setting(session, "scene_detection_enabled"))
+        title_ids: list[int] = []
+        if scene_detection_enabled:
+            result = await session.execute(
+                select(Title.id).where(Title.sonarr_series_id == series_id, Title.media_type == MediaType.episode)
+            )
+            title_ids = [row[0] for row in result.all()]
+        current_version = int(await get_setting(session, "wordlist_version"))
+        series_title, seasons = await _load_seasons(session, series_id, current_version)
+
+    if scene_detection_enabled:
+        queued = sum(
+            [await scene_job_queue.enqueue_scan_if_not_already_active(title_id) for title_id in title_ids]
+        )
+        scan_message = f"Queued {queued} episode(s) for scene scanning."
+    else:
+        scan_message = "Scene detection is disabled -- enable it in Settings first."
+
+    return templates.TemplateResponse(
+        "show_detail.html",
+        {
+            "request": request,
+            "series_id": series_id,
+            "series_title": series_title,
+            "seasons": seasons,
+            "severity_options": SEVERITY_OPTIONS,
+            "scan_message": scan_message,
+        },
+    )
+
+
+@router.post("/library/shows/{series_id}/season/{season_number}/scan-scenes", response_class=HTMLResponse)
+async def scan_scenes_season(request: Request, series_id: int, season_number: int):
+    from app.db.models import MediaType
+    from app.routers.library import _load_season
+
+    async with get_session() as session:
+        scene_detection_enabled = bool(await get_setting(session, "scene_detection_enabled"))
+        title_ids: list[int] = []
+        if scene_detection_enabled:
+            result = await session.execute(
+                select(Title.id).where(
+                    Title.sonarr_series_id == series_id,
+                    Title.season_number == season_number,
+                    Title.media_type == MediaType.episode,
+                )
+            )
+            title_ids = [row[0] for row in result.all()]
+        current_version = int(await get_setting(session, "wordlist_version"))
+        season = await _load_season(session, series_id, season_number, current_version)
+
+    if scene_detection_enabled:
+        queued = sum(
+            [await scene_job_queue.enqueue_scan_if_not_already_active(title_id) for title_id in title_ids]
+        )
+        scan_message = f"Queued {queued} episode(s) for scene scanning."
+    else:
+        scan_message = "Scene detection is disabled -- enable it in Settings first."
+
+    return templates.TemplateResponse(
+        "partials/season_row.html",
+        {"request": request, "series_id": series_id, "season": season, "scan_message": scan_message},
+    )
+
+
+@router.post("/scene-jobs/{job_id}/cancel", response_class=HTMLResponse)
+async def cancel_scene_job(request: Request, job_id: int):
+    """Standalone cancel action (queue page context, not tied to one title's review
+    section) -- unlike the other scene endpoints, this re-renders the main queue
+    partial, not scene_review_list.html."""
+    from app.routers.queue import _render_queue_partial
+
+    success, error = await scene_job_queue.cancel_job(job_id)
+    return await _render_queue_partial(request, cancel_error=None if success else error)
 
 
 @router.post("/scenes/{scene_id}/approve", response_class=HTMLResponse)

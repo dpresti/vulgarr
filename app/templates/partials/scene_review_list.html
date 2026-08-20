@@ -6,20 +6,34 @@
   {% if not scene_detection_enabled %}
     <div class="muted">Scene detection is disabled -- enable it in Settings to scan for candidate scenes.</div>
   {% else %}
-    <form hx-post="/library/title/{{ title_id }}/scan-scenes" hx-target="#scene-review-{{ title_id }}" hx-swap="outerHTML">
-      <button type="submit" class="small secondary" {% if scene_scan_status in ('queued', 'scanning') %}disabled{% endif %}>
-        {% if scene_scan_status in ('queued', 'scanning') %}
-          <span class="spinner"></span> Scanning…
-        {% elif scene_scan_status == 'not_scanned' %}
-          Scan for scenes
-        {% else %}
-          Rescan for scenes
-        {% endif %}
-      </button>
-    </form>
+    <div style="display: flex; align-items: center; gap: 0.6rem; flex-wrap: wrap;">
+      <form hx-post="/library/title/{{ title_id }}/scan-scenes" hx-target="#scene-review-{{ title_id }}" hx-swap="outerHTML">
+        <button type="submit" class="small secondary" {% if scene_scan_status in ('queued', 'scanning') %}disabled{% endif %}>
+          {% if scene_scan_status in ('queued', 'scanning') %}
+            <span class="spinner"></span> Scanning…
+          {% elif scene_scan_status == 'not_scanned' %}
+            Scan for scenes
+          {% else %}
+            Rescan for scenes
+          {% endif %}
+        </button>
+      </form>
+      {% if scan_job and scene_scan_status in ('queued', 'scanning') %}
+      <form hx-post="/scene-jobs/{{ scan_job.id }}/cancel" hx-target="#scene-review-{{ title_id }}" hx-swap="outerHTML" hx-confirm="Cancel this scan?">
+        <button type="submit" class="small danger">Cancel</button>
+      </form>
+      {% endif %}
+    </div>
 
-    {% if scene_scan_status == 'scan_failed' %}
-      <div class="muted" style="color: var(--vulgarr-danger-text); margin-top: 0.4rem;">Last scan failed -- try again.</div>
+    {% if scan_job and scene_scan_status in ('queued', 'scanning') %}
+      <div class="muted" style="margin-top: 0.4rem; display: flex; align-items: center; gap: 0.5rem;">
+        {% if scan_job.progress_percent is not none %}
+        <progress value="{{ scan_job.progress_percent }}" max="100" style="width: 160px; vertical-align: middle;"></progress>
+        {% endif %}
+        <span>{{ scan_job.progress_message or 'Scanning…' }}</span>
+      </div>
+    {% elif scene_scan_status == 'scan_failed' %}
+      <div class="muted" style="color: var(--vulgarr-danger-text); margin-top: 0.4rem;">Last scan failed{% if scan_job and scan_job.error %}: {{ scan_job.error }}{% else %} -- try again{% endif %}.</div>
     {% elif scene_scan_status == 'no_scenes_found' %}
       <div class="muted" style="margin-top: 0.4rem;">No candidate scenes found.</div>
     {% endif %}
