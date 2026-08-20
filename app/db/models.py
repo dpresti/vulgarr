@@ -59,10 +59,16 @@ class Title(Base):
     # mutes only teen-tagged words). Set per-movie, or in bulk for every episode in a show.
     severity_levels: Mapped[str] = mapped_column(String(40), default="child", nullable=False)
 
-    # Opt-in: mute a narrower window estimated around each matched word's position within
-    # its cue, instead of the whole cue's on-screen duration. New titles inherit the
-    # "default_precise_mute" app setting at creation time; overridable per title afterward.
+    # Deprecated boolean, superseded by precise_mode below. Left in place (unused)
+    # rather than dropped -- SQLite can't cheaply drop columns.
     precise_mute: Mapped[bool] = mapped_column(default=False, nullable=False)
+
+    # Mute precision mode: "whole_line" (mute the cue's whole on-screen duration),
+    # "estimate" (narrower window, proportional guess from the word's position in the
+    # cue's text), or "whisper" (narrower window from real audio via forced alignment
+    # -- app.audio.forced_align). New titles inherit the "default_precise_mode" app
+    # setting at creation time; overridable per title/season afterward.
+    precise_mode: Mapped[str] = mapped_column(String(20), default="whole_line", nullable=False)
 
     # Deprecated single-index field, superseded by clean_track_audio_indices below.
     clean_track_audio_index: Mapped[int | None] = mapped_column(Integer, nullable=True)

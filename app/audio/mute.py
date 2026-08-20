@@ -1,6 +1,7 @@
 """Turn matched subtitle cues into ffmpeg mute intervals and filter expressions."""
 
 from dataclasses import dataclass
+from pathlib import Path
 
 from app.subtitles.matcher import CueMatch
 
@@ -13,6 +14,10 @@ DEFAULT_PAD_SECONDS = 0.15
 # text, assuming roughly steady speech pace), not the cue's real, known boundaries --
 # extra margin on each side reduces the risk of the estimate clipping part of the word.
 PRECISE_PAD_SECONDS = 0.4
+# Whisper forced-alignment mode locates the word in the real audio rather than
+# estimating from text position, so it needs much less safety margin than the
+# estimate above -- same magnitude as the default whole-cue padding.
+WHISPER_PAD_SECONDS = 0.15
 # Cues whose (padded) intervals are within this gap of each other are merged
 # into one interval, both to avoid a click-unmute-click and to keep the
 # generated ffmpeg filter expression shorter.
@@ -23,6 +28,20 @@ DEFAULT_MERGE_GAP_SECONDS = 0.25
 class MuteInterval:
     start: float
     end: float
+
+
+def _merge_raw_intervals(raw: list[tuple[float, float]], merge_gap_seconds: float) -> list[MuteInterval]:
+    if not raw:
+        return []
+    raw.sort(key=lambda pair: pair[0])
+    merged: list[list[float]] = [list(raw[0])]
+    for start, end in raw[1:]:
+        last = merged[-1]
+        if start <= last[1] + merge_gap_seconds:
+            last[1] = max(last[1], end)
+        else:
+            merged.append([start, end])
+    return [MuteInterval(start=s, end=e) for s, e in merged]
 
 
 def build_mute_intervals(
@@ -56,17 +75,41 @@ def build_mute_intervals(
         else:
             raw.append((max(0.0, m.cue.start_seconds - pad_seconds), m.cue.end_seconds + pad_seconds))
 
-    raw.sort(key=lambda pair: pair[0])
+    return _merge_raw_intervals(raw, merge_gap_seconds)
 
-    merged: list[list[float]] = [list(raw[0])]
-    for start, end in raw[1:]:
-        last = merged[-1]
-        if start <= last[1] + merge_gap_seconds:
-            last[1] = max(last[1], end)
-        else:
-            merged.append([start, end])
 
-    return [MuteInterval(start=s, end=e) for s, e in merged]
+async def build_mute_intervals_whisper(
+    matches: list[CueMatch],
+    video_path: Path,
+    ffmpeg_bin: str,
+    pad_seconds: float = WHISPER_PAD_SECONDS,
+    merge_gap_seconds: float = DEFAULT_MERGE_GAP_SECONDS,
+) -> list[MuteInterval]:
+    """Like build_mute_intervals(precise=True), but locates each matched word's real
+    position in the audio via forced alignment (app.audio.forced_align) instead of
+    estimating it from the word's position within the cue's text. Falls back to the
+    proportional estimate on a per-cue basis if alignment fails for that cue (e.g. a
+    cue whose audio doesn't actually contain clean, alignable speech)."""
+    from app.audio.forced_align import align_matches_for_cue
+
+    if not matches:
+        return []
+
+    raw: list[tuple[float, float]] = []
+    for m in matches:
+        windows = await align_matches_for_cue(video_path, ffmpeg_bin, m)
+        if windows is None:
+            raw.extend(
+                (iv.start, iv.end)
+                for iv in build_mute_intervals(
+                    [m], precise=True, pad_seconds=PRECISE_PAD_SECONDS, merge_gap_seconds=0.0
+                )
+            )
+            continue
+        for w in windows:
+            raw.append((max(0.0, w.start - pad_seconds), w.end + pad_seconds))
+
+    return _merge_raw_intervals(raw, merge_gap_seconds)
 
 
 # Chaining too many between(t,a,b) terms into one `volume` filter's `enable=` expression

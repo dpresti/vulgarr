@@ -33,13 +33,14 @@
       <div>Used to de-duplicate near-simultaneous events for the same title, not to block either source.</div>
     </div>
 
-    <label for="default_precise_mute">Default mute precision for new titles</label>
+    <label for="default_precise_mode">Default mute precision for new titles</label>
     <div>
-      <label class="muted" title="Mute a narrow window around each word instead of the whole subtitle line">
-        <input type="checkbox" id="default_precise_mute" name="default_precise_mute" {% if values.default_precise_mute %}checked{% endif %}>
-        Precise mute by default (word-level estimate, not whole line)
-      </label>
-      <div class="muted">Only applies to titles discovered after this is changed -- existing titles keep whatever they're already set to, editable individually or per-show.</div>
+      <select id="default_precise_mode" name="default_precise_mode" class="input-md">
+        <option value="whole_line" {% if values.default_precise_mode == 'whole_line' %}selected{% endif %}>Whole line</option>
+        <option value="estimate" {% if values.default_precise_mode == 'estimate' %}selected{% endif %}>Precise (word-position estimate)</option>
+        <option value="whisper" {% if values.default_precise_mode == 'whisper' %}selected{% endif %}>Precise (Whisper forced alignment)</option>
+      </select>
+      <div class="muted">Whisper mode is slower (runs a local alignment model per matched line) but more accurate. Only applies to new titles -- existing ones keep their current setting, editable individually or per-show.</div>
     </div>
   </div>
 

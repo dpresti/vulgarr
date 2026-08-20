@@ -46,9 +46,11 @@ class CueMatch:
     normalized_length: int = 0  # length of the normalized text spans are offset against
 
 
-def _normalize(text: str) -> str:
+def normalize_cue_text(text: str) -> str:
     """Lowercase, split hyphenated compounds into separate words, and strip remaining
-    punctuation (except apostrophes) for matching."""
+    punctuation (except apostrophes) for matching. Also used by forced alignment
+    (app.audio.forced_align) to build the same word sequence a MatchSpan's character
+    offsets are relative to."""
     text = text.translate(_DASH_TO_SPACE_TABLE)
     return text.lower().translate(_STRIP_TABLE)
 
@@ -72,7 +74,7 @@ class ProfanityMatcher:
         ]
 
     def match_cue(self, cue: SubtitleCue) -> CueMatch | None:
-        normalized = _normalize(cue.text)
+        normalized = normalize_cue_text(cue.text)
         matched: list[str] = []
         spans: list[MatchSpan] = []
         best_severity: Severity | None = None

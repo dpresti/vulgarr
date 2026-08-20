@@ -37,8 +37,8 @@
   <td data-label="Mute precision">
     <form hx-post="/library/{{ row.title.id }}/toggle-precise" hx-target="#title-row-{{ row.title.id }}" hx-swap="outerHTML">
       {% if season_context %}<input type="hidden" name="short_label" value="true">{% endif %}
-      <button type="submit" class="small {{ 'secondary' if not row.title.precise_mute else '' }}" title="Mute a narrow window around each word instead of the whole subtitle line">
-        {{ 'precise' if row.title.precise_mute else 'whole line' }}
+      <button type="submit" class="small {{ 'secondary' if row.title.precise_mode == 'whole_line' else '' }}" title="Cycles: whole line -> precise (estimate) -> precise (whisper forced alignment)">
+        {% if row.title.precise_mode == 'whisper' %}precise (whisper){% elif row.title.precise_mode == 'estimate' %}precise{% else %}whole line{% endif %}
       </button>
     </form>
   </td>

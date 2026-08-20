@@ -46,8 +46,8 @@
           <div class="detail-label">Mute precision</div>
           <form hx-post="/library/{{ row.title.id }}/toggle-precise" hx-target="#title-detail-{{ row.title.id }}" hx-swap="outerHTML">
             <input type="hidden" name="detail_view" value="true">
-            <button type="submit" class="secondary" title="Mute a narrow window around each word instead of the whole subtitle line">
-              {{ 'precise' if row.title.precise_mute else 'whole line' }}
+            <button type="submit" class="secondary" title="Cycles: whole line -> precise (estimate) -> precise (whisper forced alignment)">
+              {% if row.title.precise_mode == 'whisper' %}precise (whisper){% elif row.title.precise_mode == 'estimate' %}precise{% else %}whole line{% endif %}
             </button>
           </form>
           {% if precise_saved %}<span class="saved-flash">Saved.</span>{% endif %}

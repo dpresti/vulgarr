@@ -9,7 +9,7 @@ from sqlalchemy import Select, case, func, select, update
 
 from app.db.models import MediaType, Title, TriggerSource
 from app.db.session import get_session, get_setting
-from app.domain import Severity, is_mkv_path, parse_severity_levels, serialize_severity_levels
+from app.domain import Severity, is_mkv_path, next_precise_mode, parse_severity_levels, serialize_severity_levels
 from app.integrations.bazarr import BazarrClient
 from app.integrations.radarr import RadarrClient
 from app.integrations.sonarr import SonarrClient
@@ -219,7 +219,7 @@ async def _load_shows(
     # mixed settings once per-episode editing exists, same caveat as severity_levels
     # already had below.
     severity_col = func.min(Title.severity_levels).label("severity_levels")
-    precise_col = func.min(Title.precise_mute).label("precise_mute")
+    precise_col = func.min(Title.precise_mode).label("precise_mode")
     poster_col = func.max(Title.poster_url).label("poster_url")
 
     query = select(
@@ -274,7 +274,7 @@ async def _load_seasons(session, series_id: int, current_version: int) -> tuple[
             # Representative (not a true aggregate) values -- a season's episodes could
             # have mixed settings once per-episode editing exists.
             func.min(Title.severity_levels).label("severity_levels"),
-            func.min(Title.precise_mute).label("precise_mute"),
+            func.min(Title.precise_mode).label("precise_mode"),
         )
         .where(Title.sonarr_series_id == series_id, Title.media_type == MediaType.episode)
         .group_by(Title.season_number)
@@ -428,13 +428,13 @@ async def shows_page(
     )
 
 
-async def _current_season_precise_mute(session, series_id: int, season_number: int) -> bool:
+async def _current_season_precise_mode(session, series_id: int, season_number: int) -> str:
     result = await session.execute(
-        select(Title.precise_mute)
+        select(Title.precise_mode)
         .where(Title.sonarr_series_id == series_id, Title.season_number == season_number)
         .limit(1)
     )
-    return bool(result.scalar_one_or_none())
+    return result.scalar_one_or_none() or "whole_line"
 
 
 async def _non_mkv_gating_message(session, *conditions, levels: str) -> str | None:
@@ -471,7 +471,7 @@ async def _load_season(session, series_id: int, season_number: int, current_vers
             func.sum(case((Title.status.in_(["queued", "processing"]), 1), else_=0)).label("active_count"),
             func.sum(outdated_expr).label("outdated_count"),
             func.min(Title.severity_levels).label("severity_levels"),
-            func.min(Title.precise_mute).label("precise_mute"),
+            func.min(Title.precise_mode).label("precise_mode"),
         )
         .where(
             Title.sonarr_series_id == series_id,
@@ -704,13 +704,13 @@ async def set_season_severity(
 
 
 @router.post("/{title_id}/toggle-precise", response_class=HTMLResponse)
-async def toggle_title_precise_mute(
+async def cycle_title_precise_mode(
     request: Request, title_id: int, short_label: bool = Form(False), detail_view: bool = Form(False)
 ):
     async with get_session() as session:
         current_version = int(await get_setting(session, "wordlist_version"))
         title = await session.get(Title, title_id)
-        title.precise_mute = not title.precise_mute
+        title.precise_mode = next_precise_mode(title.precise_mode)
         await session.commit()
         await session.refresh(title)
         row = _row_dict(title, current_version, short_label=short_label)
@@ -719,13 +719,13 @@ async def toggle_title_precise_mute(
 
 
 @router.post("/shows/{series_id}/season/{season_number}/toggle-precise", response_class=HTMLResponse)
-async def set_season_precise_mute(request: Request, series_id: int, season_number: int):
+async def cycle_season_precise_mode(request: Request, series_id: int, season_number: int):
     async with get_session() as session:
-        current = await _current_season_precise_mute(session, series_id, season_number)
+        current = await _current_season_precise_mode(session, series_id, season_number)
         await session.execute(
             update(Title)
             .where(Title.sonarr_series_id == series_id, Title.season_number == season_number)
-            .values(precise_mute=not current)
+            .values(precise_mode=next_precise_mode(current))
         )
         await session.commit()
         current_version = int(await get_setting(session, "wordlist_version"))

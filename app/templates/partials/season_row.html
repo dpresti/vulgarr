@@ -20,8 +20,8 @@
   </td>
   <td data-label="Precision">
     <form hx-post="/library/shows/{{ series_id }}/season/{{ season.season_number }}/toggle-precise" hx-target="#season-row-{{ season.season_number }}" hx-swap="outerHTML">
-      <button type="submit" class="small {{ 'secondary' if not season.precise_mute else '' }}" title="Mute a narrow window around each word instead of the whole subtitle line">
-        {{ 'precise' if season.precise_mute else 'whole line' }}
+      <button type="submit" class="small {{ 'secondary' if season.precise_mode == 'whole_line' else '' }}" title="Cycles: whole line -> precise (estimate) -> precise (whisper forced alignment)">
+        {% if season.precise_mode == 'whisper' %}precise (whisper){% elif season.precise_mode == 'estimate' %}precise{% else %}whole line{% endif %}
       </button>
     </form>
   </td>
