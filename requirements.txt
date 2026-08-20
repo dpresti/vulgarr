@@ -7,3 +7,10 @@ aiosqlite==0.20.0
 httpx==0.27.2
 pydantic==2.9.2
 pydantic-settings==2.5.2
+
+# CPU-only builds (no CUDA) -- Whisper forced-alignment ("whisper" mute-precision
+# mode, app/audio/forced_align.py) only, not used by any other code path.
+--extra-index-url https://download.pytorch.org/whl/cpu
+torch==2.6.0+cpu
+torchaudio==2.6.0+cpu
+numpy==2.1.3

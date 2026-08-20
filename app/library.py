@@ -37,7 +37,7 @@ async def upsert_title(
     series_title: str | None = None,
     season_number: int | None = None,
     episode_number: int | None = None,
-    default_precise_mute: bool | None = None,
+    default_precise_mode: str | None = None,
     poster_url: str | None = None,
 ) -> Title:
     result = await session.execute(select(Title).where(Title.video_path == video_path))
@@ -47,10 +47,10 @@ async def upsert_title(
     subtitle = find_subtitle_for_video(Path(video_path), default_subtitle_language)
 
     if title is None:
-        if default_precise_mute is None:
+        if default_precise_mode is None:
             # Caller didn't pre-fetch it (e.g. a single webhook-triggered upsert, not a
             # bulk sync) -- fine to look it up here for a one-off call.
-            default_precise_mute = await get_setting(session, "default_precise_mute")
+            default_precise_mode = await get_setting(session, "default_precise_mode")
         title = Title(
             media_type=media_type,
             display_name=display_name,
@@ -58,7 +58,7 @@ async def upsert_title(
             sonarr_series_id=sonarr_series_id,
             sonarr_episode_id=sonarr_episode_id,
             radarr_movie_id=radarr_movie_id,
-            precise_mute=default_precise_mute,
+            precise_mode=default_precise_mode,
         )
         session.add(title)
     else:
@@ -80,7 +80,7 @@ async def upsert_title(
 
 
 async def sync_sonarr_library(session: AsyncSession, client: SonarrClient) -> int:
-    default_precise_mute = await get_setting(session, "default_precise_mute")
+    default_precise_mode = await get_setting(session, "default_precise_mode")
     count = 0
     for ep_file in await client.list_episode_files():
         await upsert_title(
@@ -93,7 +93,7 @@ async def sync_sonarr_library(session: AsyncSession, client: SonarrClient) -> in
             series_title=ep_file.series_title,
             season_number=ep_file.season_number,
             episode_number=ep_file.episode_number,
-            default_precise_mute=default_precise_mute,
+            default_precise_mode=default_precise_mode,
             poster_url=ep_file.poster_url,
         )
         count += 1
@@ -101,7 +101,7 @@ async def sync_sonarr_library(session: AsyncSession, client: SonarrClient) -> in
 
 
 async def sync_radarr_library(session: AsyncSession, client: RadarrClient) -> int:
-    default_precise_mute = await get_setting(session, "default_precise_mute")
+    default_precise_mode = await get_setting(session, "default_precise_mode")
     count = 0
     for movie_file in await client.list_movie_files():
         await upsert_title(
@@ -110,7 +110,7 @@ async def sync_radarr_library(session: AsyncSession, client: RadarrClient) -> in
             display_name=movie_file.display_name,
             video_path=movie_file.path,
             radarr_movie_id=movie_file.movie_id,
-            default_precise_mute=default_precise_mute,
+            default_precise_mode=default_precise_mode,
             poster_url=movie_file.poster_url,
         )
         count += 1

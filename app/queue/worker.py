@@ -403,7 +403,7 @@ class JobQueue:
                     subtitle_path=Path(title.subtitle_path),
                     severity_levels=parse_severity_levels(title.severity_levels),
                     known_clean_indices=parse_index_list(title.clean_track_audio_indices),
-                    precise_mute=title.precise_mute,
+                    precise_mode=title.precise_mode,
                     on_progress=on_progress,
                     on_stage=on_stage,
                 )

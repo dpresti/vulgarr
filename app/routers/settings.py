@@ -3,6 +3,7 @@ from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
 
 from app.db.session import get_session, get_setting, hash_password, set_setting
+from app.domain import PRECISE_MODES
 
 router = APIRouter(prefix="/settings", tags=["settings"])
 templates = Jinja2Templates(directory="app/templates")
@@ -15,7 +16,7 @@ SETTING_KEYS = [
     "trigger_bazarr_enabled",
     "trigger_sonarr_radarr_enabled",
     "trigger_priority",
-    "default_precise_mute",
+    "default_precise_mode",
     "sonarr_url",
     "sonarr_api_key",
     "radarr_url",
@@ -53,7 +54,7 @@ async def update_settings(
     trigger_bazarr_enabled: bool = Form(False),
     trigger_sonarr_radarr_enabled: bool = Form(False),
     trigger_priority_first: str = Form("sonarr_radarr"),
-    default_precise_mute: bool = Form(False),
+    default_precise_mode: str = Form("whole_line"),
     sonarr_url: str = Form(""),
     sonarr_api_key: str = Form(""),
     radarr_url: str = Form(""),
@@ -79,7 +80,9 @@ async def update_settings(
         await set_setting(session, "trigger_bazarr_enabled", trigger_bazarr_enabled)
         await set_setting(session, "trigger_sonarr_radarr_enabled", trigger_sonarr_radarr_enabled)
         await set_setting(session, "trigger_priority", [trigger_priority_first, trigger_priority_second])
-        await set_setting(session, "default_precise_mute", default_precise_mute)
+        if default_precise_mode not in PRECISE_MODES:
+            default_precise_mode = "whole_line"
+        await set_setting(session, "default_precise_mode", default_precise_mode)
         await set_setting(session, "sonarr_url", sonarr_url.strip())
         await set_setting(session, "sonarr_api_key", sonarr_api_key.strip())
         await set_setting(session, "radarr_url", radarr_url.strip())

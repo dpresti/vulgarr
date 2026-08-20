@@ -7,7 +7,7 @@ from pathlib import Path
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.audio.mute import MuteInterval, build_mute_intervals
+from app.audio.mute import MuteInterval, build_mute_intervals, build_mute_intervals_whisper
 from app.config import settings as app_settings
 from app.db.models import WordListEntry
 from app.db.session import get_setting
@@ -82,7 +82,7 @@ async def process_video(
     subtitle_path: Path,
     severity_levels: list[Severity] | None = None,
     known_clean_indices: list[int] | None = None,
-    precise_mute: bool = False,
+    precise_mode: str = "whole_line",
     on_progress: ProgressCallback | None = None,
     on_stage: StageCallback | None = None,
 ) -> ProcessingOutcome:
@@ -110,7 +110,11 @@ async def process_video(
         matcher = ProfanityMatcher(terms)
         matches = matcher.match_all(cues)
         matches_by_level[level] = matches
-        intervals_by_level.append((level, build_mute_intervals(matches, precise=precise_mute)))
+        if precise_mode == "whisper":
+            intervals = await build_mute_intervals_whisper(matches, video_path, app_settings.ffmpeg_bin)
+        else:
+            intervals = build_mute_intervals(matches, precise=(precise_mode == "estimate"))
+        intervals_by_level.append((level, intervals))
 
     # Report the count for whichever selected level catches the most (the lowest-rank
     # one selected), since that's the most complete picture of what's being filtered.
