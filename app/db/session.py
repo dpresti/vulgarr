@@ -27,6 +27,7 @@ _COLUMNS_ADDED_LATER = [
     ("titles", "severity_levels", "VARCHAR(40) NOT NULL DEFAULT 'child'"),
     ("titles", "clean_track_audio_indices", "VARCHAR(40)"),
     ("titles", "precise_mute", "BOOLEAN NOT NULL DEFAULT 0"),
+    ("titles", "precise_mode", "VARCHAR(20) NOT NULL DEFAULT 'whole_line'"),
     ("titles", "replacement_requested_at", "DATETIME"),
     ("titles", "poster_url", "VARCHAR(1024)"),
     ("processing_jobs", "progress_percent", "FLOAT"),
@@ -117,6 +118,22 @@ async def _backfill_multi_severity_fields(session: AsyncSession) -> None:
         await session.commit()
 
 
+async def _backfill_precise_mode(session: AsyncSession) -> None:
+    """One-time migration from the old boolean precise_mute column into the new
+    3-way precise_mode column ("whole_line"/"estimate"/"whisper"). Gated by a
+    settings flag rather than an unmigrated-value check, since precise_mode's ALTER
+    TABLE DEFAULT already sets every row to 'whole_line', which is indistinguishable
+    from a row that was genuinely never precise."""
+    already_migrated = await get_setting(session, "migrated_precise_mode")
+    if already_migrated:
+        return
+    result = await session.execute(select(Title).where(Title.precise_mute.is_(True)))
+    for title in result.scalars().all():
+        title.precise_mode = "estimate"
+    await set_setting(session, "migrated_precise_mode", True)
+    await session.commit()
+
+
 async def _backfill_episode_grouping_fields(session: AsyncSession) -> None:
     """One-time backfill for rows synced before series_title/season/episode existed
     as columns -- parses them back out of display_name ("Show - S01E02")."""
@@ -158,10 +175,12 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "sonarr_radarr_subtitle_poll_interval_seconds": 30,
     "wordlist_seeded": False,
     "migrated_severity_levels": False,
-    # Whether newly-discovered titles default to word-level mute precision (narrower,
-    # estimated windows) or whole-cue muting (safer, guaranteed to cover the word).
-    # Existing titles are unaffected by changing this -- it's only applied at creation.
-    "default_precise_mute": False,
+    "migrated_precise_mode": False,
+    # Which mute-precision mode newly-discovered titles default to: "whole_line",
+    # "estimate" (word-level, proportional guess), or "whisper" (word-level, forced
+    # alignment against the real audio). Existing titles are unaffected by changing
+    # this -- it's only applied at creation.
+    "default_precise_mode": "whole_line",
     # Integrations -- seeded from SPF_* env vars once, editable in Settings after that.
     "sonarr_url": settings.sonarr_url,
     "sonarr_api_key": settings.sonarr_api_key,
@@ -228,6 +247,7 @@ async def init_db() -> None:
         await session.commit()
         await _backfill_episode_grouping_fields(session)
         await _backfill_multi_severity_fields(session)
+        await _backfill_precise_mode(session)
         await _migrate_title_severity_levels_vocabulary(session)
         await _seed_default_wordlist_if_empty(session)
 
