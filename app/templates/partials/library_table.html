@@ -8,7 +8,7 @@
       <th>{% if movie_sort_link is defined %}<a href="{{ movie_sort_link('muted_cues') }}">Muted cues{% if movie_sort == 'muted_cues' %} {{ '▲' if movie_dir == 'asc' else '▼' }}{% endif %}</a>{% else %}Muted cues{% endif %}</th>
       <th>{% if movie_sort_link is defined %}<a href="{{ movie_sort_link('severity') }}">Severity{% if movie_sort == 'severity' %} {{ '▲' if movie_dir == 'asc' else '▼' }}{% endif %}</a>{% else %}Severity{% endif %}</th>
       <th>Mute precision</th>
-      <th></th>
+      <th>Process</th>
     </tr>
   </thead>
   <tbody>

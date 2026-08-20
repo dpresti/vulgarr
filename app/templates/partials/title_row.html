@@ -5,7 +5,7 @@
   {% endif %}
 >
   {% set current_levels = row.title.severity_levels.split(',') %}
-  <td data-label="Title">{{ row.display_name }}</td>
+  <td data-label="Title"><a class="title-link" href="{{ title_href(row.title) }}">{{ row.display_name }}</a></td>
   <td data-label="Status">
     <span class="badge badge-{{ row.status }}">{{ row.status.replace('_', ' ') }}</span>
     {% if row.outdated %}<span class="badge badge-outdated">outdated</span>{% endif %}
@@ -65,9 +65,11 @@
       {% else %}
       <form class="inline" hx-post="/library/{{ row.title.id }}/process" hx-target="#title-row-{{ row.title.id }}" hx-swap="outerHTML">
         {% if season_context %}<input type="hidden" name="short_label" value="true">{% endif %}
-        <button type="submit" class="small">
-          {% if row.status == 'not_processed' %}Process{% else %}Reprocess{% endif %}
-        </button>
+        <button type="submit" class="small" title="{% if row.status == 'not_processed' %}Process{% else %}Reprocess{% endif %} the word list (profanity mute)">Words</button>
+      </form>
+      <form class="inline" hx-post="/library/{{ row.title.id }}/process-both" hx-target="#title-row-{{ row.title.id }}" hx-swap="outerHTML">
+        {% if season_context %}<input type="hidden" name="short_label" value="true">{% endif %}
+        <button type="submit" class="small secondary" title="Process the word list and scan for scenes together">Both</button>
       </form>
       {% endif %}
     </div>

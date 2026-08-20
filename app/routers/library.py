@@ -24,6 +24,7 @@ from app.integrations.radarr import RadarrClient
 from app.integrations.sonarr import SonarrClient
 from app.integrations.subtitle_lookup import find_subtitle_for_video
 from app.library import enqueue_if_not_already_active, is_outdated, sync_radarr_library, sync_sonarr_library
+from app.queue.scene_worker import scene_job_queue
 from app.queue.worker import job_queue
 
 router = APIRouter(prefix="/library", tags=["library"])
@@ -734,6 +735,31 @@ async def process_title(
     request: Request, title_id: int, short_label: bool = Form(False), detail_view: bool = Form(False)
 ):
     await job_queue.enqueue(title_id, TriggerSource.manual)
+
+    async with get_session() as session:
+        current_version = int(await get_setting(session, "wordlist_version"))
+        title = await session.get(Title, title_id)
+        if title is None:
+            return HTMLResponse("")
+        pending_ids = await _pending_scene_title_ids(session, [title_id])
+        row = _row_dict(title, current_version, short_label=short_label, has_pending_scenes=title_id in pending_ids)
+
+    return await _render_title(request, row, detail_view)
+
+
+@router.post("/{title_id}/process-both", response_class=HTMLResponse)
+async def process_both_title(
+    request: Request, title_id: int, short_label: bool = Form(False), detail_view: bool = Form(False)
+):
+    """Words + Scenes together, one click -- the word-list mute job always
+    enqueues; the scene scan only does if scene detection is enabled (silently
+    skipped otherwise, same as the standalone "Scenes" scan button already does)."""
+    await job_queue.enqueue(title_id, TriggerSource.manual)
+
+    async with get_session() as session:
+        scene_detection_enabled = bool(await get_setting(session, "scene_detection_enabled"))
+    if scene_detection_enabled:
+        await scene_job_queue.enqueue_scan_if_not_already_active(title_id)
 
     async with get_session() as session:
         current_version = int(await get_setting(session, "wordlist_version"))
