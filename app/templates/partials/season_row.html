@@ -29,11 +29,14 @@
   </td>
   <td data-label="">
     <div class="row-actions">
+      <form hx-post="/library/shows/{{ series_id }}/season/{{ season.season_number }}/process-both" hx-target="#season-row-{{ season.season_number }}" hx-swap="outerHTML">
+        <button type="submit" class="small" title="Process the word list and scan for scenes together, for every episode in this season">Both</button>
+      </form>
       <form hx-post="/library/shows/{{ series_id }}/season/{{ season.season_number }}/process" hx-target="#season-row-{{ season.season_number }}" hx-swap="outerHTML">
-        <button type="submit" class="small" title="Queue every episode in this season that already has a subtitle">Process</button>
+        <button type="submit" class="small secondary" title="Queue every episode in this season that already has a subtitle (word-list mute)">Audio</button>
       </form>
       <form hx-post="/library/shows/{{ series_id }}/season/{{ season.season_number }}/scan-scenes" hx-target="#season-row-{{ season.season_number }}" hx-swap="outerHTML">
-        <button type="submit" class="small secondary" title="Scan every episode in this season for candidate scenes">Scan for scenes</button>
+        <button type="submit" class="small secondary" title="Scan every episode in this season for candidate scenes -- no subtitle needed">Video</button>
       </form>
     </div>
     {% if process_message %}<div class="muted" style="margin-top: 0.3rem;">{{ process_message }}</div>{% endif %}

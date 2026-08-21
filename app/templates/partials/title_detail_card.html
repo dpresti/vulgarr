@@ -17,73 +17,96 @@
       </div>
     </div>
     <div class="detail-body">
-      <div class="detail-grid">
-        <div class="detail-section">
-          <div class="detail-label">Tracks to generate</div>
-          <form hx-post="/library/{{ row.title.id }}/severity" hx-target="#title-detail-{{ row.title.id }}" hx-swap="outerHTML">
-            <input type="hidden" name="detail_view" value="true">
-            <span class="severity-checks">
-              <label><input type="checkbox" name="sev_child" {% if 'child' in current_levels %}checked{% endif %} onchange="this.form.requestSubmit()"> child</label>
-              <label><input type="checkbox" name="sev_teen" {% if 'teen' in current_levels %}checked{% endif %} onchange="this.form.requestSubmit()"> teen</label>
-            </span>
-          </form>
-          {% if severity_saved %}<span class="saved-flash">Saved.</span>{% endif %}
-          {% if row.severity_error %}
-          <div class="detail-warning">
-            <span>{{ row.severity_error }}</span>
-            {% if row.status == 'awaiting_mkv' %}
-              <span class="detail-waiting"><span class="spinner"></span>Awaiting .mkv replacement from Sonarr/Radarr…</span>
-            {% else %}
-              <form hx-post="/library/{{ row.title.id }}/search-mkv-replacement" hx-target="#title-detail-{{ row.title.id }}" hx-swap="outerHTML">
-                <input type="hidden" name="detail_view" value="true">
-                <button type="submit" class="small secondary">Search for .mkv replacement</button>
-              </form>
+      <div class="detail-columns">
+        <div class="detail-column">
+          <h3 class="detail-column-heading">Video</h3>
+          <div class="detail-section">
+            <div class="detail-label">Scenes found</div>
+            <div class="detail-stat">{{ scenes | length if scenes is not none else '—' }}</div>
+          </div>
+          <div class="detail-section">
+            <div class="detail-label">Last processed</div>
+            <div class="detail-stat">{{ last_scan_job.finished_at.strftime('%Y-%m-%d %H:%M') if last_scan_job and last_scan_job.finished_at else '—' }}</div>
+          </div>
+          <div class="detail-section">
+            <div class="detail-label">Time to finish</div>
+            <div class="detail-stat">{{ last_scan_job_duration or '—' }}</div>
+          </div>
+        </div>
+        <div class="detail-column">
+          <h3 class="detail-column-heading">Audio</h3>
+          <div class="detail-section">
+            <div class="detail-label">Tracks to generate</div>
+            <form hx-post="/library/{{ row.title.id }}/severity" hx-target="#title-detail-{{ row.title.id }}" hx-swap="outerHTML">
+              <input type="hidden" name="detail_view" value="true">
+              <span class="severity-checks">
+                <label><input type="checkbox" name="sev_child" {% if 'child' in current_levels %}checked{% endif %} onchange="this.form.requestSubmit()"> child</label>
+                <label><input type="checkbox" name="sev_teen" {% if 'teen' in current_levels %}checked{% endif %} onchange="this.form.requestSubmit()"> teen</label>
+              </span>
+            </form>
+            {% if severity_saved %}<span class="saved-flash">Saved.</span>{% endif %}
+            {% if row.severity_error %}
+            <div class="detail-warning">
+              <span>{{ row.severity_error }}</span>
+              {% if row.status == 'awaiting_mkv' %}
+                <span class="detail-waiting"><span class="spinner"></span>Awaiting .mkv replacement from Sonarr/Radarr…</span>
+              {% else %}
+                <form hx-post="/library/{{ row.title.id }}/search-mkv-replacement" hx-target="#title-detail-{{ row.title.id }}" hx-swap="outerHTML">
+                  <input type="hidden" name="detail_view" value="true">
+                  <button type="submit" class="small secondary">Search for .mkv replacement</button>
+                </form>
+              {% endif %}
+            </div>
             {% endif %}
           </div>
-          {% endif %}
+          <div class="detail-section">
+            <div class="detail-label">Mute precision</div>
+            <form hx-post="/library/{{ row.title.id }}/set-precise-mode" hx-target="#title-detail-{{ row.title.id }}" hx-swap="outerHTML">
+              <input type="hidden" name="detail_view" value="true">
+              <select name="precise_mode" class="input-precise" onchange="this.form.requestSubmit()" title="How precisely to time each muted word">
+                <option value="whole_line" {% if row.title.precise_mode == 'whole_line' %}selected{% endif %}>Whole line</option>
+                <option value="estimate" {% if row.title.precise_mode == 'estimate' %}selected{% endif %}>Precise (estimate)</option>
+                <option value="whisper" {% if row.title.precise_mode == 'whisper' %}selected{% endif %}>Precise (Whisper)</option>
+              </select>
+            </form>
+            {% if precise_saved %}<span class="saved-flash">Saved.</span>{% endif %}
+          </div>
+          <div class="detail-section">
+            <div class="detail-label">Subtitle</div>
+            <div class="detail-stat">{{ 'Found' if row.has_subtitle else 'Not found' }}</div>
+            {% if row.bazarr_message %}<div class="muted" style="margin-top: 0.3rem;">{{ row.bazarr_message }}</div>{% endif %}
+          </div>
+          <div class="detail-section">
+            <div class="detail-label">Muted cues</div>
+            <div class="detail-stat">{{ row.title.matched_cue_count if row.title.matched_cue_count is not none else '—' }}</div>
+          </div>
+          <div class="detail-section">
+            <div class="detail-label">Last processed</div>
+            <div class="detail-stat">{{ row.title.last_processed_at.strftime('%Y-%m-%d %H:%M') if row.title.last_processed_at else '—' }}</div>
+            {% if last_job %}<div class="muted" style="margin-top: 0.2rem;">Triggered by {{ last_job.trigger_source.value }}</div>{% endif %}
+          </div>
+          <div class="detail-section">
+            <div class="detail-label">Time to finish</div>
+            <div class="detail-stat">{{ last_job_duration or '—' }}</div>
+          </div>
         </div>
-        <div class="detail-section">
-          <div class="detail-label">Mute precision</div>
-          <form hx-post="/library/{{ row.title.id }}/set-precise-mode" hx-target="#title-detail-{{ row.title.id }}" hx-swap="outerHTML">
-            <input type="hidden" name="detail_view" value="true">
-            <select name="precise_mode" class="input-precise" onchange="this.form.requestSubmit()" title="How precisely to time each muted word">
-              <option value="whole_line" {% if row.title.precise_mode == 'whole_line' %}selected{% endif %}>Whole line</option>
-              <option value="estimate" {% if row.title.precise_mode == 'estimate' %}selected{% endif %}>Precise (estimate)</option>
-              <option value="whisper" {% if row.title.precise_mode == 'whisper' %}selected{% endif %}>Precise (Whisper)</option>
-            </select>
-          </form>
-          {% if precise_saved %}<span class="saved-flash">Saved.</span>{% endif %}
-        </div>
-        <div class="detail-section">
-          <div class="detail-label">Subtitle</div>
-          <div class="detail-stat">{{ 'Found' if row.has_subtitle else 'Not found' }}</div>
-          {% if row.bazarr_message %}<div class="muted" style="margin-top: 0.3rem;">{{ row.bazarr_message }}</div>{% endif %}
-        </div>
-        <div class="detail-section">
-          <div class="detail-label">Muted cues</div>
-          <div class="detail-stat">{{ row.title.matched_cue_count if row.title.matched_cue_count is not none else '—' }}</div>
-        </div>
-        {% if last_job %}
-        <div class="detail-section">
-          <div class="detail-label">Last processed</div>
-          <div class="detail-stat">{{ row.title.last_processed_at.strftime('%Y-%m-%d %H:%M') if row.title.last_processed_at else '—' }}</div>
-          <div class="muted" style="margin-top: 0.2rem;">Triggered by {{ last_job.trigger_source.value }}</div>
-        </div>
-        <div class="detail-section">
-          <div class="detail-label">Time to finish</div>
-          <div class="detail-stat">{{ last_job_duration or '—' }}</div>
-        </div>
-        {% endif %}
       </div>
 
-      {% if scene_detection_enabled %}
+      {% set audio_verb = 'Reprocess' if row.status not in ('not_processed', 'failed', 'cancelled') else 'Process' %}
+      {% set video_verb = 'Reprocess' if row.title.scene_scan_status not in ('not_scanned', 'scan_failed') else 'Process' %}
+      {% set hide_scan_trigger = true %}
       <div class="detail-section" style="margin-top: 0.5rem;">
         <div class="detail-label">Scene review</div>
         {% include "partials/scene_review_list.html" %}
       </div>
-      {% endif %}
 
       <div class="detail-actions">
+        {% if row.status != 'awaiting_mkv' %}
+          <form hx-post="/library/{{ row.title.id }}/process-video" hx-target="#title-detail-{{ row.title.id }}" hx-swap="outerHTML">
+            <input type="hidden" name="detail_view" value="true">
+            <button type="submit" class="secondary" title="Scan for candidate explicit-content scenes -- no subtitle needed">{{ video_verb }} Video</button>
+          </form>
+        {% endif %}
         {% if row.status == 'awaiting_mkv' %}
           <span class="muted">waiting on Sonarr/Radarr…</span>
         {% elif row.status == 'awaiting_subtitle' %}
@@ -91,13 +114,21 @@
         {% elif not row.has_subtitle %}
           <form hx-post="/library/{{ row.title.id }}/search-subtitle" hx-target="#title-detail-{{ row.title.id }}" hx-swap="outerHTML" hx-indicator="#detail-bazarr-indicator-{{ row.title.id }}">
             <input type="hidden" name="detail_view" value="true">
-            <button type="submit" title="Search Bazarr for a subtitle, then queue for processing if found">Search Bazarr &amp; Process</button>
+            <button type="submit" class="secondary" title="Search Bazarr for a subtitle, then queue audio processing if found">Search Bazarr &amp; Process Audio</button>
+          </form>
+          <form hx-post="/library/{{ row.title.id }}/search-subtitle-and-process-both" hx-target="#title-detail-{{ row.title.id }}" hx-swap="outerHTML" hx-indicator="#detail-bazarr-indicator-{{ row.title.id }}">
+            <input type="hidden" name="detail_view" value="true">
+            <button type="submit" title="Search Bazarr for a subtitle, then queue both audio processing (if found) and a scene scan (either way)">Search Bazarr &amp; Process Both</button>
           </form>
           <span id="detail-bazarr-indicator-{{ row.title.id }}" class="htmx-indicator muted">searching…</span>
         {% else %}
           <form hx-post="/library/{{ row.title.id }}/process" hx-target="#title-detail-{{ row.title.id }}" hx-swap="outerHTML">
             <input type="hidden" name="detail_view" value="true">
-            <button type="submit">{% if row.status == 'not_processed' %}Process{% else %}Reprocess{% endif %}</button>
+            <button type="submit" class="secondary" title="{{ audio_verb }} the word list (profanity mute)">{{ audio_verb }} Audio</button>
+          </form>
+          <form hx-post="/library/{{ row.title.id }}/process-both" hx-target="#title-detail-{{ row.title.id }}" hx-swap="outerHTML">
+            <input type="hidden" name="detail_view" value="true">
+            <button type="submit" title="Process the word list and scan for scenes together">{{ audio_verb }} Both</button>
           </form>
         {% endif %}
       </div>
