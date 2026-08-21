@@ -2,6 +2,8 @@
 {% block content %}
   {% if came_from == 'library' %}
   <a class="back-link" href="/library"><i class="ti ti-arrow-left" aria-hidden="true"></i>Back to Library</a>
+  {% elif row.title.media_type.value == 'episode' %}
+  <a class="back-link" href="/library/shows/{{ row.title.sonarr_series_id }}/season/{{ row.title.season_number }}"><i class="ti ti-arrow-left" aria-hidden="true"></i>Back to {{ row.title.series_title }} — Season {{ row.title.season_number }}</a>
   {% else %}
   <a class="back-link" href="/library/movies"><i class="ti ti-arrow-left" aria-hidden="true"></i>Back to Movies</a>
   {% endif %}

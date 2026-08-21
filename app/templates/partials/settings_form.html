@@ -93,6 +93,164 @@
     <input type="text" id="clean_track_language" name="clean_track_language" value="{{ values.clean_track_language }}" class="input-sm">
   </div>
 
+  <h2 style="margin-top: 1.75rem;">Scene Detection</h2>
+  <p class="muted" style="margin-top: -0.5rem;">Detects candidate explicit-content scenes via a local frame classifier. Never runs automatically on import, unlike the word-list mute pipeline above -- only ever starts from an explicit "Scan for scenes" click, since a scan has a real CPU cost and Apply produces a full second encoded "Vulgarr Edit" copy of the movie/episode.</p>
+  <div class="settings-grid">
+    <label for="scene_auto_process">Auto-approve and auto-process</label>
+    <div>
+      <input type="checkbox" id="scene_auto_process" name="scene_auto_process" {% if values.scene_auto_process %}checked{% endif %}>
+      <div class="muted">When on, a scan's candidates are approved automatically and blurred into the "Vulgarr Edit" file as soon as the scan finishes -- no manual review click needed. If a scan turns up a scene that shouldn't have been caught (or misses one), go to that title's review list, reject/adjust it there, then hit Apply again to regenerate the file -- it always rebuilds from whatever's currently approved, including scenes already baked into an earlier version. Turn this off to go back to fully manual review before anything is ever blurred.</div>
+    </div>
+
+    <label for="claude_vision_verify_enabled">Claude Vision precision filter</label>
+    <div>
+      <input type="checkbox" id="claude_vision_verify_enabled" name="claude_vision_verify_enabled" onchange="updateClaudeVisionValidity()" {% if values.claude_vision_verify_enabled %}checked{% endif %}>
+      <div class="muted">Optional extra check before auto-approving: sends a few frames from each candidate to a Claude-vision-capable endpoint and asks for a yes/no verdict, to catch false positives (ordinary, non-sexualized swimwear) that NudeNet alone can flag -- it also blocks sexualized/provocative content even without full nudity (thongs, lingerie, and similar). A clear "no" outright rejects the candidate, the same as manually clicking Reject. Off by default -- this is the one thing in vulgarr that costs real external money per use (a fraction of a cent per scan). Requires an OpenAI-compatible vision API below, e.g. a self-hosted LiteLLM proxy in front of Anthropic's API -- see /docker/stack/litellm in the repo. If this is on but the endpoint is unreachable or misconfigured, candidates just fall back to normal manual review -- it never causes an auto-approval on its own.</div>
+      {% if claude_vision_blocked %}<div class="field-error">Couldn't turn this on -- base URL and API key are both required first (see below). Left off.</div>{% endif %}
+    </div>
+
+    <label for="claude_vision_base_url">Claude Vision base URL</label>
+    <div>
+      <input type="text" id="claude_vision_base_url" name="claude_vision_base_url" oninput="updateClaudeVisionValidity()" placeholder="http://litellm:4000/v1" value="{{ values.claude_vision_base_url }}" class="wide-input {{ 'input-invalid' if claude_vision_blocked and not values.claude_vision_base_url }}">
+      <div class="field-error" id="claude_vision_base_url_error" style="display: none;">Required to turn on the precision filter above.</div>
+    </div>
+
+    <label for="claude_vision_api_key">Claude Vision API key</label>
+    <div>
+      <input type="password" id="claude_vision_api_key" name="claude_vision_api_key" oninput="updateClaudeVisionValidity()" placeholder="LiteLLM master/virtual key, not your raw Anthropic key" value="{{ values.claude_vision_api_key }}" autocomplete="off" class="wide-input {{ 'input-invalid' if claude_vision_blocked and not values.claude_vision_api_key }}">
+      <div class="field-error" id="claude_vision_api_key_error" style="display: none;">Required to turn on the precision filter above.</div>
+    </div>
+
+    <label for="claude_vision_model">Claude Vision model</label>
+    <div>
+      <input type="text" id="claude_vision_model" name="claude_vision_model" value="{{ values.claude_vision_model }}" class="input-md">
+      <div class="muted">Must match a model_name alias in the proxy's own config, not a raw Anthropic model ID -- the litellm stack's default config.yaml defines "claude-haiku-4-5" and "claude-sonnet-5".</div>
+    </div>
+
+    <label for="claude_vision_skip_above_fraction">Skip Claude check above confidence</label>
+    <div>
+      <input type="number" id="claude_vision_skip_above_fraction" name="claude_vision_skip_above_fraction" min="0" max="1" step="0.05" value="{{ values.claude_vision_skip_above_fraction }}" class="input-sm">
+      <div class="muted">Cost optimization: skips the Claude call entirely (auto-approves directly, same as if the filter were off) for a candidate whose own dense re-scan already cleared this fraction -- there's little value paying to double-check something NudeNet was barely uncertain about. Set to 1 to always call Claude regardless of confidence.</div>
+    </div>
+    <script>
+      function updateClaudeVisionValidity() {
+        var enabled = document.getElementById("claude_vision_verify_enabled").checked;
+        var urlInput = document.getElementById("claude_vision_base_url");
+        var keyInput = document.getElementById("claude_vision_api_key");
+        [[urlInput, "claude_vision_base_url_error"], [keyInput, "claude_vision_api_key_error"]].forEach(function (pair) {
+          var input = pair[0], errorId = pair[1];
+          var missing = enabled && !input.value.trim();
+          input.classList.toggle("input-invalid", missing);
+          document.getElementById(errorId).style.display = missing ? "block" : "none";
+        });
+      }
+      updateClaudeVisionValidity();
+    </script>
+
+    <label for="scene_confidence_threshold">Confidence threshold</label>
+    <div>
+      <input type="number" id="scene_confidence_threshold" name="scene_confidence_threshold" min="0" max="1" step="0.05" value="{{ values.scene_confidence_threshold }}" class="input-sm">
+      <div class="muted">Minimum per-frame classifier score (0-1) to count as a hit. Kept permissive by default -- every candidate is reviewed manually either way, so a stricter value only risks missing real scenes.</div>
+    </div>
+
+    <label for="scene_frame_interval_seconds">Frame sample interval (seconds)</label>
+    <input type="number" id="scene_frame_interval_seconds" name="scene_frame_interval_seconds" min="0.5" step="0.5" value="{{ values.scene_frame_interval_seconds }}" class="input-sm">
+
+    <label for="scene_min_duration_seconds">Minimum scene duration (seconds)</label>
+    <input type="number" id="scene_min_duration_seconds" name="scene_min_duration_seconds" min="0" step="0.5" value="{{ values.scene_min_duration_seconds }}" class="input-sm">
+
+    <label for="scene_merge_gap_seconds">Merge gap (seconds)</label>
+    <div>
+      <input type="number" id="scene_merge_gap_seconds" name="scene_merge_gap_seconds" min="0" step="0.5" value="{{ values.scene_merge_gap_seconds }}" class="input-sm">
+      <div class="muted">Nearby hits within this many seconds of each other are merged into one candidate scene.</div>
+    </div>
+
+    <label for="scene_scan_concurrency_cap">Max concurrent scans</label>
+    <input type="number" id="scene_scan_concurrency_cap" name="scene_scan_concurrency_cap" min="1" max="4" value="{{ values.scene_scan_concurrency_cap }}" class="input-sm">
+
+    <label for="scene_frame_classify_concurrency">Frames classified in parallel</label>
+    <div>
+      <input type="number" id="scene_frame_classify_concurrency" name="scene_frame_classify_concurrency" min="1" max="32" value="{{ values.scene_frame_classify_concurrency }}" class="input-sm">
+      <div class="muted">How many sampled frames to extract+classify at once within a single scan. Free speedup on multi-core hardware -- doesn't change which scenes get found, only how fast a scan finishes.</div>
+    </div>
+
+    <label for="scene_verify_pad_seconds">Verification padding (seconds)</label>
+    <div>
+      <input type="number" id="scene_verify_pad_seconds" name="scene_verify_pad_seconds" min="0" step="0.5" value="{{ values.scene_verify_pad_seconds }}" class="input-sm">
+      <div class="muted">After the main scan finds a candidate, this many seconds are added to each side before a second, denser re-scan of just that window -- powers the "Approve high-confidence" bulk action below.</div>
+    </div>
+
+    <label for="scene_verify_frame_interval_seconds">Verification sample interval (seconds)</label>
+    <div>
+      <input type="number" id="scene_verify_frame_interval_seconds" name="scene_verify_frame_interval_seconds" min="0.02" step="0.02" value="{{ values.scene_verify_frame_interval_seconds }}" class="input-sm">
+      <div class="muted">Also drives how tightly a candidate's actual start/end gets refined (see "Verification padding" above) -- not just the confidence stat. Lower = closer to native frame-rate precision.</div>
+    </div>
+
+    <label for="scene_high_confidence_fraction">High-confidence fraction</label>
+    <div>
+      <input type="number" id="scene_high_confidence_fraction" name="scene_high_confidence_fraction" min="0" max="1" step="0.05" value="{{ values.scene_high_confidence_fraction }}" class="input-sm">
+      <div class="muted">Fraction of a candidate's dense verification samples that must clear the confidence threshold to be eligible for one-click bulk approval. Short/borderline scenes naturally score low here and stay in the manual queue.</div>
+    </div>
+
+    <label for="blur_video_crf">Blur video quality (CRF)</label>
+    <div>
+      <input type="number" id="blur_video_crf" name="blur_video_crf" min="0" max="51" value="{{ values.blur_video_crf }}" class="input-sm">
+      <div class="muted">Lower = better quality, bigger file. Only affects the "Vulgarr Edit" sibling file's re-encode -- 23 is a reasonable default.</div>
+    </div>
+
+    <label for="blur_video_preset">Blur encode speed (preset)</label>
+    <div>
+      <select id="blur_video_preset" name="blur_video_preset" class="input-md">
+        {% for p in ["ultrafast", "superfast", "veryfast", "faster", "fast", "medium", "slow", "slower", "veryslow"] %}
+        <option value="{{ p }}" {% if values.blur_video_preset == p %}selected{% endif %}>{{ p }}</option>
+        {% endfor %}
+      </select>
+      <div class="muted">Faster presets finish sooner but produce a larger file at the same quality.</div>
+    </div>
+
+    <label for="scene_blur_level">Blur intensity</label>
+    <div>
+      <input type="range" id="scene_blur_level" name="scene_blur_level" min="1" max="5" step="1" value="{{ values.scene_blur_level }}" oninput="updateSceneBlurPreview()" style="vertical-align: middle;">
+      <span id="scene_blur_level_label">{{ values.scene_blur_level_label }}</span>
+      <div class="muted">Light to Maximum. Defaults to Very Heavy, tested via direct visual comparison to leave nothing recognizable -- Maximum goes further still for extra headroom.</div>
+    </div>
+
+    <label for="scene_blur_pad_start_seconds">Blur/mute padding -- start (seconds)</label>
+    <div>
+      <input type="number" id="scene_blur_pad_start_seconds" name="scene_blur_pad_start_seconds" min="0" step="0.5" value="{{ values.scene_blur_pad_start_seconds }}" class="input-sm">
+      <div class="muted">Extra margin added before each approved scene's start. Kept smaller than the end padding below -- detection reliably catches where a scene actually begins.</div>
+    </div>
+
+    <label for="scene_blur_pad_end_seconds">Blur/mute padding -- end (seconds)</label>
+    <div>
+      <input type="number" id="scene_blur_pad_end_seconds" name="scene_blur_pad_end_seconds" min="0" step="0.5" value="{{ values.scene_blur_pad_end_seconds }}" class="input-sm">
+      <div class="muted">Extra margin added after each approved scene's end. Kept wider than the start padding -- the classifier repeatedly stops detecting a few seconds before a scene's real end, so this is where an unblurred boundary is most likely to show real content.</div>
+    </div>
+
+    <label>Live preview</label>
+    <div>
+      <div style="display: inline-block; padding: 1rem; background: #242533; border-radius: 8px;">
+        <svg id="scene-blur-preview-svg" viewBox="0 0 512 512" width="90" height="90"
+             style="filter: blur({{ '%.1f'|format(values.scene_blur_radius * values.scene_blur_power / 10) }}px); transition: filter 0.1s ease;">
+          <defs>
+            <linearGradient id="previewRedGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+              <stop offset="0%" stop-color="#FF5252" />
+              <stop offset="100%" stop-color="#D32F2F" />
+            </linearGradient>
+          </defs>
+          <rect x="0" y="0" width="512" height="512" rx="110" fill="#242533" stroke="#353846" stroke-width="12"/>
+          <path d="M 256,100 C 170,100 135,160 135,235 C 135,275 155,305 180,325 L 180,380 C 180,395 195,405 210,405 L 302,405 C 317,405 332,395 332,380 L 332,325 C 357,305 377,275 377,235 C 377,160 342,100 256,100 Z" fill="#FFFFFF"/>
+          <ellipse cx="205" cy="225" rx="26" ry="32" fill="#1E1F28" transform="rotate(-6 205 225)"/>
+          <path d="M 148,165 L 364,285" stroke="#E53935" stroke-width="9"/>
+          <ellipse cx="307" cy="225" rx="30" ry="34" fill="#141419" stroke="#E53935" stroke-width="8"/>
+          <rect x="65" y="300" width="382" height="80" rx="14" fill="url(#previewRedGrad)"/>
+          <text x="96" y="358" fill="#FFF" font-family="monospace" font-weight="900" font-size="46" letter-spacing="12">#$!%*</text>
+        </svg>
+      </div>
+      <div class="muted">Approximate -- CSS blur isn't pixel-identical to ffmpeg's boxblur, but scales the same direction as the two sliders above.</div>
+    </div>
+  </div>
+
   <h2 style="margin-top: 1.75rem;">Backups</h2>
   <div class="settings-grid">
     <label for="backup_retention_days">Delete backups older than (days)</label>
