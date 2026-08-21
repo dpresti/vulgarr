@@ -162,6 +162,30 @@ class DetectedScene(Base):
     start_seconds: Mapped[float] = mapped_column(nullable=False)
     end_seconds: Mapped[float] = mapped_column(nullable=False)
     peak_confidence: Mapped[float] = mapped_column(nullable=False)
+    # Fraction of samples at/above threshold from a second, much denser re-scan
+    # of just this candidate's padded window (see
+    # app.vision.classifier.scan_window_frames / scene_cluster.verified_fraction)
+    # -- a more robust per-scene signal than peak_confidence alone, since a
+    # single spiking sample and a consistently-above-threshold window can share
+    # the same peak. None until that verification pass has run (or if it
+    # failed) -- distinct from 0.0, which means "verified, and none of the
+    # denser samples cleared the bar."
+    verified_fraction: Mapped[float | None] = mapped_column(nullable=True)
+
+    # Set when the optional Claude Vision precision filter ran for this
+    # candidate (see app.vision.claude_verify, off by default) -- e.g.
+    # "YES: clearly visible nudity" or "NO: swimwear, not exposed". None if
+    # the filter was disabled, or the call failed and fell back to manual
+    # review. Purely informational for the review UI; scan_for_scenes is the
+    # only thing that acts on the underlying verdict.
+    claude_verify_reason: Mapped[str | None] = mapped_column(nullable=True)
+
+    # Whether Apply should also mute audio for this window, on top of always
+    # blurring the video -- default off. Nudity isn't always something the
+    # audio needs muting for too (plot-relevant scenes, dialogue continuing
+    # over it), so this is a separate, explicit per-scene opt-in rather than
+    # bundled into approval the way it originally was.
+    mute_audio: Mapped[bool] = mapped_column(default=False, nullable=False)
 
     status: Mapped[SceneReviewStatus] = mapped_column(
         Enum(SceneReviewStatus), default=SceneReviewStatus.pending, nullable=False

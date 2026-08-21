@@ -149,6 +149,8 @@
     button.small { padding: 0.2rem 0.6rem; font-size: 0.78rem; font-weight: 500; }
     input[type=text], input[type=time], input[type=number], select { background: var(--vulgarr-bg-surface); border: 1px solid var(--vulgarr-border); color: var(--vulgarr-text-primary); padding: 0.4rem; border-radius: 6px; }
     input:focus, select:focus, button:focus-visible { outline: none; box-shadow: 0 0 0 3px var(--vulgarr-accent-glow); }
+    input.input-invalid { border-color: var(--vulgarr-danger-text); }
+    .field-error { color: var(--vulgarr-danger-text); font-size: 0.85rem; margin-top: 0.2rem; }
     form.inline { display: inline-flex; gap: 0.4rem; align-items: center; }
     .toolbar { display: flex; justify-content: space-between; align-items: center; }
     .muted { color: var(--vulgarr-text-secondary); font-size: 0.85rem; }
@@ -232,6 +234,9 @@
     .detail-badges { display: flex; gap: 0.5rem; flex-wrap: wrap; }
     .detail-body { position: relative; padding: 1.5rem 1.75rem 1.75rem; }
     .detail-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem; max-width: 720px; }
+    .detail-columns { display: flex; gap: 2.5rem; flex-wrap: wrap; }
+    .detail-column { min-width: 200px; }
+    .detail-column-heading { font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.08em; color: var(--vulgarr-accent); font-weight: 700; margin: 0 0 0.9rem; }
     .detail-section { margin-bottom: 1.4rem; }
     .detail-label { font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--vulgarr-text-secondary); font-weight: 700; margin-bottom: 0.5rem; }
     .detail-stat { font-size: 0.92rem; }
@@ -431,15 +436,48 @@
       icon.className = revealed ? "ti ti-eye" : "ti ti-eye-off";
     }
 
+    // Mirrors app.mux.scene_blur.BLUR_LEVEL_PRESETS exactly -- keep in sync if
+    // that table changes. A single 1-5 level is a friendlier UI than exposing
+    // boxblur's two independent radius/power parameters directly.
+    const SCENE_BLUR_PRESETS = {
+      1: { label: "Light", radius: 25, power: 3 },
+      2: { label: "Medium", radius: 45, power: 5 },
+      3: { label: "Heavy", radius: 60, power: 6 },
+      4: { label: "Very Heavy", radius: 90, power: 8 },
+      5: { label: "Maximum", radius: 120, power: 10 },
+    };
+    // Live approximation of the scene-blur intensity slider (settings_form.html)
+    // against the sidebar logo, using CSS blur() instead of round-tripping to
+    // ffmpeg per drag tick. CSS blur isn't pixel-identical to ffmpeg's boxblur
+    // (different algorithm entirely), but scaling a single px radius by the
+    // preset's radius*power gives the same "more knob turned = more blur"
+    // direction the real encode actually produces, which is the only thing a
+    // live drag preview needs to communicate.
+    function updateSceneBlurPreview() {
+      const levelInput = document.getElementById("scene_blur_level");
+      const svg = document.getElementById("scene-blur-preview-svg");
+      if (!levelInput || !svg) return;
+      const level = parseInt(levelInput.value, 10) || 4;
+      const preset = SCENE_BLUR_PRESETS[level] || SCENE_BLUR_PRESETS[4];
+      const px = (preset.radius * preset.power / 10).toFixed(1);
+      svg.style.filter = `blur(${px}px)`;
+      const labelEl = document.getElementById("scene_blur_level_label");
+      if (labelEl) labelEl.textContent = preset.label;
+    }
+
     // Scene-review preview player: a candidate scene's approve/reject decision
     // shouldn't be based on the classifier's confidence number alone -- this lets
-    // the reviewer actually watch the flagged window (plus a few seconds of
-    // padding on each side, to judge whether the boundaries themselves look
-    // right) before deciding. The <video> element is created lazily on first
-    // open (not eagerly for every row) so opening the review list doesn't kick
-    // off N simultaneous video loads, and torn down on close to stop playback
-    // and release the connection.
-    const SCENE_PREVIEW_PAD_SECONDS = 3;
+    // the reviewer actually watch the flagged window before deciding. The
+    // <video> element is created lazily on first open (not eagerly for every
+    // row) so opening the review list doesn't kick off N simultaneous video
+    // loads, and torn down on close to stop playback and release the connection.
+    // The server extracts+pads+re-encodes just this window on demand (see
+    // scene_clip() in app/routers/scenes.py) rather than streaming the whole
+    // source file, both because whole-file Range streaming made seeking to an
+    // arbitrary timestamp unreliable and because real source files are often
+    // HEVC/AC3 or in an MKV container, neither of which browsers can play
+    // natively -- so no client-side seek/pause-at-end logic is needed here
+    // anymore, the response IS the clip.
     function toggleScenePreview(button, containerId, titleId, start, end) {
       const container = document.getElementById(containerId);
       if (!container) return;
@@ -451,16 +489,10 @@
         return;
       }
 
-      const padStart = Math.max(0, start - SCENE_PREVIEW_PAD_SECONDS);
-      const padEnd = end + SCENE_PREVIEW_PAD_SECONDS;
       const video = document.createElement("video");
       video.controls = true;
-      video.src = `/library/title/${titleId}/video`;
+      video.src = `/library/title/${titleId}/scene-clip?start=${start}&end=${end}`;
       video.poster = `/library/title/${titleId}/scene-thumbnail?t=${((start + end) / 2).toFixed(1)}`;
-      video.addEventListener("loadedmetadata", () => { video.currentTime = padStart; });
-      video.addEventListener("timeupdate", () => {
-        if (video.currentTime >= padEnd) video.pause();
-      });
       container.innerHTML = "";
       container.appendChild(video);
       container.style.display = "block";

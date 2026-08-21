@@ -92,3 +92,48 @@ def cluster_scenes(
         peak = max(s.confidence for s in ordered if start <= s.timestamp <= end)
         candidates.append(SceneCandidate(start=start, end=end, peak_confidence=peak))
     return candidates
+
+
+def verified_fraction(scores: list[FrameScore], confidence_threshold: float) -> float:
+    """Fraction of scores at/above confidence_threshold -- meant to be computed
+    from a second, much denser re-scan of just one candidate's padded window
+    (see app.vision.classifier.scan_window_frames), not the sparser samples that
+    found the candidate in the first place.
+
+    A single peak_confidence value can't distinguish "flickered above threshold
+    once" from "consistently above threshold throughout the window" -- both can
+    produce the same peak. This can, and is a meaningfully more robust signal
+    for deciding which candidates are safe to bulk-approve without a human
+    looking at every one (see scene_review_list.html's "Approve high-confidence"
+    action) versus which stay borderline enough to need a real look."""
+    if not scores:
+        return 0.0
+    hits = sum(1 for s in scores if s.confidence >= confidence_threshold)
+    return hits / len(scores)
+
+
+def refine_scene_boundary(scores: list[FrameScore], confidence_threshold: float) -> tuple[float, float] | None:
+    """Tightest [start, end] spanning every sample at/above confidence_threshold
+    in a dense re-scan of one candidate's padded window -- the video-side
+    analog of what Whisper forced-alignment does for a subtitle cue: the main
+    scan (or a human's manual "Save" adjustment) only ever localizes a scene
+    roughly, at whatever its own sample interval allows; this takes a much
+    denser second look at just that small window and reports the real
+    boundary the classifier actually saw, which the caller then uses as the
+    candidate's stored start/end.
+
+    Can extend the boundary in *either* direction relative to the coarse
+    candidate: narrower if the coarse hit was a brief spike inside a longer
+    quiet window, wider if real signal continues into the padding the coarse
+    scan never sampled densely enough to catch (this is exactly what a real
+    ground-truth comparison against GoT S01E10 found by hand this session --
+    a scene's real tail extended past where the coarse scan had stopped).
+
+    Returns None if nothing in the dense re-scan cleared the threshold at all
+    (the coarse candidate was likely a borderline/noisy hit) -- callers should
+    fall back to the original coarse boundary in that case rather than
+    collapsing the scene to nothing."""
+    hits = [s.timestamp for s in scores if s.confidence >= confidence_threshold]
+    if not hits:
+        return None
+    return min(hits), max(hits)

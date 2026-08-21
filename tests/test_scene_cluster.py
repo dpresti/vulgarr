@@ -1,4 +1,4 @@
-from app.vision.scene_cluster import FrameScore, cluster_scenes
+from app.vision.scene_cluster import FrameScore, cluster_scenes, refine_scene_boundary, verified_fraction
 
 
 def make_scores(pairs):
@@ -96,3 +96,59 @@ def test_unsorted_input_is_handled():
     assert len(result) == 1
     assert result[0].start == 0.0
     assert result[0].end == 2.0
+
+
+def test_verified_fraction_empty_is_zero():
+    assert verified_fraction([], 0.5) == 0.0
+
+
+def test_verified_fraction_all_above_threshold():
+    scores = make_scores([(0.0, 0.9), (1.0, 0.8), (2.0, 0.7)])
+    assert verified_fraction(scores, 0.5) == 1.0
+
+
+def test_verified_fraction_none_above_threshold():
+    scores = make_scores([(0.0, 0.1), (1.0, 0.2), (2.0, 0.3)])
+    assert verified_fraction(scores, 0.5) == 0.0
+
+
+def test_verified_fraction_partial():
+    # A brief flash within a longer padded window should score low here even
+    # though it was real -- exactly the case meant to stay in manual review
+    # rather than qualify for bulk-approve.
+    scores = make_scores([(0.0, 0.9), (1.0, 0.1), (2.0, 0.1), (3.0, 0.1)])
+    assert verified_fraction(scores, 0.5) == 0.25
+
+
+def test_verified_fraction_boundary_is_inclusive():
+    scores = make_scores([(0.0, 0.5)])
+    assert verified_fraction(scores, 0.5) == 1.0
+
+
+def test_refine_scene_boundary_empty_returns_none():
+    assert refine_scene_boundary([], 0.5) is None
+
+
+def test_refine_scene_boundary_nothing_above_threshold_returns_none():
+    scores = make_scores([(0.0, 0.1), (1.0, 0.2), (2.0, 0.3)])
+    assert refine_scene_boundary(scores, 0.5) is None
+
+
+def test_refine_scene_boundary_tightens_to_actual_hits():
+    # A dense re-scan of a padded window -- real signal only in the middle.
+    scores = make_scores([(0.0, 0.1), (1.0, 0.6), (2.0, 0.7), (3.0, 0.65), (4.0, 0.2)])
+    assert refine_scene_boundary(scores, 0.5) == (1.0, 3.0)
+
+
+def test_refine_scene_boundary_can_widen_into_padding():
+    # Coarse candidate was (say) 2.0-3.0, but the denser re-scan (which pads
+    # beyond that) finds real signal continuing past it -- the whole point of
+    # this function is that the refined boundary isn't capped at the coarse
+    # candidate's own start/end.
+    scores = make_scores([(0.0, 0.1), (1.0, 0.2), (2.0, 0.6), (3.0, 0.6), (4.0, 0.55), (5.0, 0.1)])
+    assert refine_scene_boundary(scores, 0.5) == (2.0, 4.0)
+
+
+def test_refine_scene_boundary_single_hit_collapses_to_a_point():
+    scores = make_scores([(0.0, 0.1), (2.5, 0.9), (5.0, 0.1)])
+    assert refine_scene_boundary(scores, 0.5) == (2.5, 2.5)
