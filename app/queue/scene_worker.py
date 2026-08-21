@@ -55,12 +55,29 @@ class SceneJobQueue:
             result = await session.execute(
                 select(SceneJob).where(SceneJob.state.in_([JobState.queued, JobState.processing]))
             )
+            active_scan_title_ids: set[int] = set()
             for job in result.scalars().all():
                 job.state = JobState.queued
                 job.started_at = None
                 title = await session.get(Title, job.title_id)
                 if title is not None:
                     title.scene_scan_status = "queued"
+                if job.kind == SceneJobKind.scan:
+                    active_scan_title_ids.add(job.title_id)
+
+            # Defensive reconciliation: a Title stuck showing "queued"/"scanning"
+            # with no actual SceneJob behind it (the requeue loop above only
+            # re-queues real orphaned *jobs*; this catches an orphaned *status*
+            # with no job at all, e.g. from a job being deleted/edited outside
+            # the normal cancel_job()/_run_job() paths, which are the only two
+            # places that otherwise keep this field in sync). Not expected in
+            # normal operation, but cheap to check and prevents a permanently
+            # stuck-looking scan indicator either way.
+            result = await session.execute(select(Title).where(Title.scene_scan_status.in_(["queued", "scanning"])))
+            for title in result.scalars().all():
+                if title.id not in active_scan_title_ids:
+                    title.scene_scan_status = "not_scanned"
+
             await session.commit()
 
             result = await session.execute(select(SceneJob.id).where(SceneJob.state == JobState.queued))
@@ -237,10 +254,13 @@ class SceneJobQueue:
                 job.progress_message = message
                 await session.commit()
 
-            # 97% floor mirrors app.queue.worker's mute-pipeline design exactly --
-            # the last few points are reserved for the post-encode verify/publish
-            # stage below (on_blur_stage), so those steps still read as forward
-            # progress instead of the bar looking frozen while they run.
+            # Unlike app.queue.worker's mute pipeline (one whole-file ffmpeg pass,
+            # where a 97% floor reserves the last few points for the post-encode
+            # verify/publish stage below), app.mux.scene_blur's split/re-encode/
+            # concat pipeline calls on_stage throughout the whole job (once per
+            # scene segment, not just at the tail), so on_stage below no longer
+            # forces a progress floor -- fraction naturally reaches ~97% once all
+            # scene segments are done re-encoding, before verify/publish ever run.
             async def on_blur_progress(fraction: float) -> None:
                 nonlocal last_update_monotonic
                 now = time.monotonic()
@@ -259,17 +279,40 @@ class SceneJobQueue:
 
             async def on_blur_stage(message: str) -> None:
                 job.progress_message = message
-                job.progress_percent = max(job.progress_percent or 0, 97.0)
+                await session.commit()
+
+            async def on_scan_stage(message: str) -> None:
+                # No progress-percent bump like on_blur_stage's 97% floor -- the
+                # frame-count progress above already reaches 100% once the main
+                # scan finishes, so the per-candidate verification pass that
+                # follows is a (typically short) tail step, not something that
+                # needs its own slice of the bar.
+                job.progress_message = message
                 await session.commit()
 
             try:
                 if is_scan:
-                    scan_outcome = await scan_for_scenes(session, title, on_progress=on_scan_progress)
+                    scan_outcome = await scan_for_scenes(
+                        session, title, job.id, on_progress=on_scan_progress, on_stage=on_scan_stage
+                    )
                     job.progress_message = f"Done -- found {scan_outcome.candidate_count} candidate scene(s)"
                     title.scene_scan_status = "scanned" if scan_outcome.candidate_count else "no_scenes_found"
+
+                    # Chain straight into a blur/Apply job when auto-process is on
+                    # and this scan actually found something -- scan_for_scenes
+                    # already auto-approved the candidates above (same setting
+                    # gates both halves), this just closes the loop so the user
+                    # doesn't have to separately click Apply. Committed before
+                    # enqueuing so the blur job's own session sees the scenes as
+                    # approved. A concurrent manual scan-scenes/apply-scenes click
+                    # can't double-enqueue here -- enqueue_blur_if_not_already_active
+                    # checks for an existing queued/processing blur job first.
+                    if scan_outcome.candidate_count and bool(await get_setting(session, "scene_auto_process")):
+                        await session.commit()
+                        await self.enqueue_blur_if_not_already_active(title.id)
                 else:
                     blur_outcome = await apply_scene_blur(
-                        session, title, on_progress=on_blur_progress, on_stage=on_blur_stage
+                        session, title, job.id, on_progress=on_blur_progress, on_stage=on_blur_stage
                     )
                     job.progress_message = f"Done -- blurred {blur_outcome.scene_count} scene(s)"
 

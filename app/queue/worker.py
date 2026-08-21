@@ -123,12 +123,26 @@ class JobQueue:
             result = await session.execute(
                 select(ProcessingJob).where(ProcessingJob.state.in_([JobState.queued, JobState.processing]))
             )
+            active_title_ids: set[int] = set()
             for job in result.scalars().all():
                 job.state = JobState.queued
                 job.started_at = None
                 title = await session.get(Title, job.title_id)
                 if title is not None:
                     title.status = "queued"
+                active_title_ids.add(job.title_id)
+
+            # Defensive reconciliation: a Title stuck showing "queued" with no
+            # actual ProcessingJob behind it (the requeue loop above only
+            # re-queues real orphaned *jobs*; this catches an orphaned *status*
+            # with no job at all -- see the identical fix in scene_worker.py's
+            # start() for the fuller reasoning, same category of drift). Not
+            # expected in normal operation, but cheap to check.
+            result = await session.execute(select(Title).where(Title.status == "queued"))
+            for title in result.scalars().all():
+                if title.id not in active_title_ids:
+                    title.status = "not_processed"
+
             await session.commit()
 
             result = await session.execute(
