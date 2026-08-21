@@ -1,14 +1,21 @@
 <div class="scene-review-row" style="display: flex; align-items: flex-start; gap: 0.75rem; flex-wrap: wrap; padding: 0.5rem 0; border-bottom: 1px solid var(--vulgarr-border);">
   <img
+    id="scene-thumb-{{ scene.id }}"
     class="scene-thumb"
     src="/library/title/{{ title_id }}/scene-thumbnail?t={{ '%.1f'|format((scene.start_seconds + scene.end_seconds) / 2) }}"
-    loading="lazy" alt=""
+    loading="lazy" alt="" hx-preserve="true"
   >
 
   <div style="display: flex; flex-direction: column; gap: 0.5rem; flex: 1; min-width: 240px;">
     <div style="display: flex; align-items: center; gap: 0.75rem; flex-wrap: wrap;">
       <span class="badge badge-{{ 'done' if scene.status.value == 'approved' else ('failed' if scene.status.value == 'rejected' else 'queued') }}">{{ scene.status.value }}</span>
       <span class="muted">confidence {{ (scene.peak_confidence * 100) | round | int }}%</span>
+      {% if scene.verified_fraction is not none %}
+        <span class="muted" title="Fraction of a denser re-scan of this window's padded range that cleared the confidence threshold">
+          verified {{ (scene.verified_fraction * 100) | round | int }}%
+          {% if scene.verified_fraction >= high_confidence_fraction %}<span class="badge badge-done">high confidence</span>{% endif %}
+        </span>
+      {% endif %}
       <button
         type="button" class="small secondary"
         onclick="toggleScenePreview(this, 'scene-preview-{{ scene.id }}', {{ title_id }}, {{ scene.start_seconds }}, {{ scene.end_seconds }})"
@@ -16,6 +23,12 @@
     </div>
 
     <div class="scene-preview" id="scene-preview-{{ scene.id }}" style="display: none;"></div>
+
+    {% if scene.claude_verify_reason %}
+      <div class="muted" title="Verdict from the optional Claude Vision precision filter, see Settings">
+        Claude Vision: {{ scene.claude_verify_reason }}
+      </div>
+    {% endif %}
 
     <div style="display: flex; align-items: center; gap: 0.75rem; flex-wrap: wrap;">
       <form class="inline" hx-post="/scenes/{{ scene.id }}/adjust" hx-target="#scene-review-{{ title_id }}" hx-swap="outerHTML">
@@ -29,6 +42,11 @@
       </form>
       <form class="inline" hx-post="/scenes/{{ scene.id }}/reject" hx-target="#scene-review-{{ title_id }}" hx-swap="outerHTML" hx-confirm="Reject this candidate scene?">
         <button type="submit" class="small {{ 'secondary' if scene.status.value == 'rejected' else 'danger' }}">Reject</button>
+      </form>
+      <form class="inline" hx-post="/scenes/{{ scene.id }}/toggle-mute" hx-target="#scene-review-{{ title_id }}" hx-swap="outerHTML">
+        <button type="submit" class="small secondary" title="Video is always blurred for an approved scene -- this separately controls whether Apply also mutes the audio for it. Off by default, since nudity isn't always something the dialogue needs muting for too.">
+          {{ 'Audio: muted ✓' if scene.mute_audio else 'Audio: not muted' }}
+        </button>
       </form>
     </div>
   </div>
