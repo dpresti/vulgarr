@@ -83,4 +83,59 @@
     </tbody>
   </table>
   </div>
+
+  <h3 style="margin-top: 1.5rem;">Scene detection</h3>
+  <p><strong>Scanning {{ scene_running }} of {{ scene_total_active }}</strong> {% if scene_total_active == 0 %}<span class="muted">— nothing scanning</span>{% endif %}</p>
+  <div class="table-scroll responsive-table">
+  <table class="card-grid card-grid-lead">
+    <thead><tr><th>Title</th><th>State</th><th>Kind</th><th>Progress</th><th></th></tr></thead>
+    <tbody>
+      {% for job in scene_active %}
+      <tr>
+        <td data-label="Title"><a class="title-link" href="{{ title_href(job.title) }}">{{ job.title.display_name }}</a></td>
+        <td data-label="State"><span class="badge badge-{{ job.state.value }}">{{ job.state.value }}</span></td>
+        <td data-label="Kind" class="muted">{{ job.kind.value }}</td>
+        <td data-label="Progress" class="muted">
+          {% if job.progress_percent is not none %}
+            <progress value="{{ job.progress_percent }}" max="100" style="width: 140px; vertical-align: middle;"></progress>
+          {% endif %}
+          {{ job.progress_message or '—' }}
+        </td>
+        <td data-label="">
+          {% if job.state.value == 'queued' or (job.progress_percent or 0) < 97 %}
+          <button
+            class="small secondary"
+            hx-post="/scene-jobs/{{ job.id }}/cancel"
+            hx-target="#queue-content"
+            hx-swap="outerHTML"
+            hx-confirm="Cancel scanning {{ job.title.display_name }}?"
+          >Cancel</button>
+          {% endif %}
+        </td>
+      </tr>
+      {% else %}
+      <tr><td colspan="5" class="muted">Nothing scanning.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  </div>
+
+  <div class="table-scroll responsive-table">
+  <table class="card-grid">
+    <thead><tr><th>Title</th><th>State</th><th>Kind</th><th>Duration</th><th>Result</th></tr></thead>
+    <tbody>
+      {% for job in scene_recent %}
+      <tr>
+        <td data-label="Title"><a class="title-link" href="{{ title_href(job.title) }}">{{ job.title.display_name }}</a></td>
+        <td data-label="State"><span class="badge badge-{{ job.state.value }}">{{ job.state.value }}</span></td>
+        <td data-label="Kind" class="muted">{{ job.kind.value }}</td>
+        <td data-label="Duration" class="muted">{{ format_duration((job.finished_at - job.started_at).total_seconds()) if job.started_at and job.finished_at else '—' }}</td>
+        <td data-label="Result" class="muted">{{ job.error or job.progress_message or '—' }}</td>
+      </tr>
+      {% else %}
+      <tr><td colspan="5" class="muted">No scans run yet.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  </div>
 </div>

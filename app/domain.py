@@ -64,16 +64,26 @@ class JobState(str, enum.Enum):
     cancelled = "cancelled"
 
 
+class SceneReviewStatus(str, enum.Enum):
+    pending = "pending"
+    approved = "approved"
+    rejected = "rejected"
+
+
+class SceneJobKind(str, enum.Enum):
+    scan = "scan"
+    blur = "blur"
+
+
 def is_mkv_path(video_path: str) -> bool:
     return video_path.lower().endswith(".mkv")
 
 
 def title_href(title) -> str:
-    """Library URL for a Title row -- a movie goes straight to its own page, an
-    episode goes to its season (there's no standalone per-episode page)."""
-    if title.media_type == MediaType.movie:
-        return f"/library/title/{title.id}"
-    return f"/library/shows/{title.sonarr_series_id}/season/{title.season_number}"
+    """Library URL for a Title row -- every title (movie or episode) has its own
+    detail page at /library/title/{id}; title_detail_card.html has no
+    movie-specific assumptions, so this is genuinely shared, not just movies."""
+    return f"/library/title/{title.id}"
 
 
 def format_duration(seconds: float) -> str:

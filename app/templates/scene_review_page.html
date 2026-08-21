@@ -1,0 +1,12 @@
+{% extends "base.html" %}
+{% block content %}
+  {% if title.media_type.value == 'episode' %}
+  <a class="back-link" href="/library/shows/{{ title.sonarr_series_id }}/season/{{ title.season_number }}"><i class="ti ti-arrow-left" aria-hidden="true"></i>Back to {{ title.series_title }} — Season {{ title.season_number }}</a>
+  {% else %}
+  <a class="back-link" href="/library/title/{{ title.id }}"><i class="ti ti-arrow-left" aria-hidden="true"></i>Back to {{ title.display_name }}</a>
+  {% endif %}
+  <div class="toolbar">
+    <h1>{{ title.display_name }}</h1>
+  </div>
+  {% include "partials/scene_review_list.html" %}
+{% endblock %}

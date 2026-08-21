@@ -1,0 +1,104 @@
+<div id="scene-review-{{ title_id }}"
+  {% if scene_scan_status in ('queued', 'scanning') or (blur_job and blur_job.state.value in ('queued', 'processing')) %}
+  hx-get="/library/title/{{ title_id }}/scenes" hx-trigger="every 3s" hx-swap="outerHTML"
+  {% endif %}
+>
+  {% if not hide_scan_trigger or (scan_job and scene_scan_status in ('queued', 'scanning')) %}
+  <div style="display: flex; align-items: center; gap: 0.6rem; flex-wrap: wrap;">
+    {% if not hide_scan_trigger %}
+    <form hx-post="/library/title/{{ title_id }}/scan-scenes" hx-target="#scene-review-{{ title_id }}" hx-swap="outerHTML">
+      <button type="submit" class="small secondary" {% if scene_scan_status in ('queued', 'scanning') %}disabled{% endif %}>
+        {% if scene_scan_status in ('queued', 'scanning') %}
+          <span class="spinner"></span> Scanning…
+        {% elif scene_scan_status == 'not_scanned' %}
+          Scan for scenes
+        {% else %}
+          Rescan for scenes
+        {% endif %}
+      </button>
+    </form>
+    {% endif %}
+    {% if scan_job and scene_scan_status in ('queued', 'scanning') %}
+    <form hx-post="/scene-jobs/{{ scan_job.id }}/cancel" hx-target="#scene-review-{{ title_id }}" hx-swap="outerHTML" hx-confirm="Cancel this scan?">
+      <button type="submit" class="small danger">Cancel</button>
+    </form>
+    {% endif %}
+  </div>
+  {% endif %}
+
+  {% if scan_job and scene_scan_status in ('queued', 'scanning') %}
+    <div class="muted" style="margin-top: 0.4rem; display: flex; align-items: center; gap: 0.5rem;">
+      {% if scan_job.progress_percent is not none %}
+      <progress value="{{ scan_job.progress_percent }}" max="100" style="width: 160px; vertical-align: middle;"></progress>
+      {% endif %}
+      <span>{{ scan_job.progress_message or 'Scanning…' }}</span>
+    </div>
+  {% elif scene_scan_status == 'scan_failed' %}
+    <div class="muted" style="color: var(--vulgarr-danger-text); margin-top: 0.4rem;">Last scan failed{% if scan_job and scan_job.error %}: {{ scan_job.error }}{% else %} -- try again{% endif %}.</div>
+  {% elif scene_scan_status == 'no_scenes_found' %}
+    <div class="muted" style="margin-top: 0.4rem;">No candidate scenes found.</div>
+  {% endif %}
+
+  {% if scenes %}
+  {% if pending_count %}
+  <div style="margin-top: 0.75rem; display: flex; align-items: center; gap: 0.6rem; flex-wrap: wrap;">
+    <form hx-post="/library/title/{{ title_id }}/approve-all-scenes" hx-target="#scene-review-{{ title_id }}" hx-swap="outerHTML" hx-confirm="Approve all {{ pending_count }} pending scene(s)?">
+      <button type="submit" class="small secondary">Approve all {{ pending_count }} pending scene(s)</button>
+    </form>
+    {% if high_confidence_pending_count %}
+    <form hx-post="/library/title/{{ title_id }}/approve-high-confidence" hx-target="#scene-review-{{ title_id }}" hx-swap="outerHTML">
+      <button type="submit" class="small secondary">Approve {{ high_confidence_pending_count }} high-confidence scene(s)</button>
+    </form>
+    {% endif %}
+  </div>
+  {% endif %}
+  <div class="scene-review-list" style="margin-top: 0.75rem;">
+    {% for scene in scenes %}
+      {% include "partials/scene_review_row.html" %}
+    {% endfor %}
+  </div>
+
+  {% set approved_scenes = scenes | selectattr('status.value', 'equalto', 'approved') | list %}
+  {% set approved_unapplied = approved_scenes | selectattr('applied_at', 'none') | list %}
+  {# Scenes that were baked into an earlier "Vulgarr Edit" but have since been
+     rejected -- Apply needs to be re-run to regenerate the file without them,
+     even though nothing *new* is approved. See apply_scene_blur's docstring. #}
+  {% set stale_applied = scenes | rejectattr('status.value', 'equalto', 'approved') | selectattr('applied_at') | list %}
+  {% set needs_apply = (approved_unapplied or stale_applied) and approved_scenes %}
+  {% set blur_active = blur_job and blur_job.state.value in ('queued', 'processing') %}
+  <div style="margin-top: 0.75rem; display: flex; align-items: center; gap: 0.6rem; flex-wrap: wrap;">
+    <form hx-post="/library/title/{{ title_id }}/apply-scenes" hx-target="#scene-review-{{ title_id }}" hx-swap="outerHTML">
+      <button type="submit" class="small" {% if blur_active or not needs_apply %}disabled{% endif %}>
+        {% if blur_active %}
+          <span class="spinner"></span> Applying…
+        {% elif stale_applied and not approved_unapplied %}
+          Reprocess ({{ approved_scenes | length }} approved, dropping {{ stale_applied | length }} declined)
+        {% else %}
+          Apply {{ approved_scenes | length }} approved scene(s)
+        {% endif %}
+      </button>
+    </form>
+    {% if stale_applied %}
+    <span class="muted">A declined scene is still in the current "Vulgarr Edit" file -- reprocess to remove it.</span>
+    {% endif %}
+    {% if blur_active %}
+    <form hx-post="/scene-jobs/{{ blur_job.id }}/cancel" hx-target="#scene-review-{{ title_id }}" hx-swap="outerHTML" hx-confirm="Cancel applying blur?">
+      <button type="submit" class="small danger">Cancel</button>
+    </form>
+    {% endif %}
+  </div>
+
+  {% if blur_active %}
+    <div class="muted" style="margin-top: 0.4rem; display: flex; align-items: center; gap: 0.5rem;">
+      {% if blur_job.progress_percent is not none %}
+      <progress value="{{ blur_job.progress_percent }}" max="100" style="width: 160px; vertical-align: middle;"></progress>
+      {% endif %}
+      <span>{{ blur_job.progress_message or 'Applying…' }}</span>
+    </div>
+  {% elif blur_job and blur_job.state.value == 'failed' %}
+    <div class="muted" style="color: var(--vulgarr-danger-text); margin-top: 0.4rem;">Last apply failed{% if blur_job.error %}: {{ blur_job.error }}{% else %} -- try again{% endif %}.</div>
+  {% elif vulgarr_edit_path %}
+    <div class="muted" style="margin-top: 0.4rem; color: var(--vulgarr-success-text);">"Vulgarr Edit" version ready -- pick it up on your next Sonarr/Radarr rescan.</div>
+  {% endif %}
+  {% endif %}
+</div>
