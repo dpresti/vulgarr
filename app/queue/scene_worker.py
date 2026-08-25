@@ -15,7 +15,7 @@ from sqlalchemy import select
 from app.db.models import JobState, SceneJob, SceneJobKind, Title
 from app.db.session import get_session, get_setting
 from app.queue.worker import is_within_off_hours_window
-from app.scenes.pipeline import apply_scene_blur, scan_for_scenes
+from app.scenes.pipeline import apply_scene_blur, reverify_scenes_with_claude, scan_for_scenes
 
 logger = logging.getLogger(__name__)
 
@@ -178,6 +178,32 @@ class SceneJobQueue:
         await self.enqueue_blur(title_id)
         return True
 
+    async def enqueue_claude_verify(self, title_id: int) -> int:
+        async with get_session() as session:
+            job = SceneJob(title_id=title_id, kind=SceneJobKind.claude_verify, state=JobState.queued)
+            session.add(job)
+            await session.commit()
+            await session.refresh(job)
+        await self._pending.put(job.id)
+        return job.id
+
+    async def enqueue_claude_verify_if_not_already_active(self, title_id: int) -> bool:
+        """Same dedup reasoning as enqueue_scan_if_not_already_active -- a double-click
+        on "Reprocess with Claude Vision" shouldn't queue a second pass over the same
+        title's candidates while one is already running."""
+        async with get_session() as session:
+            existing = await session.execute(
+                select(SceneJob).where(
+                    SceneJob.title_id == title_id,
+                    SceneJob.kind == SceneJobKind.claude_verify,
+                    SceneJob.state.in_([JobState.queued, JobState.processing]),
+                )
+            )
+            if existing.scalar_one_or_none() is not None:
+                return False
+        await self.enqueue_claude_verify(title_id)
+        return True
+
     async def _dispatch_loop(self) -> None:
         while not self._stopping:
             try:
@@ -222,12 +248,15 @@ class SceneJobQueue:
                 return
 
             is_scan = job.kind == SceneJobKind.scan
+            is_claude_verify = job.kind == SceneJobKind.claude_verify
             job.state = JobState.processing
             job.started_at = datetime.datetime.utcnow()
             job.progress_percent = 0.0
             if is_scan:
                 job.progress_message = "Scanning for scenes"
                 title.scene_scan_status = "scanning"
+            elif is_claude_verify:
+                job.progress_message = "Verifying scenes with Claude Vision"
             else:
                 job.progress_message = "Blurring video"
             await session.commit()
@@ -290,6 +319,19 @@ class SceneJobQueue:
                 job.progress_message = message
                 await session.commit()
 
+            async def on_claude_verify_progress(done: int, total: int) -> None:
+                nonlocal last_update_monotonic
+                if total <= 0:
+                    return
+                now = time.monotonic()
+                is_final = done >= total
+                if not is_final and now - last_update_monotonic < _PROGRESS_UPDATE_MIN_INTERVAL_SECONDS:
+                    return
+                last_update_monotonic = now
+                job.progress_percent = round(100 * done / total, 1)
+                job.progress_message = f"Verifying with Claude Vision -- scene {done}/{total}"
+                await session.commit()
+
             try:
                 if is_scan:
                     scan_outcome = await scan_for_scenes(
@@ -310,6 +352,16 @@ class SceneJobQueue:
                     if scan_outcome.candidate_count and bool(await get_setting(session, "scene_auto_process")):
                         await session.commit()
                         await self.enqueue_blur_if_not_already_active(title.id)
+                elif is_claude_verify:
+                    reverify_outcome = await reverify_scenes_with_claude(
+                        session, title, on_progress=on_claude_verify_progress
+                    )
+                    job.progress_message = (
+                        f"Done -- checked {reverify_outcome.checked_count} scene(s), "
+                        f"{reverify_outcome.approved_count} confirmed, "
+                        f"{reverify_outcome.rejected_count} rejected"
+                        + (f", {reverify_outcome.failed_count} failed" if reverify_outcome.failed_count else "")
+                    )
                 else:
                     blur_outcome = await apply_scene_blur(
                         session, title, job.id, on_progress=on_blur_progress, on_stage=on_blur_stage

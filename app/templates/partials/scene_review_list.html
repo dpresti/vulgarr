@@ -1,5 +1,5 @@
 <div id="scene-review-{{ title_id }}"
-  {% if scene_scan_status in ('queued', 'scanning') or (blur_job and blur_job.state.value in ('queued', 'processing')) %}
+  {% if scene_scan_status in ('queued', 'scanning') or (blur_job and blur_job.state.value in ('queued', 'processing')) or (claude_verify_job and claude_verify_job.state.value in ('queued', 'processing')) %}
   hx-get="/library/title/{{ title_id }}/scenes" hx-trigger="every 3s" hx-swap="outerHTML"
   {% endif %}
 >
@@ -40,6 +40,38 @@
   {% endif %}
 
   {% if scenes %}
+  {% set claude_verify_active = claude_verify_job and claude_verify_job.state.value in ('queued', 'processing') %}
+  {% if claude_vision_verify_enabled and (claude_reverifiable_count or claude_verify_active) %}
+  <div style="margin-top: 0.75rem; display: flex; align-items: center; gap: 0.6rem; flex-wrap: wrap;">
+    <form hx-post="/library/title/{{ title_id }}/reverify-scenes-claude" hx-target="#scene-review-{{ title_id }}" hx-swap="outerHTML">
+      <button type="submit" class="small secondary" {% if claude_verify_active or not claude_reverifiable_count %}disabled{% endif %}
+        title="Re-checks every non-rejected candidate against the Claude Vision precision filter, e.g. for scenes auto-approved before that setting was turned on.">
+        {% if claude_verify_active %}
+          <span class="spinner"></span> Verifying with Claude Vision…
+        {% else %}
+          Reprocess {{ claude_reverifiable_count }} scene(s) with Claude Vision
+        {% endif %}
+      </button>
+    </form>
+    {% if claude_verify_active %}
+    <form hx-post="/scene-jobs/{{ claude_verify_job.id }}/cancel" hx-target="#scene-review-{{ title_id }}" hx-swap="outerHTML" hx-confirm="Cancel Claude Vision verification?">
+      <button type="submit" class="small danger">Cancel</button>
+    </form>
+    {% endif %}
+  </div>
+  {% if claude_verify_active %}
+    <div class="muted" style="margin-top: 0.4rem; display: flex; align-items: center; gap: 0.5rem;">
+      {% if claude_verify_job.progress_percent is not none %}
+      <progress value="{{ claude_verify_job.progress_percent }}" max="100" style="width: 160px; vertical-align: middle;"></progress>
+      {% endif %}
+      <span>{{ claude_verify_job.progress_message or 'Verifying…' }}</span>
+    </div>
+  {% elif claude_verify_job and claude_verify_job.state.value == 'failed' %}
+    <div class="muted" style="color: var(--vulgarr-danger-text); margin-top: 0.4rem;">Last Claude Vision reprocess failed{% if claude_verify_job.error %}: {{ claude_verify_job.error }}{% else %} -- try again{% endif %}.</div>
+  {% elif claude_verify_job and claude_verify_job.state.value == 'done' %}
+    <div class="muted" style="margin-top: 0.4rem;">{{ claude_verify_job.progress_message }}</div>
+  {% endif %}
+  {% endif %}
   {% if pending_count %}
   <div style="margin-top: 0.75rem; display: flex; align-items: center; gap: 0.6rem; flex-wrap: wrap;">
     <form hx-post="/library/title/{{ title_id }}/approve-all-scenes" hx-target="#scene-review-{{ title_id }}" hx-swap="outerHTML" hx-confirm="Approve all {{ pending_count }} pending scene(s)?">

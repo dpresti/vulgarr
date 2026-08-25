@@ -52,6 +52,17 @@ async def _scene_review_context(session, title_id: int) -> dict:
         )
     ).scalar_one_or_none()
 
+    # Same reasoning again, for the "Reprocess with Claude Vision" action --
+    # see reverify_scenes_with_claude.
+    claude_verify_job = (
+        await session.execute(
+            select(SceneJob)
+            .where(SceneJob.title_id == title_id, SceneJob.kind == SceneJobKind.claude_verify)
+            .order_by(SceneJob.created_at.desc())
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+
     pending_count = sum(1 for s in scenes if s.status == SceneReviewStatus.pending)
     high_confidence_pending_count = sum(
         1
@@ -60,6 +71,9 @@ async def _scene_review_context(session, title_id: int) -> dict:
         and s.verified_fraction is not None
         and s.verified_fraction >= high_confidence_fraction
     )
+    # What a "Reprocess with Claude Vision" click would actually touch -- see
+    # reverify_scenes_with_claude, which skips already-rejected scenes.
+    claude_reverifiable_count = sum(1 for s in scenes if s.status != SceneReviewStatus.rejected)
 
     return {
         "title_id": title_id,
@@ -67,6 +81,9 @@ async def _scene_review_context(session, title_id: int) -> dict:
         "scenes": scenes,
         "scan_job": scan_job,
         "blur_job": blur_job,
+        "claude_verify_job": claude_verify_job,
+        "claude_vision_verify_enabled": bool(await get_setting(session, "claude_vision_verify_enabled")),
+        "claude_reverifiable_count": claude_reverifiable_count,
         "vulgarr_edit_path": title.vulgarr_edit_path if title else None,
         "high_confidence_fraction": high_confidence_fraction,
         "pending_count": pending_count,
@@ -111,6 +128,20 @@ async def scene_review_page(request: Request, title_id: int):
 @router.post("/library/title/{title_id}/scan-scenes", response_class=HTMLResponse)
 async def scan_scenes(request: Request, title_id: int):
     await scene_job_queue.enqueue_scan_if_not_already_active(title_id)
+    return await _render_scene_review(request, title_id)
+
+
+@router.post("/library/title/{title_id}/reverify-scenes-claude", response_class=HTMLResponse)
+async def reverify_scenes_claude(request: Request, title_id: int):
+    """Manually re-runs the Claude Vision precision filter (see
+    app.scenes.pipeline.reverify_scenes_with_claude) against this title's existing
+    candidates -- for scenes scanned/auto-approved before claude_vision_verify_enabled
+    was turned on, which never got this check at scan time. The template only shows
+    the triggering button when the setting is on and there's at least one non-rejected
+    scene, but this endpoint doesn't re-check either -- enqueue_claude_verify_if_not_already_active
+    and reverify_scenes_with_claude both no-op harmlessly (an empty scene list, or an
+    unconfigured endpoint failing every candidate) if it's ever hit anyway."""
+    await scene_job_queue.enqueue_claude_verify_if_not_already_active(title_id)
     return await _render_scene_review(request, title_id)
 
 

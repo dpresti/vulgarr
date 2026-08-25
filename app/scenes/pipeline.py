@@ -47,6 +47,14 @@ class BlurOutcome:
     scene_count: int
 
 
+@dataclass(frozen=True)
+class ReverifyOutcome:
+    checked_count: int
+    approved_count: int
+    rejected_count: int
+    failed_count: int
+
+
 def _scan_fingerprint(video_path: Path, frame_interval_seconds: float, duration: float) -> str:
     """Guards a scan's resume checkpoint the same way _blur_job_fingerprint
     guards the blur pipeline's work_dir: frame timestamps in the checkpoint
@@ -493,3 +501,84 @@ async def apply_scene_blur(
     await session.commit()
 
     return BlurOutcome(output_path=final_path, scene_count=len(scenes))
+
+
+async def reverify_scenes_with_claude(
+    session: AsyncSession,
+    title: Title,
+    on_progress: ScanProgressCallback | None = None,
+) -> ReverifyOutcome:
+    """Re-runs the optional Claude Vision precision filter (app.vision.claude_verify)
+    against every currently pending/approved DetectedScene on this title, using
+    each scene's already-stored (and possibly hand-adjusted) start/end. The manual
+    counterpart to the same check scan_for_scenes runs automatically during a fresh
+    scan -- exists for the case that check's own settings docs warn about: scenes
+    scanned (and, with scene_auto_process on, auto-approved) *before*
+    claude_vision_verify_enabled was ever turned on never got this filter applied at
+    all, and there's no "undo" for an auto-approval already made short of a human
+    eyeballing every scene by hand.
+
+    Only scenes not already rejected are touched -- a rejected candidate already has
+    a verdict (human or Claude) and there's no upside to re-spending money confirming
+    it again. Every remaining candidate is re-scored regardless of verified_fraction
+    -- unlike a fresh scan, there's no claude_skip_above_fraction shortcut here, since
+    that exists purely to skip *paying* for scenes NudeNet's own dense re-scan
+    already trusted, which has no bearing on whether this manual recheck should run.
+
+    A definite YES/NO verdict sets status accordingly (approved/rejected), the same
+    semantics scan_for_scenes already uses -- an explicit Claude "no" is a considered
+    verdict, not an unknown. A failed/unreachable call leaves the scene's existing
+    status untouched (never downgrades an already-approved scene just because the
+    endpoint hiccuped) but still records the failure in claude_verify_reason so it's
+    visible which scenes still need an actual look.
+    """
+    claude_base_url = await get_setting(session, "claude_vision_base_url")
+    claude_api_key = await get_setting(session, "claude_vision_api_key")
+    claude_model = await get_setting(session, "claude_vision_model")
+
+    result = await session.execute(
+        select(DetectedScene)
+        .where(DetectedScene.title_id == title.id, DetectedScene.status != SceneReviewStatus.rejected)
+        .order_by(DetectedScene.start_seconds)
+    )
+    scenes = result.scalars().all()
+
+    approved_count = 0
+    rejected_count = 0
+    failed_count = 0
+    now = datetime.datetime.utcnow()
+    for i, scene in enumerate(scenes):
+        verify_result = await verify_candidate(
+            base_url=claude_base_url,
+            api_key=claude_api_key,
+            model=claude_model,
+            ffmpeg_bin=app_settings.ffmpeg_bin,
+            video_path=Path(title.video_path),
+            start=scene.start_seconds,
+            end=scene.end_seconds,
+        )
+        if verify_result is not None:
+            scene.mute_audio = verify_result.mute_audio
+            reason = f"{'YES' if verify_result.confirmed else 'NO'}: {verify_result.reason}".strip(": ")
+            if verify_result.mute_audio:
+                reason += " (sex scene -- audio muted)"
+            scene.claude_verify_reason = reason
+            scene.status = SceneReviewStatus.approved if verify_result.confirmed else SceneReviewStatus.rejected
+            scene.reviewed_at = now
+            if verify_result.confirmed:
+                approved_count += 1
+            else:
+                rejected_count += 1
+        else:
+            scene.claude_verify_reason = "Verification failed -- left for manual review"
+            failed_count += 1
+        await session.commit()
+        if on_progress is not None:
+            await on_progress(i + 1, len(scenes))
+
+    return ReverifyOutcome(
+        checked_count=len(scenes),
+        approved_count=approved_count,
+        rejected_count=rejected_count,
+        failed_count=failed_count,
+    )

@@ -73,6 +73,7 @@ class SceneReviewStatus(str, enum.Enum):
 class SceneJobKind(str, enum.Enum):
     scan = "scan"
     blur = "blur"
+    claude_verify = "claude_verify"
 
 
 def is_mkv_path(video_path: str) -> bool:
