@@ -413,6 +413,84 @@ async def _segment_file_starts_with_rasl(ffmpeg_bin: str, ts_path: Path) -> bool
     return _annexb_buf_has_rasl(buf)
 
 
+# How far an already-produced copy segment's true first-frame timestamp is
+# allowed to drift from the boundary plan_video_segments actually requested
+# before build_blurred_video's retry loop (comparing this function's return
+# value against the planned boundary) treats it as a bad cut -- generous
+# relative to normal sub-frame-interval seek jitter (a real frame is ~0.04s
+# at 24fps), but tight enough to catch the multi-second snaps a keyframe
+# mismatch produces. Real numbers seen directly on a real source: correct
+# cuts landed within ~0.02s of their plan; bad ones were consistently several
+# seconds to ~10s off.
+_BOUNDARY_DRIFT_TOLERANCE_SECONDS = 1.0
+
+
+async def _segment_actual_start_time(ffprobe_bin: str, ts_path: Path) -> float | None:
+    """Reads an already-produced copy segment's own true first video frame
+    timestamp -- the ground truth for where ffmpeg's segment muxer actually
+    cut, as opposed to where plan_video_segments requested (ts_path's file
+    name encodes which boundary that is). Same "read the produced file
+    itself, don't re-seek" reasoning as _segment_file_starts_with_rasl above:
+    an independent re-seek into the source gave inconsistent verdicts for the
+    same real timestamp across repeated runs.
+
+    Codec-agnostic, unlike the RASL check above (which only detects one
+    specific HEVC picture-type corruption) -- this instead catches the more
+    general case that check can't: the segment muxer's own keyframe-cut
+    decision landing on a different frame than plan_video_segments' keyframe
+    probe expected, for ANY codec. Confirmed directly against a real H.264
+    source (24000/1001fps, no HEVC involved at all): several cuts landed
+    multiple seconds away from their planned boundary, none of them anywhere
+    near a RASL-class issue, but all past this function's tolerance -- and
+    every one exactly matched a copy segment whose overall duration came out
+    wrong, which is what first surfaced this as a real (not theoretical) bug:
+    a whole-file Apply job failing verify_blurred_output's duration check by
+    tens of seconds despite the RASL check finding nothing, because that
+    check never runs for a non-HEVC source at all.
+
+    Returns None (never treated as bad -- see the caller's None-safe compare)
+    if the probe itself fails or the segment is unexpectedly empty; a boundary
+    this function can't evaluate shouldn't block on its own, since
+    verify_blurred_output's own whole-file duration check is still the real
+    safety net regardless of what this narrower per-boundary check concludes.
+    """
+    code, out, _err = await _run(
+        [
+            ffprobe_bin, "-v", "error", "-select_streams", "v:0",
+            "-show_entries", "frame=pts_time", "-read_intervals", "%+#1",
+            "-of", "csv=p=0", str(ts_path),
+        ],
+        timeout=30,
+    )
+    if code != 0:
+        return None
+    timestamps = _parse_keyframe_csv(out)
+    return timestamps[0] if timestamps else None
+
+
+async def _segment_actual_end_time(ffprobe_bin: str, ts_path: Path, actual_start: float) -> float | None:
+    """actual_start plus this segment's own real container duration -- the
+    ground truth for the OTHER boundary a copy segment touches (the cut
+    AFTER it, where the next re-encode segment is expected to pick up).
+    Checking only a copy segment's start (_segment_actual_start_time) misses
+    this side entirely, which is the more dangerous direction to get wrong:
+    a late real cut here means the copy segment eats into the front of the
+    next approved scene, and unlike the start-side case, the re-encode
+    segment right after it always covers its own exact planned window
+    regardless (accurate `-ss`/`-t` seek from the original source, see
+    _extract_reencode_segment) -- so a bad cut here isn't just wasted
+    duplicate footage the way a bad start-side cut is, it can leave the real
+    start of an approved scene sitting in the *unblurred* copy segment,
+    before the (correctly blurred, but now late) re-encode segment even
+    begins. Both directions have to be checked -- see build_blurred_video's
+    retry loop, which probes every copy segment's start AND end."""
+    probe_result = await probe(ffprobe_bin, ts_path)
+    duration = probe_result["format"].get("duration")
+    if duration is None:
+        return None
+    return actual_start + float(duration)
+
+
 async def _split_copy_segments(
     ffmpeg_bin: str,
     video_path: Path,
@@ -842,27 +920,67 @@ async def build_blurred_video(
                 boundaries = [s.end for s in segments[:-1]]
                 await _split_copy_segments(ffmpeg_bin, video_path, boundaries, tmp_root)
 
-            if video_codec in ("hevc", "h265") and len(segments) > 1:
+            if len(segments) > 1:
                 # Validate against the segments actually just produced, not a
                 # separate probe against the source -- an earlier version of
-                # this check seeked independently into the source file per
-                # candidate and got inconsistent verdicts for the same real
-                # timestamp across repeated runs (the same stream-copy seek
-                # imprecision _split_copy_segments's own docstring already
-                # documents for this class of source). Reading an
-                # already-cut segment's own true start has no seek step to
-                # be imprecise about.
-                for _attempt in range(10):
+                # the RASL check below seeked independently into the source
+                # file per candidate and got inconsistent verdicts for the
+                # same real timestamp across repeated runs (the same
+                # stream-copy seek imprecision _split_copy_segments's own
+                # docstring already documents for this class of source).
+                # Reading an already-cut segment's own true start has no seek
+                # step to be imprecise about -- same reasoning
+                # _segment_actual_start_time uses for the codec-agnostic
+                # check below.
+                #
+                # Two independent checks share this one retry loop/bad-
+                # boundary-exclusion mechanism: the RASL check (HEVC-only,
+                # a specific corrupt-reference-frame byte pattern) and the
+                # boundary-drift check (every codec, the segment muxer's own
+                # keyframe-cut decision landing somewhere plan_video_segments
+                # didn't expect -- see _segment_actual_start_time's docstring
+                # for the real H.264 case that surfaced this: no RASL
+                # anywhere, but several cuts several-to-ten seconds off their
+                # plan, silently duplicating/omitting footage across the
+                # copy/re-encode splice until verify_blurred_output's
+                # whole-file duration check caught it after the fact).
+                for _attempt in range(20):
                     bad_boundary = None
+                    bad_reason = ""
+                    confirmed_keyframe = None
                     for i, seg in enumerate(segments):
-                        if not seg.reencode and seg.start > 0.0:
-                            if await _segment_file_starts_with_rasl(ffmpeg_bin, tmp_root / f"copy_{i:04d}.mkv"):
-                                bad_boundary = seg.start
+                        if seg.reencode or seg.start >= seg.end:
+                            continue
+                        ts_path = tmp_root / f"copy_{i:04d}.mkv"
+                        if seg.start > 0.0 and video_codec in ("hevc", "h265") and await _segment_file_starts_with_rasl(ffmpeg_bin, ts_path):
+                            bad_boundary = seg.start
+                            bad_reason = "has a RASL picture following it"
+                            break
+                        actual_start = await _segment_actual_start_time(ffprobe_bin, ts_path)
+                        # Both boundaries this copy segment touches get checked, not just
+                        # its start -- a bad cut on the *end* side (where the next
+                        # re-encoded scene is supposed to pick up) is the more dangerous
+                        # direction to miss: see _segment_actual_end_time's docstring for
+                        # why that one can leave the real start of an approved scene
+                        # sitting unblurred, rather than just duplicated.
+                        if seg.start > 0.0 and actual_start is not None and abs(actual_start - seg.start) > _BOUNDARY_DRIFT_TOLERANCE_SECONDS:
+                            bad_boundary = seg.start
+                            bad_reason = f"actually cut at {actual_start:.3f}s"
+                            confirmed_keyframe = actual_start
+                            break
+                        if seg.end < total_duration and actual_start is not None:
+                            actual_end = await _segment_actual_end_time(ffprobe_bin, ts_path, actual_start)
+                            if actual_end is not None and abs(actual_end - seg.end) > _BOUNDARY_DRIFT_TOLERANCE_SECONDS:
+                                bad_boundary = seg.end
+                                bad_reason = f"actually cut at {actual_end:.3f}s"
+                                confirmed_keyframe = actual_end
                                 break
                     if bad_boundary is None:
                         break
-                    logger.info("Cut point %.3fs for %s has a RASL picture following it -- excluding and re-splitting", bad_boundary, video_path)
+                    logger.info("Cut point %.3fs for %s %s -- excluding and re-splitting", bad_boundary, video_path, bad_reason)
                     keyframe_timestamps = [t for t in keyframe_timestamps if abs(t - bad_boundary) > 1e-6]
+                    if confirmed_keyframe is not None:
+                        keyframe_timestamps.append(confirmed_keyframe)
                     segments = plan_video_segments(blur_intervals, keyframe_timestamps, total_duration)
                     # Old copy_*.mkv indices no longer correspond to the new
                     # plan's boundaries -- wipe and re-split rather than risk
@@ -877,7 +995,25 @@ async def build_blurred_video(
                         boundaries = [s.end for s in segments[:-1]]
                         await _split_copy_segments(ffmpeg_bin, video_path, boundaries, tmp_root)
                 else:
-                    logger.warning("Could not find an all-RASL-safe segment plan for %s after 10 attempts -- proceeding anyway", video_path)
+                    # Unlike the old HEVC-only version of this loop, which proceeded
+                    # anyway after exhausting attempts (a RASL miss is rare enough
+                    # that this was an acceptable bet, and verify_blurred_output
+                    # would still catch a real corruption via the stream-count/
+                    # decode checks even if the duration happened to still line up),
+                    # failing fast here instead: the boundary-drift case, generalized
+                    # to every codec, is a duration mismatch by construction, which
+                    # verify_blurred_output WILL catch regardless -- so "proceed
+                    # anyway" here only ever bought a guaranteed-wasted re-encode
+                    # pass (potentially the whole file's approved-scene set, tens of
+                    # minutes) before failing at the exact same check at the very end
+                    # instead. Raising immediately, before any of that expensive work
+                    # starts, reaches the same safe outcome (nothing ever gets
+                    # published) far faster.
+                    raise RemuxError(
+                        f"Could not find a reliable stream-copy cut point near {bad_boundary:.3f}s for {video_path} "
+                        f"after 20 attempts ({bad_reason}) -- this source likely has an unusually sparse or "
+                        f"irregular keyframe structure in that region"
+                    )
 
             reencode_segments = [s for s in segments if s.reencode]
             total_reencode_seconds = sum(s.duration for s in reencode_segments) or 1.0
