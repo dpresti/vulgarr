@@ -1,4 +1,10 @@
-from app.vision.scene_cluster import FrameScore, cluster_scenes, refine_scene_boundary, verified_fraction
+from app.vision.scene_cluster import (
+    FrameScore,
+    boundary_touches_window_edge,
+    cluster_scenes,
+    refine_scene_boundary,
+    verified_fraction,
+)
 
 
 def make_scores(pairs):
@@ -10,7 +16,6 @@ def cluster(scores, **kwargs):
     kwargs.setdefault("confidence_threshold", 0.5)
     kwargs.setdefault("frame_interval_seconds", 2.0)
     kwargs.setdefault("merge_gap_seconds", 1.0)
-    kwargs.setdefault("min_duration_seconds", 0.0)
     kwargs.setdefault("min_consecutive_frames", 2)
     return cluster_scenes(scores, **kwargs)
 
@@ -29,6 +34,34 @@ def test_single_isolated_hit_is_dropped_by_persistence_requirement():
     # classifier false-positive than a real scene -- shouldn't alone form a candidate.
     scores = make_scores([(0.0, 0.1), (2.0, 0.9), (4.0, 0.1)])
     assert cluster(scores) == []
+
+
+def test_single_isolated_hit_without_override_is_still_dropped():
+    # high_confidence_override defaults to None -- unset, behavior must be
+    # identical to the no-override persistence check above.
+    scores = make_scores([(0.0, 0.1), (2.0, 0.9), (4.0, 0.1)])
+    assert cluster(scores, high_confidence_override=None) == []
+
+
+def test_single_isolated_hit_below_override_is_dropped():
+    # Real confidence (0.9) clears the base 0.5 threshold used by these tests but
+    # not the higher override bar -- still filtered as ordinary single-frame noise.
+    scores = make_scores([(0.0, 0.1), (2.0, 0.9), (4.0, 0.1)])
+    assert cluster(scores, high_confidence_override=0.95) == []
+
+
+def test_single_isolated_hit_above_override_survives():
+    # A quick-cut flash narrower than the sample interval: exactly one sample
+    # above threshold, both neighbors low -- ordinarily dropped by the
+    # persistence-run check, but a confidence this high (0.95) is far more
+    # likely real signal than motion-blur/skin-tone noise, so it should still
+    # form a candidate collapsed to that single timestamp.
+    scores = make_scores([(0.0, 0.1), (2.0, 0.95), (4.0, 0.1)])
+    result = cluster(scores, high_confidence_override=0.9)
+    assert len(result) == 1
+    assert result[0].start == 2.0
+    assert result[0].end == 2.0
+    assert result[0].peak_confidence == 0.95
 
 
 def test_consecutive_hits_form_one_candidate():
@@ -77,10 +110,17 @@ def test_keeps_far_apart_runs_separate():
     assert len(result) == 2
 
 
-def test_drops_candidates_under_minimum_duration():
+def test_short_valid_run_is_not_dropped_for_duration():
+    # cluster_scenes deliberately doesn't enforce a minimum duration -- a short
+    # but genuinely persistence-validated run (real GoT S03E03 case: a 2-frame
+    # hit spanning exactly one frame_interval, nothing nearby to merge into)
+    # must still come back as a candidate; callers are responsible for padding
+    # it out to scene_min_duration_seconds after their own denser re-scan.
     scores = make_scores([(0.0, 0.9), (2.0, 0.9)])
-    result = cluster(scores, min_duration_seconds=10.0)
-    assert result == []
+    result = cluster(scores)
+    assert len(result) == 1
+    assert result[0].start == 0.0
+    assert result[0].end == 2.0
 
 
 def test_peak_confidence_is_max_across_merged_run():
@@ -152,3 +192,37 @@ def test_refine_scene_boundary_can_widen_into_padding():
 def test_refine_scene_boundary_single_hit_collapses_to_a_point():
     scores = make_scores([(0.0, 0.1), (2.5, 0.9), (5.0, 0.1)])
     assert refine_scene_boundary(scores, 0.5) == (2.5, 2.5)
+
+
+def test_boundary_touches_neither_edge():
+    # Boundary comfortably inside the search window on both sides -- no reason to
+    # suspect content continues past what was already searched.
+    touches_start, touches_end = boundary_touches_window_edge((10.0, 20.0), window_start=0.0, window_end=30.0, tolerance=0.5)
+    assert touches_start is False
+    assert touches_end is False
+
+
+def test_boundary_touches_start_edge():
+    touches_start, touches_end = boundary_touches_window_edge((0.2, 20.0), window_start=0.0, window_end=30.0, tolerance=0.5)
+    assert touches_start is True
+    assert touches_end is False
+
+
+def test_boundary_touches_end_edge():
+    touches_start, touches_end = boundary_touches_window_edge((10.0, 29.9), window_start=0.0, window_end=30.0, tolerance=0.5)
+    assert touches_start is False
+    assert touches_end is True
+
+
+def test_boundary_touches_both_edges():
+    touches_start, touches_end = boundary_touches_window_edge((0.0, 30.0), window_start=0.0, window_end=30.0, tolerance=0.5)
+    assert touches_start is True
+    assert touches_end is True
+
+
+def test_boundary_touching_is_exact_at_tolerance_boundary():
+    # Exactly at the tolerance -- inclusive, since a hit at precisely one frame
+    # interval from the edge is still an ordinary sampling-quantization case, not
+    # a sign of anything unusual.
+    touches_start, _ = boundary_touches_window_edge((0.5, 20.0), window_start=0.0, window_end=30.0, tolerance=0.5)
+    assert touches_start is True

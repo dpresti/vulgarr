@@ -24,7 +24,12 @@ from app.mux.remux import ProgressCallback, StageCallback, probe
 from app.mux.scene_blur import apply_blur
 from app.vision.claude_verify import top_score_timestamps, verify_candidate
 from app.vision.classifier import scan_video_frames, scan_window_frames
-from app.vision.scene_cluster import cluster_scenes, refine_scene_boundary, verified_fraction
+from app.vision.scene_cluster import (
+    boundary_touches_window_edge,
+    cluster_scenes,
+    refine_scene_boundary,
+    verified_fraction,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -52,6 +57,81 @@ def _scan_fingerprint(video_path: Path, frame_interval_seconds: float, duration:
     as fully stale and wiped instead."""
     payload = repr((str(video_path), frame_interval_seconds, round(duration, 1)))
     return hashlib.sha256(payload.encode()).hexdigest()[:16]
+
+
+async def _refine_candidate_boundary(
+    video_path: Path,
+    candidate_start: float,
+    candidate_end: float,
+    verify_pad: float,
+    verify_max_pad: float,
+    verify_interval: float,
+    confidence_threshold: float,
+    frame_concurrency: int,
+) -> tuple[float, float, float | None, list]:
+    """Dense re-scan of a candidate's padded window (app.vision.classifier.
+    scan_window_frames), doubling the pad outward -- up to verify_max_pad -- and
+    re-scanning whenever the refined boundary (app.vision.scene_cluster.
+    refine_scene_boundary) lands right at the edge of what was actually searched.
+
+    Exists because a boundary at the search window's own wall is indistinguishable
+    from "the scene genuinely ends here" only by coincidence (see
+    boundary_touches_window_edge's docstring) -- without this, a scene whose real
+    extent runs past the fixed verify_pad is silently clipped there every time,
+    which is exactly the "blur starts after nudity is already on screen / stops
+    before the scene ends" failure real usage reported (confirmed independently by
+    this app's own benchmark harness: mean boundary error of ~31s across a real
+    25-episode GoT sample, far more than a single fixed 5s pad could ever explain).
+
+    Returns (start, end, verified_fraction, last successful pass's window_scores).
+    verified_fraction and window_scores come from the *widest* pass that actually
+    ran, not necessarily the one whose boundary was kept -- there isn't a case
+    where a later pass finds a narrower real boundary than an earlier one already
+    did, since each pass only ever searches a superset of the previous pass's
+    window.
+
+    Falls back to the original coarse candidate boundary, unchanged, if the very
+    first pass fails outright or finds nothing above threshold -- same
+    fail-gracefully contract callers had before this function existed. A failure
+    on a *later* (expanded) pass instead keeps whatever the last successful pass
+    already found, rather than discarding it -- an expansion attempt failing
+    shouldn't cost the candidate a perfectly good narrower result it already had.
+    """
+    start, end, frac = candidate_start, candidate_end, None
+    window_scores: list = []
+    pad = verify_pad
+    while True:
+        try:
+            new_window_scores = await scan_window_frames(
+                video_path,
+                app_settings.ffmpeg_bin,
+                window_start=candidate_start,
+                window_end=candidate_end,
+                pad_seconds=pad,
+                frame_interval_seconds=verify_interval,
+                concurrency=frame_concurrency,
+            )
+        except Exception:
+            logger.warning(
+                "Scene verification pass failed for %s at %.1f-%.1fs (pad=%.1fs)",
+                video_path, candidate_start, candidate_end, pad, exc_info=True,
+            )
+            break
+        window_scores = new_window_scores
+        frac = verified_fraction(window_scores, confidence_threshold)
+        boundary = refine_scene_boundary(window_scores, confidence_threshold)
+        if boundary is None:
+            break
+        start, end = boundary
+        window_start = max(0.0, candidate_start - pad)
+        window_end = candidate_end + pad
+        touches_start, touches_end = boundary_touches_window_edge(
+            boundary, window_start, window_end, tolerance=verify_interval * 1.5
+        )
+        if (not touches_start and not touches_end) or pad >= verify_max_pad:
+            break
+        pad = min(pad * 2, verify_max_pad)
+    return start, end, frac, window_scores
 
 
 async def scan_for_scenes(
@@ -93,6 +173,8 @@ async def scan_for_scenes(
     frame_concurrency = int(await get_setting(session, "scene_frame_classify_concurrency"))
     verify_pad = float(await get_setting(session, "scene_verify_pad_seconds"))
     verify_interval = float(await get_setting(session, "scene_verify_frame_interval_seconds"))
+    verify_max_pad = float(await get_setting(session, "scene_verify_max_pad_seconds"))
+    high_confidence_override = float(await get_setting(session, "scene_high_confidence_single_frame_threshold"))
 
     video_path = Path(title.video_path)
     src_probe = await probe(app_settings.ffprobe_bin, video_path)
@@ -122,7 +204,7 @@ async def scan_for_scenes(
         confidence_threshold=confidence_threshold,
         frame_interval_seconds=frame_interval,
         merge_gap_seconds=merge_gap,
-        min_duration_seconds=min_duration,
+        high_confidence_override=high_confidence_override,
     )
 
     # Each candidate's dense re-scan drives two things from the same data: the
@@ -142,39 +224,24 @@ async def scan_for_scenes(
     if candidates and on_stage is not None:
         await on_stage(f"Verifying {len(candidates)} candidate scene(s)")
     for candidate in candidates:
-        start, end, frac = candidate.start, candidate.end, None
-        window_scores: list = []
-        try:
-            window_scores = await scan_window_frames(
-                video_path,
-                app_settings.ffmpeg_bin,
-                window_start=candidate.start,
-                window_end=candidate.end,
-                pad_seconds=verify_pad,
-                frame_interval_seconds=verify_interval,
-                concurrency=frame_concurrency,
-            )
-            frac = verified_fraction(window_scores, confidence_threshold)
-            boundary = refine_scene_boundary(window_scores, confidence_threshold)
-            if boundary is not None:
-                start, end = boundary
-                if end - start < min_duration:
-                    # A single (or tightly clustered) dense hit can refine to
-                    # a near-zero-width span -- expand symmetrically around
-                    # its midpoint rather than storing a degenerate scene
-                    # that's effectively invisible to both the blur filter
-                    # and the review UI's Start/End fields.
-                    mid = (start + end) / 2
-                    start, end = max(0.0, mid - min_duration / 2), mid + min_duration / 2
-        except Exception:
-            # A failed verification pass shouldn't fail the whole scan -- the
-            # candidate still gets reviewed manually (with its original coarse
-            # boundary), it just won't be eligible for the high-confidence
-            # bulk-approve shortcut.
-            logger.warning(
-                "Scene verification pass failed for %s at %.1f-%.1fs", video_path, candidate.start, candidate.end,
-                exc_info=True,
-            )
+        start, end, frac, window_scores = await _refine_candidate_boundary(
+            video_path,
+            candidate.start,
+            candidate.end,
+            verify_pad,
+            verify_max_pad,
+            verify_interval,
+            confidence_threshold,
+            frame_concurrency,
+        )
+        if end - start < min_duration:
+            # A single (or tightly clustered) dense hit can refine to a
+            # near-zero-width span -- expand symmetrically around its midpoint
+            # rather than storing a degenerate scene that's effectively
+            # invisible to both the blur filter and the review UI's Start/End
+            # fields.
+            mid = (start + end) / 2
+            start, end = max(0.0, mid - min_duration / 2), mid + min_duration / 2
         refined.append((start, end, frac))
         all_window_scores.append(window_scores)
 

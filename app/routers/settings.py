@@ -40,6 +40,7 @@ SETTING_KEYS = [
     "scene_verify_pad_seconds",
     "scene_verify_frame_interval_seconds",
     "scene_high_confidence_fraction",
+    "scene_high_confidence_single_frame_threshold",
     "blur_video_crf",
     "blur_video_preset",
     "scene_blur_radius",
@@ -109,6 +110,7 @@ async def update_settings(
     scene_verify_pad_seconds: float = Form(5.0),
     scene_verify_frame_interval_seconds: float = Form(0.1),
     scene_high_confidence_fraction: float = Form(0.5),
+    scene_high_confidence_single_frame_threshold: float = Form(0.6),
     blur_video_crf: int = Form(23),
     blur_video_preset: str = Form("medium"),
     scene_blur_level: int = Form(4),
@@ -170,6 +172,11 @@ async def update_settings(
         await set_setting(session, "scene_verify_pad_seconds", max(0.0, scene_verify_pad_seconds))
         await set_setting(session, "scene_verify_frame_interval_seconds", max(0.02, scene_verify_frame_interval_seconds))
         await set_setting(session, "scene_high_confidence_fraction", max(0.0, min(1.0, scene_high_confidence_fraction)))
+        await set_setting(
+            session,
+            "scene_high_confidence_single_frame_threshold",
+            max(0.0, min(1.0, scene_high_confidence_single_frame_threshold)),
+        )
         await set_setting(session, "blur_video_crf", max(0, min(51, blur_video_crf)))
         await set_setting(session, "blur_video_preset", blur_video_preset.strip() or "medium")
         radius, power = blur_level_to_radius_power(max(1, min(5, scene_blur_level)))

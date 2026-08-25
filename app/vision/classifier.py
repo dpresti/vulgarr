@@ -11,6 +11,7 @@ import json
 import logging
 import subprocess
 import tempfile
+import threading
 from pathlib import Path
 
 from app.vision.scene_cluster import FrameScore
@@ -32,13 +33,25 @@ _EXPLICIT_CLASSES = {
 }
 
 _bundle: dict = {}
+# classify_one (below) calls this from several concurrent asyncio.to_thread workers
+# (scene_frame_classify_concurrency) -- an unguarded check-then-set here would let
+# multiple threads race into constructing NudeDetector (and importing nudenet)
+# simultaneously the first time a scan runs after container startup. Reproduced
+# live for a sibling lazy-loader built the same unguarded way (a different model's
+# first-import machinery got corrupted under exactly this race, manifesting as
+# both a spurious ImportError and a bare SIGILL crash with no Python traceback) --
+# applying the same lock-guarded fix here defensively rather than waiting to
+# reproduce it against this specific model too.
+_load_lock = threading.Lock()
 
 
 def _get_detector():
     if "detector" not in _bundle:
-        from nudenet import NudeDetector
+        with _load_lock:
+            if "detector" not in _bundle:  # re-check: another thread may have won the race while we waited
+                from nudenet import NudeDetector
 
-        _bundle["detector"] = NudeDetector()
+                _bundle["detector"] = NudeDetector()
     return _bundle["detector"]
 
 

@@ -252,6 +252,14 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     # length, or a very rough ~15-25min for a 2-hour movie depending on scene
     # count (the per-candidate verification pass below adds a little more).
     "scene_frame_interval_seconds": 0.5,
+    # Not a candidate-rejection filter -- app.vision.scene_cluster.cluster_scenes
+    # deliberately never drops a real, persistence-validated coarse candidate for
+    # being short (confirmed against GoT S03E03 that doing so throws away
+    # genuine short detections with nothing nearby to merge into). This only
+    # pads a candidate's *refined* boundary (after its own denser per-candidate
+    # re-scan) out to this length around its center, if the real signal found
+    # there is even shorter -- avoids storing a near-zero-width scene that's
+    # effectively invisible to both the blur filter and the review UI.
     "scene_min_duration_seconds": 1.0,
     # Wider than the audio pipeline's cue-merge gap (0.25s) -- a visual scene
     # tolerates a brief cutaway shot without splitting into two separate candidates
@@ -284,6 +292,19 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     # positive (harmless: a few extra seconds blurred) -- much cheaper than
     # the false negative this was previously causing.
     "scene_merge_gap_seconds": 25.0,
+    # A run shorter than the min-consecutive-frames persistence check (see
+    # app.vision.scene_cluster.DEFAULT_MIN_CONSECUTIVE_FRAMES) still counts as a
+    # real candidate if its peak confidence clears this higher bar -- added after
+    # directly confirming, against GoT S06E07's 2151-2153 ground-truth window,
+    # that a genuine quick-cut flash (FEMALE_BREAST_EXPOSED=0.73 at a single
+    # sampled frame, both neighbors hard 0.0) was being discarded purely for
+    # being one sample wide, at every sampling density tried down to 0.25s --
+    # the flash itself is narrower than the grid, so denser sampling alone can't
+    # fix it. 0.6 sits comfortably above scene_confidence_threshold's 0.3 (and
+    # above the ~0-0.3 noise band single-frame spikes from motion blur/skin-toned
+    # lighting were observed at) while still catching confirmed real hits like
+    # the 0.73 case above.
+    "scene_high_confidence_single_frame_threshold": 0.6,
     "scene_scan_concurrency_cap": 1,
     # How many frames' extract+classify to run in flight at once *within* a
     # single scan -- distinct from scene_scan_concurrency_cap above, which caps
@@ -307,6 +328,23 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     # Whisper forced-alignment does for a subtitle cue, narrowing or widening
     # the coarse candidate to whatever this denser look actually finds.
     "scene_verify_pad_seconds": 5.0,
+    # Ceiling on how far scene_verify_pad_seconds can grow when app.scenes.
+    # pipeline._refine_candidate_boundary re-scans with a wider window because
+    # the refined boundary landed right at the edge of what was already searched
+    # (app.vision.scene_cluster.boundary_touches_window_edge) -- a real scene's
+    # true extent past the coarse candidate's own edges is exactly what a fixed
+    # 5s pad can silently clip, which is the "blur starts after nudity is
+    # already visible / stops before the scene ends" failure real usage
+    # reported. Not unbounded -- a false-positive edge-touch on a genuinely
+    # short/noisy candidate shouldn't be able to balloon into scanning tens of
+    # minutes of surrounding footage. 30s (6x the base pad, reached via at most
+    # 3 doublings: 5->10->20->30) is an initial estimate, not yet validated
+    # against the benchmark harness (docs/scene-detection.md) -- the harness's
+    # own S01E10 run measured boundary errors well past what the old fixed 5s
+    # pad could ever explain, so this exists to close that gap, but the exact
+    # ceiling value should be tuned against real recall/boundary-error numbers
+    # rather than trusted as-is.
+    "scene_verify_max_pad_seconds": 30.0,
     # Denser than the main scan's scene_frame_interval_seconds (0.5s default)
     # deliberately -- the whole point of this second pass is a finer-grained
     # look at a window we already know is interesting, not just a repeat of the
