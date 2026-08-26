@@ -1,8 +1,12 @@
-{% for show in shows %}
-  {% include "partials/poster_card_show.html" %}
-{% else %}
-  <p class="muted">No shows found.</p>
+{% for row in movie_rows %}
+  {% include "partials/poster_card.html" %}
 {% endfor %}
+{% for show in show_rows %}
+  {% include "partials/poster_card_show.html" %}
+{% endfor %}
+{% if not movie_rows and not show_rows %}
+  <p class="muted">No titles found.</p>
+{% endif %}
 {% if next_url %}
 <div class="load-more-sentinel" hx-get="{{ next_url }}" hx-trigger="revealed" hx-swap="outerHTML">
   <span class="spinner htmx-indicator" aria-hidden="true"></span>

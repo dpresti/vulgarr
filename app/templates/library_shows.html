@@ -5,15 +5,21 @@
   </div>
 
   <form method="get" action="/library/shows" class="search-bar">
-    <input type="text" name="q" placeholder="Search shows…" value="{{ q }}">
-    <button type="submit">Search</button>
-    {% if q %}<a href="/library/shows" class="btn-link small">Clear</a>{% endif %}
+    <input type="text" name="q" placeholder="Search shows…" value="{{ q }}"
+      hx-get="/library/shows" hx-trigger="input changed delay:400ms" hx-target="#show-results" hx-select="#show-results" hx-swap="outerHTML" hx-push-url="true">
+    <select name="show_sort"
+      hx-get="/library/shows" hx-trigger="change" hx-target="#show-results" hx-select="#show-results" hx-swap="outerHTML" hx-push-url="true">
+      <option value="name" {% if not show_sort or show_sort == 'name' %}selected{% endif %}>Name</option>
+      <option value="recent" {% if show_sort == 'recent' %}selected{% endif %}>Recently processed</option>
+    </select>
   </form>
 
   {% include "partials/pip_legend.html" %}
 
-  {% with shows=shows, next_url=next_url %}
-    {% include "partials/poster_grid_shows.html" %}
-  {% endwith %}
-  <p class="muted">{{ show_total }} show(s)</p>
+  <div id="show-results">
+    {% with shows=shows, next_url=next_url %}
+      {% include "partials/poster_grid_shows.html" %}
+    {% endwith %}
+    <p class="muted">{{ show_total }} show(s)</p>
+  </div>
 {% endblock %}

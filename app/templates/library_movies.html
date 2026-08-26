@@ -5,15 +5,21 @@
   </div>
 
   <form method="get" action="/library/movies" class="search-bar">
-    <input type="text" name="q" placeholder="Search movies…" value="{{ q }}">
-    <button type="submit">Search</button>
-    {% if q %}<a href="/library/movies" class="btn-link small">Clear</a>{% endif %}
+    <input type="text" name="q" placeholder="Search movies…" value="{{ q }}"
+      hx-get="/library/movies" hx-trigger="input changed delay:400ms" hx-target="#movie-results" hx-select="#movie-results" hx-swap="outerHTML" hx-push-url="true">
+    <select name="movie_sort"
+      hx-get="/library/movies" hx-trigger="change" hx-target="#movie-results" hx-select="#movie-results" hx-swap="outerHTML" hx-push-url="true">
+      <option value="name" {% if not movie_sort or movie_sort == 'name' %}selected{% endif %}>Name</option>
+      <option value="recent" {% if movie_sort == 'recent' %}selected{% endif %}>Recently processed</option>
+    </select>
   </form>
 
   {% include "partials/pip_legend.html" %}
 
-  {% with rows=movie_rows, next_url=next_url %}
-    {% include "partials/poster_grid.html" %}
-  {% endwith %}
-  <p class="muted">{{ movie_total }} title(s)</p>
+  <div id="movie-results">
+    {% with rows=movie_rows, next_url=next_url %}
+      {% include "partials/poster_grid.html" %}
+    {% endwith %}
+    <p class="muted">{{ movie_total }} title(s)</p>
+  </div>
 {% endblock %}

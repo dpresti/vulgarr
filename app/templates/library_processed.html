@@ -3,22 +3,23 @@
   <div class="toolbar">
     <h1>Library</h1>
   </div>
-  <p class="muted" style="margin-top: -0.5rem;">Every fully-processed title (movies and episodes). See the full library regardless of status:</p>
-  <p style="margin: 0.5rem 0 1rem; display: flex; gap: 0.5rem;">
-    <a class="btn-link small" href="/library/movies"><i class="ti ti-movie" aria-hidden="true"></i>Movies</a>
-    <a class="btn-link small" href="/library/shows"><i class="ti ti-device-tv" aria-hidden="true"></i>TV Shows</a>
-  </p>
 
   <form method="get" action="/library" class="search-bar">
-    <input type="text" name="q" placeholder="Search processed titles…" value="{{ q }}">
-    <button type="submit">Search</button>
-    {% if q %}<a href="/library" class="btn-link small">Clear</a>{% endif %}
+    <input type="text" name="q" placeholder="Search processed titles…" value="{{ q }}"
+      hx-get="/library" hx-trigger="input changed delay:400ms" hx-target="#movie-results" hx-select="#movie-results" hx-swap="outerHTML" hx-push-url="true">
+    <select name="sort"
+      hx-get="/library" hx-trigger="change" hx-target="#movie-results" hx-select="#movie-results" hx-swap="outerHTML" hx-push-url="true">
+      <option value="name" {% if not sort or sort == 'name' %}selected{% endif %}>Name</option>
+      <option value="recent" {% if sort == 'recent' %}selected{% endif %}>Recently processed</option>
+    </select>
   </form>
 
   {% include "partials/pip_legend.html" %}
 
-  {% with rows=movie_rows, from_page='library', next_url=next_url %}
-    {% include "partials/poster_grid.html" %}
-  {% endwith %}
-  <p class="muted">{{ movie_total }} title(s)</p>
+  <div id="movie-results">
+    {% with movie_rows=movie_rows, show_rows=show_rows, from_page='library', next_url=next_url %}
+      {% include "partials/poster_grid_library.html" %}
+    {% endwith %}
+    <p class="muted">{{ movie_total }} item(s)</p>
+  </div>
 {% endblock %}
