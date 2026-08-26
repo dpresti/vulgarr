@@ -25,7 +25,7 @@ services:
       # reprocess needs to move/swap the file in place same as production does.
       # Replace the host-side paths below with your own media mounts.
       - /path/to/your/media:/plex
-      - /path/to/second/media/root:/path/to/second/media/root
+      - /path/to/second/media/root:/yountnfs
       # Bind-mounted (not COPYed by the Dockerfile) so the scene-detection benchmark
       # harness's fixtures/scripts can be edited and re-run without a rebuild --
       # dev-only, not part of the production image.
