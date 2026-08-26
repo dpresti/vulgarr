@@ -4,136 +4,66 @@
   <p class="muted" style="color: var(--vulgarr-outdated-text);">Couldn't cancel: {{ cancel_error }}</p>
   {% endif %}
 
-  <h3>Active</h3>
+  <h3>In Progress</h3>
   <div class="table-scroll responsive-table">
   <table class="card-grid card-grid-lead">
-    <thead><tr><th>Title</th><th>State</th><th>Trigger</th><th>Progress</th><th></th></tr></thead>
+    <thead><tr><th>Title</th><th>Type</th><th>State</th><th>Progress</th><th></th></tr></thead>
     <tbody>
-      {% for job in active %}
+      {% for row in in_progress %}
       <tr>
-        <td data-label="Title"><a class="title-link" href="{{ title_href(job.title) }}">{{ job.title.display_name }}</a></td>
-        <td data-label="State"><span class="badge badge-{{ job.state.value }}">{{ job.state.value }}</span></td>
-        <td data-label="Trigger" class="muted">{{ job.trigger_source.value }}</td>
-        <td data-label="Progress" class="muted">
-          {% if job.progress_percent is not none %}
-            <progress value="{{ job.progress_percent }}" max="100" style="width: 140px; vertical-align: middle;"></progress>
+        <td data-label="Title"><a class="title-link" href="{{ title_href(row.title) }}">{{ row.title.display_name }}</a></td>
+        <td data-label="Type" class="muted">{{ row.kind_label }} &middot; {{ row.detail }}</td>
+        <td data-label="State">
+          {% if row.waiting_status %}
+            <span class="badge badge-awaiting_mkv">{{ 'awaiting .mkv' if row.waiting_status == 'awaiting_mkv' else 'awaiting subtitle' }}</span>
+          {% else %}
+            <span class="badge badge-{{ row.state.value }}">{{ row.state.value }}</span>
           {% endif %}
-          {{ job.progress_message or '—' }}
+        </td>
+        <td data-label="Progress" class="muted">
+          {% if row.waiting_status %}
+            not counted against the concurrency limit
+          {% else %}
+            {% if row.progress_percent is not none %}
+              <div class="job-progress" style="display: inline-block; vertical-align: middle;"><div class="job-progress-fill" style="width: {{ row.progress_percent }}%"></div></div>
+            {% endif %}
+            {{ row.progress_message or '—' }}
+          {% endif %}
         </td>
         <td data-label="">
-          {% if job.state.value == 'queued' or (job.progress_percent or 0) < 97 %}
+          {% if row.cancel_url and (row.state.value == 'queued' or (row.progress_percent or 0) < 97) %}
           <button
             class="small secondary"
-            hx-post="/queue/{{ job.id }}/cancel"
+            hx-post="{{ row.cancel_url }}"
             hx-target="#queue-content"
             hx-swap="outerHTML"
-            hx-confirm="Cancel processing {{ job.title.display_name }}?"
+            hx-confirm="Cancel {{ 'scanning' if row.kind_label == 'Scene' else 'processing' }} {{ row.title.display_name }}?"
           >Cancel</button>
           {% endif %}
         </td>
       </tr>
       {% else %}
-      <tr><td colspan="5" class="muted">Nothing queued or processing.</td></tr>
+      <tr><td colspan="5" class="muted">Nothing in progress.</td></tr>
       {% endfor %}
     </tbody>
   </table>
   </div>
 
-  <h3>Waiting on Sonarr/Radarr/Bazarr</h3>
-  <p class="muted">Not counted against the concurrency limit -- no ffmpeg work is happening yet.</p>
-  <div class="table-scroll responsive-table">
-  <table class="card-grid card-grid-lead">
-    <thead><tr><th>Title</th><th>Status</th><th>Since</th></tr></thead>
-    <tbody>
-      {% for title in waiting %}
-      <tr>
-        <td data-label="Title"><a class="title-link" href="{{ title_href(title) }}">{{ title.display_name }}</a></td>
-        <td data-label="Status">
-          {% if title.status == 'awaiting_mkv' %}
-            <span class="badge badge-awaiting_mkv">awaiting .mkv</span>
-          {% else %}
-            <span class="badge badge-awaiting_mkv">awaiting subtitle</span>
-          {% endif %}
-        </td>
-        <td data-label="Since" class="muted">{{ title.replacement_requested_at.strftime('%Y-%m-%d %H:%M') if title.replacement_requested_at else '—' }}</td>
-      </tr>
-      {% else %}
-      <tr><td colspan="3" class="muted">Nothing waiting.</td></tr>
-      {% endfor %}
-    </tbody>
-  </table>
-  </div>
-
-  <h3>Recent</h3>
+  <h3>Completed</h3>
   <div class="table-scroll responsive-table">
   <table class="card-grid">
-    <thead><tr><th>Title</th><th>State</th><th>Trigger</th><th>Duration</th><th>Result</th></tr></thead>
+    <thead><tr><th>Title</th><th>Type</th><th>State</th><th>Duration</th><th>Result</th></tr></thead>
     <tbody>
-      {% for job in recent %}
+      {% for row in completed %}
       <tr>
-        <td data-label="Title"><a class="title-link" href="{{ title_href(job.title) }}">{{ job.title.display_name }}</a></td>
-        <td data-label="State"><span class="badge badge-{{ job.state.value }}">{{ job.state.value }}</span></td>
-        <td data-label="Trigger" class="muted">{{ job.trigger_source.value }}</td>
-        <td data-label="Duration" class="muted">{{ format_duration((job.finished_at - job.started_at).total_seconds()) if job.started_at and job.finished_at else '—' }}</td>
-        <td data-label="Result" class="muted">{{ job.error or job.progress_message or '—' }}</td>
+        <td data-label="Title"><a class="title-link" href="{{ title_href(row.title) }}">{{ row.title.display_name }}</a></td>
+        <td data-label="Type" class="muted">{{ row.kind_label }} &middot; {{ row.detail }}</td>
+        <td data-label="State"><span class="badge badge-{{ row.state.value }}">{{ row.state.value }}</span></td>
+        <td data-label="Duration" class="muted">{{ format_duration((row.finished_at - row.started_at).total_seconds()) if row.started_at and row.finished_at else '—' }}</td>
+        <td data-label="Result" class="muted result-cell" title="{{ row.error or row.progress_message or '' }}">{{ row.error or row.progress_message or '—' }}</td>
       </tr>
       {% else %}
       <tr><td colspan="5" class="muted">No jobs run yet.</td></tr>
-      {% endfor %}
-    </tbody>
-  </table>
-  </div>
-
-  <h3 style="margin-top: 1.5rem;">Scene detection</h3>
-  <p><strong>Scanning {{ scene_running }} of {{ scene_total_active }}</strong> {% if scene_total_active == 0 %}<span class="muted">— nothing scanning</span>{% endif %}</p>
-  <div class="table-scroll responsive-table">
-  <table class="card-grid card-grid-lead">
-    <thead><tr><th>Title</th><th>State</th><th>Kind</th><th>Progress</th><th></th></tr></thead>
-    <tbody>
-      {% for job in scene_active %}
-      <tr>
-        <td data-label="Title"><a class="title-link" href="{{ title_href(job.title) }}">{{ job.title.display_name }}</a></td>
-        <td data-label="State"><span class="badge badge-{{ job.state.value }}">{{ job.state.value }}</span></td>
-        <td data-label="Kind" class="muted">{{ job.kind.value }}</td>
-        <td data-label="Progress" class="muted">
-          {% if job.progress_percent is not none %}
-            <progress value="{{ job.progress_percent }}" max="100" style="width: 140px; vertical-align: middle;"></progress>
-          {% endif %}
-          {{ job.progress_message or '—' }}
-        </td>
-        <td data-label="">
-          {% if job.state.value == 'queued' or (job.progress_percent or 0) < 97 %}
-          <button
-            class="small secondary"
-            hx-post="/scene-jobs/{{ job.id }}/cancel"
-            hx-target="#queue-content"
-            hx-swap="outerHTML"
-            hx-confirm="Cancel scanning {{ job.title.display_name }}?"
-          >Cancel</button>
-          {% endif %}
-        </td>
-      </tr>
-      {% else %}
-      <tr><td colspan="5" class="muted">Nothing scanning.</td></tr>
-      {% endfor %}
-    </tbody>
-  </table>
-  </div>
-
-  <div class="table-scroll responsive-table">
-  <table class="card-grid">
-    <thead><tr><th>Title</th><th>State</th><th>Kind</th><th>Duration</th><th>Result</th></tr></thead>
-    <tbody>
-      {% for job in scene_recent %}
-      <tr>
-        <td data-label="Title"><a class="title-link" href="{{ title_href(job.title) }}">{{ job.title.display_name }}</a></td>
-        <td data-label="State"><span class="badge badge-{{ job.state.value }}">{{ job.state.value }}</span></td>
-        <td data-label="Kind" class="muted">{{ job.kind.value }}</td>
-        <td data-label="Duration" class="muted">{{ format_duration((job.finished_at - job.started_at).total_seconds()) if job.started_at and job.finished_at else '—' }}</td>
-        <td data-label="Result" class="muted">{{ job.error or job.progress_message or '—' }}</td>
-      </tr>
-      {% else %}
-      <tr><td colspan="5" class="muted">No scans run yet.</td></tr>
       {% endfor %}
     </tbody>
   </table>

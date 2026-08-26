@@ -29,7 +29,7 @@
         </form>
       </td>
       <td data-label="Enabled">
-        <form hx-post="/wordlist/{{ entry.id }}/toggle" hx-target="#wordlist-table" hx-swap="outerHTML">
+        <form class="inline" hx-post="/wordlist/{{ entry.id }}/toggle" hx-target="#wordlist-table" hx-swap="outerHTML">
           <button type="submit" class="{{ 'secondary' if entry.enabled else '' }}">
             {{ 'enabled' if entry.enabled else 'disabled' }}
           </button>
@@ -37,7 +37,7 @@
         </form>
       </td>
       <td data-label="">
-        <form hx-post="/wordlist/{{ entry.id }}/delete" hx-target="#wordlist-table" hx-swap="outerHTML" hx-confirm="Remove '{{ entry.term }}' from the word list?">
+        <form class="inline" hx-post="/wordlist/{{ entry.id }}/delete" hx-target="#wordlist-table" hx-swap="outerHTML" hx-confirm="Remove '{{ entry.term }}' from the word list?">
           <button type="submit" class="danger" title="Delete"><i class="ti ti-trash" aria-hidden="true"></i><span class="btn-label">Delete</span></button>
           {{ state_fields() }}
         </form>
