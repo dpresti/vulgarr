@@ -118,15 +118,27 @@
     /* Desktop keeps the real separate stat columns; mobile folds them into one
        summary line instead (see .card-grid td.stat-cell-hide-mobile). */
     .mobile-only-summary { display: none; }
+    /* Status/Subtitle/Muted-cues condensed onto one line on mobile (see the
+       mobile-only-summary <td> that uses this) -- label-above-value per field,
+       like the desktop table's own column headers, instead of the inline
+       label-before-value pattern (which needs more horizontal room than three
+       fields sharing one row leaves each of them). */
+    .row-stats { display: flex; justify-content: space-between; gap: 0.75rem; }
+    .row-stat { display: flex; flex-direction: column; gap: 0.2rem; }
+    .row-stat-label { font-size: 0.66rem; text-transform: uppercase; letter-spacing: 0.03em; color: var(--vulgarr-text-secondary); font-weight: 700; white-space: nowrap; }
     table { width: 100%; border-collapse: collapse; margin-top: 1rem; }
     th, td { text-align: left; padding: 0.45rem 0.75rem; border-bottom: 1px solid var(--vulgarr-border); vertical-align: middle; }
     th { color: var(--vulgarr-text-secondary); font-size: 0.85rem; text-transform: uppercase; }
     th a { color: inherit; text-decoration: none; }
     th a:hover { color: var(--vulgarr-accent); }
+    /* Job error text can be a raw multi-line ffmpeg dump -- clip it to one line
+       with the full text still available via the native title tooltip, instead
+       of letting one failed row blow the table out to several screens tall. */
+    .result-cell { max-width: 420px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .title-link { color: var(--vulgarr-text-primary); text-decoration: none; font-weight: 600; }
     .title-link:hover { color: var(--vulgarr-accent); }
     tbody tr:hover { background: var(--vulgarr-bg-row-hover); }
-    .badge { display: inline-block; padding: 0.15rem 0.5rem; border-radius: 999px; font-size: 0.75rem; font-weight: 600; }
+    .badge { display: inline-block; padding: 0.15rem 0.5rem; border-radius: 999px; font-size: 0.75rem; font-weight: 600; white-space: nowrap; }
     .badge-done { background: var(--vulgarr-success-bg); color: var(--vulgarr-success-text); }
     .badge-processing { background: var(--vulgarr-warning-bg); color: var(--vulgarr-warning-text); }
     .badge-queued { background: var(--vulgarr-info-bg); color: var(--vulgarr-info-text); }
@@ -140,25 +152,59 @@
     .badge-scenes_pending_review { background: var(--vulgarr-scenereview-bg); color: var(--vulgarr-scenereview-text); }
     .badge-child { background: var(--vulgarr-info-bg); color: var(--vulgarr-info-text); }
     .badge-teen { background: var(--vulgarr-danger-bg); color: var(--vulgarr-danger-text); }
-    progress { accent-color: var(--vulgarr-accent); background: var(--vulgarr-border); border-radius: 4px; height: 0.6rem; }
+    /* Custom div-based progress bar (rather than the native <progress> element)
+       so it's a flat rounded pill matching badges/stat-pills/buttons everywhere
+       else, instead of each browser's own inconsistent (often inset/bordered)
+       native rendering. */
+    .job-progress { width: 140px; height: 6px; border-radius: 999px; background: var(--vulgarr-border); overflow: hidden; flex-shrink: 0; }
+    .job-progress-fill { height: 100%; background: var(--vulgarr-accent); border-radius: 999px; }
     button, input[type=submit] { background: var(--vulgarr-accent); color: white; border: none; padding: 0.4rem 0.9rem; border-radius: 6px; cursor: pointer; font-weight: 600; font-size: 0.9rem; }
     button:hover { background: var(--vulgarr-accent-hover); }
     button.secondary { background: var(--vulgarr-bg-elevated); }
     button.secondary:hover { background: var(--vulgarr-border); }
     button.danger { background: var(--vulgarr-danger-solid); }
     button.small { padding: 0.2rem 0.6rem; font-size: 0.78rem; font-weight: 500; }
-    input[type=text], input[type=time], input[type=number], select { background: var(--vulgarr-bg-surface); border: 1px solid var(--vulgarr-border); color: var(--vulgarr-text-primary); padding: 0.4rem; border-radius: 6px; }
+    input[type=text], input[type=time], input[type=number], input[type=password], select { background: var(--vulgarr-bg-surface); border: 1px solid var(--vulgarr-border); color: var(--vulgarr-text-primary); padding: 0.4rem; border-radius: 6px; }
     input:focus, select:focus, button:focus-visible { outline: none; box-shadow: 0 0 0 3px var(--vulgarr-accent-glow); }
     input.input-invalid { border-color: var(--vulgarr-danger-text); }
     .field-error { color: var(--vulgarr-danger-text); font-size: 0.85rem; margin-top: 0.2rem; }
     form.inline { display: inline-flex; gap: 0.4rem; align-items: center; }
     .toolbar { display: flex; justify-content: space-between; align-items: center; }
+    /* Word List's version text + reprocess button: a compact right-aligned
+       column so they stay grouped beside the h1 instead of each spanning the
+       full toolbar width on their own line. */
+    .toolbar-side { display: flex; flex-direction: column; align-items: flex-end; gap: 0.35rem; margin-left: auto; }
     .muted { color: var(--vulgarr-text-secondary); font-size: 0.85rem; }
-    .settings-grid { display: grid; grid-template-columns: 320px 1fr; gap: 0.75rem 1.5rem; align-items: center; max-width: 640px; }
+    .settings-grid { display: grid; grid-template-columns: 320px 1fr; gap: 0.75rem 1.5rem; align-items: start; max-width: 640px; }
+    /* A bare checkbox (no wrapping <div>/<label> around it) is a direct grid item,
+       so it inherits the grid's default justify-items:stretch and renders as a
+       336px-wide box instead of its natural small size -- every other checkbox on
+       this page is already wrapped and unaffected, this just matches them. */
+    .settings-grid input[type=checkbox] { justify-self: start; margin-top: 0.3rem; }
+    /* Standalone toggle settings (off-hours, auth, auto-process...) read oddly
+       as a label on its own line above a lone checkbox, especially once the grid
+       collapses to one column on mobile -- span the full row instead and put the
+       checkbox inline with its own label text, same convention as the word-list
+       "whole word" checkbox elsewhere in the app. */
+    .settings-grid .checkbox-row, .settings-grid .checkbox-row-group { grid-column: 1 / -1; }
+    .settings-grid .checkbox-row { display: flex; align-items: center; gap: 0.5rem; }
+    .settings-grid .checkbox-row input[type=checkbox] { margin-top: 0; }
+    .settings-grid .checkbox-row-group .checkbox-row { margin-bottom: 0.35rem; }
+    /* Advanced settings fields: hidden until #settings-form gets the
+       show-advanced class (toggled by the button at the top of the form,
+       state remembered in localStorage -- see settings_form.html). */
+    .settings-grid .adv { display: none; }
+    #settings-form.show-advanced .settings-grid .adv { display: block; }
     .wide-input { min-width: 320px; }
     .input-md { width: 200px; }
     .input-sm { width: 100px; }
     .input-precise { width: 150px; }
+    /* Same width as .input-precise but deliberately NOT in the mobile
+       width:100% override group below -- for inline contexts (like the season
+       header's "whole season" controls) that need to stay compact and share a
+       line with a neighbor on mobile, rather than claim the full row like the
+       per-episode table's own precise-mode dropdown correctly does. */
+    .input-precise-inline { width: 150px; flex-shrink: 0; }
     .secret-field { position: relative; display: inline-block; }
     .secret-field input { padding-right: 2.3rem; }
     .secret-field .eye-toggle {
@@ -167,11 +213,19 @@
       padding: 4px 6px; font-size: 1rem; cursor: pointer;
     }
     .secret-field .eye-toggle:hover { color: var(--vulgarr-text-primary); background: none; }
-    .severity-checks { display: inline-flex; gap: 0.75rem; }
+    .severity-checks { display: inline-flex; gap: 0.75rem; flex-wrap: wrap; }
     .severity-checks label { font-size: 0.85rem; color: var(--vulgarr-text-secondary); white-space: nowrap; }
     .scene-thumb { width: 120px; aspect-ratio: 16 / 9; object-fit: cover; border-radius: 6px; background: var(--vulgarr-bg-elevated); border: 1px solid var(--vulgarr-border); flex-shrink: 0; }
     .scene-preview video { width: 100%; max-width: 480px; border-radius: 6px; display: block; }
-    .row-actions { display: flex; align-items: center; gap: 0.5rem; }
+    .scene-review-badges, .scene-review-adjust, .scene-review-buttons { display: flex; align-items: center; gap: 0.75rem; flex-wrap: wrap; }
+    .stat-pill {
+      display: inline-flex; align-items: center; gap: 4px;
+      background: var(--vulgarr-bg-elevated); border: 1px solid var(--vulgarr-border);
+      color: var(--vulgarr-text-secondary); padding: 0.15rem 0.55rem; border-radius: 999px;
+      font-size: 0.75rem; font-weight: 600; white-space: nowrap;
+    }
+    .stat-pill i { font-size: 0.9rem; }
+    .row-actions { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; }
     details { margin-top: 1.5rem; }
     details:first-of-type { margin-top: 0; }
     summary { cursor: pointer; padding: 0.4rem 0; }
@@ -184,7 +238,7 @@
     }
     .topbar-job:hover { background: var(--vulgarr-bg-row-hover); }
     .topbar-job-title { font-weight: 600; white-space: nowrap; }
-    .topbar-job progress { width: 120px; }
+    .topbar-job .job-progress { width: 120px; }
     .topbar-job-pct { color: var(--vulgarr-text-secondary); width: 2.5em; }
     .topbar-job-msg { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
@@ -232,10 +286,11 @@
     .detail-poster { width: 140px; aspect-ratio: 2/3; border-radius: 8px; object-fit: cover; box-shadow: 0 12px 30px rgba(0,0,0,.5); border: 1px solid var(--vulgarr-border); flex-shrink: 0; }
     .detail-heading h1 { margin: 0 0 0.5rem; font-size: 1.6rem; text-wrap: balance; }
     .detail-badges { display: flex; gap: 0.5rem; flex-wrap: wrap; }
+    .job-status { display: flex; align-items: center; gap: 0.6rem; flex-wrap: wrap; margin-top: 0.6rem; }
+    .job-status-msg { color: var(--vulgarr-text-secondary); font-size: 0.82rem; }
     .detail-body { position: relative; padding: 1.5rem 1.75rem 1.75rem; }
-    .detail-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem; max-width: 720px; }
     .detail-columns { display: flex; gap: 2.5rem; flex-wrap: wrap; }
-    .detail-column { min-width: 200px; }
+    .detail-column { min-width: 200px; flex: 1 1 0; }
     .detail-column-heading { font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.08em; color: var(--vulgarr-accent); font-weight: 700; margin: 0 0 0.9rem; }
     .detail-section { margin-bottom: 1.4rem; }
     .detail-label { font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--vulgarr-text-secondary); font-weight: 700; margin-bottom: 0.5rem; }
@@ -249,9 +304,36 @@
 
     @media (max-width: 720px) {
       .poster-grid { grid-template-columns: repeat(auto-fill, minmax(112px, 1fr)); gap: 1rem 0.7rem; }
-      .detail-grid { grid-template-columns: 1fr; }
-      .detail-header { padding: 1.25rem; }
+      .detail-header { padding: 1.25rem; align-items: flex-start; }
       .detail-poster { width: 100px; }
+      /* Keeps the title/badge column beside the poster (same reasoning as the
+         scene-review-row reflow below: default min-width:auto on a flex item
+         refuses to shrink below its content's natural width) while the Process
+         buttons break out onto their own full-width row underneath both --
+         .detail-heading dissolving via display:contents promotes .detail-title-group
+         and .detail-actions to be direct flex items of .detail-header, alongside
+         .detail-poster, the same technique .scene-review-body already uses. */
+      .detail-heading { display: contents; }
+      .detail-title-group { min-width: 0; flex: 1 1 0; }
+      .detail-actions { flex-basis: 100%; margin-top: 0.5rem; gap: 0.5rem; flex-wrap: nowrap; }
+      .detail-actions form { flex: 1 1 0; min-width: 0; }
+      .detail-actions button { width: 100%; font-size: 0.74rem; padding: 0.4rem 0.3rem; white-space: normal; }
+      .detail-body { padding: 1.25rem; }
+      .detail-columns { gap: 1rem; }
+      .detail-column { min-width: 0; flex: 1 1 0; }
+
+      /* ---- mobile: scene review row reflow -- .scene-review-body dissolving via
+         display:contents promotes its children to be direct flex items of
+         .scene-review-row (alongside .scene-thumb), so badges can sit beside the
+         thumbnail while the rest each force their own full-width line below.
+         Desktop never applies this, so its box structure is untouched. ---- */
+      .scene-review-body { display: contents; }
+      .scene-review-badges { flex: 1 1 0; min-width: 0; }
+      .stat-pill-label { display: none; }
+      .stat-pill { padding: 0.15rem 0.45rem; }
+      .scene-preview, .scene-review-claude,
+      .scene-review-adjust, .scene-review-buttons { flex-basis: 100%; }
+      .scene-review-adjust .input-sm { width: 76px; }
 
       /* ---- mobile: sidebar becomes an icon-only top bar ---- */
       .app-layout { flex-direction: column; }
@@ -287,15 +369,26 @@
          everything) -- no responsive rule can shrink an inline style, so this
          only works because those are all a real .wide-input/.input-* class now. */
       .wide-input, .input-md, .input-sm, .input-precise { width: 100%; max-width: 100%; min-width: 0; box-sizing: border-box; }
+      /* Same "full-width so everything after it wraps as one clean group below"
+         effect as .wide-input, but with no desktop-side min-width -- for inputs
+         that should stay their small native size on desktop (e.g. Word List's
+         Add-term/Search boxes, already fine on one line there) and only expand
+         on mobile, where the untouched native size was the cause of the clutter. */
+      .mobile-wide { width: 100%; max-width: 100%; box-sizing: border-box; }
+      .job-progress { width: 100%; max-width: 100%; }
 
       /* ---- mobile: stack label/input pairs instead of a fixed 320px column ---- */
       .settings-grid { grid-template-columns: 1fr; max-width: 100%; }
       .settings-grid > label { margin-top: 0.5rem; }
-      .settings-grid input[type=text], .settings-grid input[type=password], .settings-grid input[type=number],
+      .settings-grid input[type=text], .settings-grid input[type=password],
       .settings-grid .secret-field {
         width: 100%; max-width: 100%; min-width: 0; box-sizing: border-box;
       }
       .settings-grid .secret-field input { width: 100%; box-sizing: border-box; }
+      /* Short numeric tuning fields (thresholds, seconds, day counts...) don't
+         need to stretch edge-to-edge just because the grid went to one column --
+         same idea as .scene-review-adjust .input-sm below, scoped here instead. */
+      .settings-grid input[type=number], .settings-grid .input-sm { width: 100px; max-width: 100px; }
 
       /* ---- mobile: page headers and the queue topbar wrap instead of overflowing ---- */
       .toolbar { flex-wrap: wrap; gap: 0.5rem; }
@@ -375,7 +468,19 @@
         flex: 1; min-width: 0; font-weight: 600;
         overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
       }
-      .responsive-table .card-row .severity-checks { gap: 0.4rem; font-size: 0.78rem; white-space: nowrap; }
+      /* display:block + flex-basis:auto resolves like an ordinary block's
+         width:auto -- fill the available space -- not shrink-to-fit, so
+         without this every one of these cells expands to claim the entire
+         remaining row width (all identical, each ~the full row), leaving
+         Term's flex:1 above with nothing. width:max-content forces genuine
+         shrink-wrap sizing; flex-shrink:0 stops them being squashed again
+         once they're finally sized to their real (small) content. */
+      .responsive-table .card-row td:not(:first-child) { flex-shrink: 0; width: max-content; }
+      /* flex-shrink:0 keeps this from collapsing the Term column to 0 width --
+         flex-wrap:nowrap keeps child/teen on one line, matching this row's
+         already-compact design (unlike the season header's severity control,
+         which needs to wrap since it has no fixed-width sibling forcing it). */
+      .responsive-table .card-row .severity-checks { gap: 0.4rem; font-size: 0.78rem; white-space: nowrap; flex-wrap: nowrap; flex-shrink: 0; }
       .responsive-table .card-row button { padding: 0.28rem 0.5rem; font-size: 0.78rem; white-space: nowrap; }
       .responsive-table .card-row button i { font-size: 0.95rem; }
       .responsive-table .card-row .btn-label { display: none; }
@@ -425,6 +530,32 @@
         for (let i = idx; i < boxes.length; i++) if (boxes[i]) boxes[i].checked = false;
       }
     }
+
+    // Settings page's "Show advanced settings" toggle -- state remembered in
+    // localStorage. Applied via a global htmx:afterSettle listener rather than
+    // an inline <script> inside settings_form.html, since that partial gets
+    // replaced wholesale on every save (hx-swap="outerHTML") and relying on the
+    // swapped-in script re-running turned out to be unreliable.
+    function toggleAdvancedSettings() {
+      const form = document.getElementById("settings-form");
+      if (!form) return;
+      const showing = form.classList.toggle("show-advanced");
+      localStorage.setItem("vulgarr_show_advanced", showing ? "1" : "0");
+      const btn = document.getElementById("advanced-toggle-btn");
+      if (btn) btn.textContent = showing ? "Hide advanced settings" : "Show advanced settings";
+    }
+    function applySavedAdvancedState() {
+      const form = document.getElementById("settings-form");
+      if (!form) return;
+      const showing = localStorage.getItem("vulgarr_show_advanced") === "1";
+      form.classList.toggle("show-advanced", showing);
+      const btn = document.getElementById("advanced-toggle-btn");
+      if (btn) btn.textContent = showing ? "Hide advanced settings" : "Show advanced settings";
+    }
+    document.addEventListener("DOMContentLoaded", applySavedAdvancedState);
+    document.addEventListener("htmx:afterSettle", function (evt) {
+      if (evt.target && evt.target.id === "settings-form") applySavedAdvancedState();
+    });
 
     // Sonarr-style masked-by-default secret fields (API keys, webhook token) with a
     // click-to-reveal eye icon, instead of showing them in plaintext by default.
@@ -507,7 +638,7 @@
       <button type="button" class="sidebar-toggle" id="sidebarToggle" title="Collapse sidebar" aria-label="Toggle sidebar">
         <i class="ti ti-chevron-left" aria-hidden="true"></i>
       </button>
-      <a class="sidebar-brand" href="/library">
+      <a class="sidebar-brand" href="https://github.com/dpresti/vulgarr" target="_blank" rel="noopener noreferrer">
         <svg viewBox="0 0 512 512" width="52" height="52">
           <defs>
             <linearGradient id="navRedGrad" x1="0%" y1="0%" x2="100%" y2="0%">
@@ -524,7 +655,7 @@
           <text x="96" y="358" fill="#FFF" font-family="monospace" font-weight="900" font-size="46" letter-spacing="12">#$!%*</text>
         </svg>
         <div class="brand-wordmark">VULG<span>ARR</span></div>
-        <div class="brand-tagline">PROFANITY FILTER</div>
+        <div class="brand-tagline">PROFANITY &amp; NUDITY FILTER</div>
       </a>
       <nav>
         <div class="nav-group">
