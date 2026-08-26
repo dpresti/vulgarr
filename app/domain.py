@@ -104,3 +104,32 @@ class TriggerSource(str, enum.Enum):
     sonarr = "sonarr"
     radarr = "radarr"
     bazarr = "bazarr"
+
+
+# Radarr/Sonarr tag labels a user can apply (via Overseerr's Advanced Request tag
+# picker, which pushes selected tags straight into the Radarr/Sonarr "add" payload,
+# or manually in Radarr/Sonarr's own UI) to opt a specific title into a pipeline --
+# even when that pipeline's global auto-trigger setting is off (audio) or when no
+# global auto-trigger exists at all (video/scene-detection, which is otherwise
+# 100% manual). Additive only -- see tags_request_audio/tags_request_video below;
+# neither ever suppresses what would already run without a tag.
+TAG_VULGARR_AUDIO = "vulgarr-audio"
+TAG_VULGARR_VIDEO = "vulgarr-video"
+TAG_VULGARR_BOTH = "vulgarr-both"
+
+
+def tags_request_audio(tags: set[str]) -> bool:
+    """True if this title's Radarr/Sonarr tags opt it into the audio-mute pipeline,
+    regardless of the trigger_sonarr_radarr_enabled setting. Lowercases defensively
+    -- Radarr/Sonarr already lowercase tag labels on creation, but a caller
+    shouldn't have to rely on that alone."""
+    tags = {t.lower() for t in tags}
+    return TAG_VULGARR_AUDIO in tags or TAG_VULGARR_BOTH in tags
+
+
+def tags_request_video(tags: set[str]) -> bool:
+    """True if this title's Radarr/Sonarr tags opt it into scene-detection
+    scanning -- today scene scanning has no global auto-trigger setting at all
+    (100% manual), so this is the only way scanning can run automatically."""
+    tags = {t.lower() for t in tags}
+    return TAG_VULGARR_VIDEO in tags or TAG_VULGARR_BOTH in tags

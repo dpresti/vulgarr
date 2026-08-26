@@ -7,11 +7,13 @@ from fastapi import APIRouter, HTTPException, Request
 
 from app.db.models import MediaType, TriggerSource
 from app.db.session import get_session, get_setting
+from app.domain import tags_request_audio, tags_request_video
 from app.integrations import bazarr as bazarr_integration
 from app.integrations import radarr as radarr_integration
 from app.integrations import sonarr as sonarr_integration
 from app.integrations.subtitle_lookup import find_subtitle_for_video
 from app.library import enqueue_if_not_already_active, poll_for_subtitle_then_enqueue, upsert_title
+from app.queue.scene_worker import scene_job_queue
 
 router = APIRouter(prefix="/webhooks", tags=["webhooks"])
 logger = logging.getLogger(__name__)
@@ -37,95 +39,143 @@ async def _check_token(request: Request) -> None:
         raise HTTPException(status_code=401, detail="Invalid or missing webhook token")
 
 
+async def _fetch_tags_safe(fetch_coro) -> set[str]:
+    """Any failure (Radarr/Sonarr unreachable, bad API key, 404, unexpected payload
+    shape, etc.) degrades to "no tags found" -- exactly today's behavior for an
+    untagged title. Never blocks or fails the webhook; a tag-fetch problem can only
+    ever under-trigger relative to what the user intended, never over-trigger."""
+    try:
+        return await fetch_coro
+    except Exception:
+        logger.exception("Failed to fetch Radarr/Sonarr tags; treating as no tags")
+        return set()
+
+
 @router.post("/sonarr")
 async def sonarr_webhook(request: Request):
     await _check_token(request)
     async with get_session() as session:
-        if not await get_setting(session, "trigger_sonarr_radarr_enabled"):
-            return {"status": "ignored", "reason": "sonarr/radarr trigger disabled in settings"}
+        trigger_enabled = bool(await get_setting(session, "trigger_sonarr_radarr_enabled"))
         default_subtitle_language = await get_setting(session, "default_subtitle_language")
+        sonarr_url = await get_setting(session, "sonarr_url")
+        sonarr_api_key = await get_setting(session, "sonarr_api_key")
 
     payload = await request.json()
     parsed = sonarr_integration.parse_import_webhook(payload)
     if parsed is None:
         return {"status": "ignored", "reason": "not an import/upgrade event"}
 
-    video_path = parsed["video_path"]
-    subtitle = find_subtitle_for_video(Path(video_path), default_subtitle_language)
-
-    if subtitle is not None:
-        async with get_session() as session:
-            title = await upsert_title(
-                session,
-                media_type=MediaType.episode,
-                display_name=parsed["display_name"],
-                video_path=video_path,
-                sonarr_series_id=parsed["series_id"],
-                sonarr_episode_id=parsed["episode_id"],
-                series_title=parsed["series_title"],
-                season_number=parsed["season_number"],
-                episode_number=parsed["episode_number"],
-            )
-        await enqueue_if_not_already_active(title.id, TriggerSource.sonarr)
-        return {"status": "queued"}
-
-    asyncio.create_task(
-        poll_for_subtitle_then_enqueue(
-            video_path=video_path,
+    # Title sync always happens now, regardless of trigger_sonarr_radarr_enabled or
+    # tags -- a vulgarr-video-tagged title needs to be synced+scanned even when the
+    # audio auto-trigger setting is off, and the video trigger below has no
+    # subtitle dependency to branch on the way the audio path does.
+    async with get_session() as session:
+        title = await upsert_title(
+            session,
             media_type=MediaType.episode,
             display_name=parsed["display_name"],
+            video_path=parsed["video_path"],
             sonarr_series_id=parsed["series_id"],
             sonarr_episode_id=parsed["episode_id"],
-            radarr_movie_id=None,
-            trigger_source=TriggerSource.sonarr,
             series_title=parsed["series_title"],
             season_number=parsed["season_number"],
             episode_number=parsed["episode_number"],
         )
-    )
-    return {"status": "polling_for_subtitle"}
+
+    tags: set[str] = set()
+    if sonarr_url and sonarr_api_key and parsed["series_id"]:
+        client = sonarr_integration.SonarrClient(sonarr_url, sonarr_api_key)
+        tags = await _fetch_tags_safe(client.get_series_tag_labels(parsed["series_id"]))
+
+    should_run_audio = trigger_enabled or tags_request_audio(tags)
+    should_run_video = tags_request_video(tags)
+
+    if should_run_video:
+        await scene_job_queue.enqueue_scan_if_not_already_active(title.id)
+
+    if should_run_audio:
+        video_path = parsed["video_path"]
+        subtitle = find_subtitle_for_video(Path(video_path), default_subtitle_language)
+        if subtitle is not None:
+            await enqueue_if_not_already_active(title.id, TriggerSource.sonarr)
+            return {"status": "queued"}
+        asyncio.create_task(
+            poll_for_subtitle_then_enqueue(
+                video_path=video_path,
+                media_type=MediaType.episode,
+                display_name=parsed["display_name"],
+                sonarr_series_id=parsed["series_id"],
+                sonarr_episode_id=parsed["episode_id"],
+                radarr_movie_id=None,
+                trigger_source=TriggerSource.sonarr,
+                series_title=parsed["series_title"],
+                season_number=parsed["season_number"],
+                episode_number=parsed["episode_number"],
+            )
+        )
+        return {"status": "polling_for_subtitle"}
+
+    if should_run_video:
+        return {"status": "queued_video_only"}
+    return {"status": "ignored", "reason": "no auto-trigger for this title"}
 
 
 @router.post("/radarr")
 async def radarr_webhook(request: Request):
     await _check_token(request)
     async with get_session() as session:
-        if not await get_setting(session, "trigger_sonarr_radarr_enabled"):
-            return {"status": "ignored", "reason": "sonarr/radarr trigger disabled in settings"}
+        trigger_enabled = bool(await get_setting(session, "trigger_sonarr_radarr_enabled"))
         default_subtitle_language = await get_setting(session, "default_subtitle_language")
+        radarr_url = await get_setting(session, "radarr_url")
+        radarr_api_key = await get_setting(session, "radarr_api_key")
 
     payload = await request.json()
     parsed = radarr_integration.parse_import_webhook(payload)
     if parsed is None:
         return {"status": "ignored", "reason": "not an import/upgrade event"}
 
-    video_path = parsed["video_path"]
-    subtitle = find_subtitle_for_video(Path(video_path), default_subtitle_language)
-
-    if subtitle is not None:
-        async with get_session() as session:
-            title = await upsert_title(
-                session,
-                media_type=MediaType.movie,
-                display_name=parsed["display_name"],
-                video_path=video_path,
-                radarr_movie_id=parsed["movie_id"],
-            )
-        await enqueue_if_not_already_active(title.id, TriggerSource.radarr)
-        return {"status": "queued"}
-
-    asyncio.create_task(
-        poll_for_subtitle_then_enqueue(
-            video_path=video_path,
+    async with get_session() as session:
+        title = await upsert_title(
+            session,
             media_type=MediaType.movie,
             display_name=parsed["display_name"],
-            sonarr_series_id=None,
-            sonarr_episode_id=None,
+            video_path=parsed["video_path"],
             radarr_movie_id=parsed["movie_id"],
-            trigger_source=TriggerSource.radarr,
         )
-    )
-    return {"status": "polling_for_subtitle"}
+
+    tags: set[str] = set()
+    if radarr_url and radarr_api_key and parsed["movie_id"]:
+        client = radarr_integration.RadarrClient(radarr_url, radarr_api_key)
+        tags = await _fetch_tags_safe(client.get_movie_tag_labels(parsed["movie_id"]))
+
+    should_run_audio = trigger_enabled or tags_request_audio(tags)
+    should_run_video = tags_request_video(tags)
+
+    if should_run_video:
+        await scene_job_queue.enqueue_scan_if_not_already_active(title.id)
+
+    if should_run_audio:
+        video_path = parsed["video_path"]
+        subtitle = find_subtitle_for_video(Path(video_path), default_subtitle_language)
+        if subtitle is not None:
+            await enqueue_if_not_already_active(title.id, TriggerSource.radarr)
+            return {"status": "queued"}
+        asyncio.create_task(
+            poll_for_subtitle_then_enqueue(
+                video_path=video_path,
+                media_type=MediaType.movie,
+                display_name=parsed["display_name"],
+                sonarr_series_id=None,
+                sonarr_episode_id=None,
+                radarr_movie_id=parsed["movie_id"],
+                trigger_source=TriggerSource.radarr,
+            )
+        )
+        return {"status": "polling_for_subtitle"}
+
+    if should_run_video:
+        return {"status": "queued_video_only"}
+    return {"status": "ignored", "reason": "no auto-trigger for this title"}
 
 
 @router.post("/bazarr")

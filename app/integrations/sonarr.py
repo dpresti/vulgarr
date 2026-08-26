@@ -45,6 +45,23 @@ class SonarrClient:
             resp.raise_for_status()
             return resp.json()
 
+    async def get_tag_labels(self) -> dict[int, str]:
+        """All Sonarr tags, keyed by id, lowercased (Sonarr already lowercases labels
+        on creation -- this is cheap insurance, not a correction)."""
+        tags = await self._get("/api/v3/tag")
+        return {t["id"]: t["label"].lower() for t in tags}
+
+    async def get_series_tag_labels(self, series_id: int) -> set[str]:
+        """Resolve a series' tag IDs to lowercased label strings. Two GETs (series +
+        full tag list) -- not cached, since this only ever runs off a low-volume
+        import-webhook event, not a hot path."""
+        series = await self._get(f"/api/v3/series/{series_id}")
+        tag_ids: list[int] = series.get("tags") or []
+        if not tag_ids:
+            return set()
+        labels_by_id = await self.get_tag_labels()
+        return {labels_by_id[tid] for tid in tag_ids if tid in labels_by_id}
+
     async def list_episode_files(self) -> list[SonarrEpisodeFile]:
         """List every downloaded episode across the whole library, with resolved file paths."""
         series_list = await self._get("/api/v3/series")

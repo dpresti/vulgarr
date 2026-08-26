@@ -56,6 +56,23 @@ class RadarrClient:
         movie_file = movie.get("movieFile")
         return movie_file.get("path") if movie_file else None
 
+    async def get_tag_labels(self) -> dict[int, str]:
+        """All Radarr tags, keyed by id, lowercased (Radarr already lowercases labels
+        on creation -- this is cheap insurance, not a correction)."""
+        tags = await self._get("/api/v3/tag")
+        return {t["id"]: t["label"].lower() for t in tags}
+
+    async def get_movie_tag_labels(self, movie_id: int) -> set[str]:
+        """Resolve a movie's tag IDs to lowercased label strings. Two GETs (movie +
+        full tag list) -- not cached, since this only ever runs off a low-volume
+        import-webhook event, not a hot path."""
+        movie = await self._get(f"/api/v3/movie/{movie_id}")
+        tag_ids: list[int] = movie.get("tags") or []
+        if not tag_ids:
+            return set()
+        labels_by_id = await self.get_tag_labels()
+        return {labels_by_id[tid] for tid in tag_ids if tid in labels_by_id}
+
     async def list_movie_files(self) -> list[RadarrMovieFile]:
         movies = await self._get("/api/v3/movie")
         results: list[RadarrMovieFile] = []
