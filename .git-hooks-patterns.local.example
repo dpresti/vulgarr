@@ -1,0 +1,11 @@
+# Copy this file to .git-hooks-patterns.local (repo root) and fill in your
+# own real values -- that file is gitignored and never committed, unlike
+# this example. One grep -E (case-insensitive) pattern per line. Blank
+# lines and lines starting with # are ignored.
+#
+# cp .git-hooks-patterns.local.example .git-hooks-patterns.local
+
+# your.real.email@example.com
+# Your Real Name
+# /path/to/your/personal/nas
+# your-internal-hostname

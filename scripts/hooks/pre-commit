@@ -1,0 +1,40 @@
+#!/usr/bin/env bash
+# Blocks a commit if the staged diff matches a pattern from
+# .git-hooks-patterns.local (repo root, gitignored -- never committed).
+# That file is where you put your own real name/email/hostnames/paths, one
+# grep -E pattern per line (# comments and blank lines ignored). See
+# .git-hooks-patterns.local.example for the format. If the file doesn't
+# exist, this hook is a no-op.
+#
+# Installed via scripts/install-hooks.sh. This copy under scripts/hooks/ is
+# the tracked source of truth -- edit here, then re-run the installer, not
+# .git/hooks/pre-commit directly (that copy isn't tracked and won't survive
+# a fresh clone).
+
+set -euo pipefail
+
+repo_root="$(git rev-parse --show-toplevel)"
+patterns_file="$repo_root/.git-hooks-patterns.local"
+
+[ -f "$patterns_file" ] || exit 0
+
+staged_diff="$(git diff --cached -U0)"
+hit=0
+
+while IFS= read -r pattern; do
+  case "$pattern" in
+    ''|'#'*) continue ;;
+  esac
+  if echo "$staged_diff" | grep -qiE "$pattern"; then
+    echo "pre-commit: blocked -- staged changes match a pattern from .git-hooks-patterns.local: $pattern" >&2
+    hit=1
+  fi
+done < "$patterns_file"
+
+if [ "$hit" -ne 0 ]; then
+  echo "" >&2
+  echo "Remove the flagged content, or edit .git-hooks-patterns.local, then retry." >&2
+  exit 1
+fi
+
+exit 0

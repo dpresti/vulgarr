@@ -7,3 +7,4 @@ dev-media/
 localdata/
 .env
 .pytest_cache/
+.git-hooks-patterns.local
