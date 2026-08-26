@@ -58,6 +58,14 @@ def _is_htmx(request: Request) -> bool:
     return request.headers.get("hx-request") == "true"
 
 
+def _is_load_more(request: Request) -> bool:
+    """True only for the infinite-scroll sentinel's hx-get (it has no named form
+    field, so htmx sends no HX-Trigger-Name). Search/filter inputs do have a name,
+    so they fall through to a full-page render instead -- hx-select then pulls just
+    the refreshed results region back out of it, keeping the title count in sync."""
+    return _is_htmx(request) and not request.headers.get("HX-Trigger-Name")
+
+
 async def _pending_scene_title_ids(session, title_ids: list[int]) -> set[int]:
     """Which of title_ids have at least one DetectedScene still awaiting review.
     Batched (one query for however many ids are passed) rather than per-row, so
@@ -129,6 +137,21 @@ def _pip_state(status: str, outdated: bool, has_subtitle: bool, has_pending_scen
     if status == "done":
         return "done"
     return "not_processed"
+
+
+def _aggregate_show_pip(seasons: list[dict]) -> tuple[str, str]:
+    """Collapse a show_detail.html season list down to the single representative
+    pip/label its detail-header badge shows, same aggregation _load_shows already
+    does per-card on the Shows grid, just summed across seasons instead of read
+    straight off the grouped query."""
+    pip = _show_pip_state(
+        total=sum(s["total"] for s in seasons),
+        done_count=sum(s["done_count"] for s in seasons),
+        failed_count=sum(s["failed_count"] for s in seasons),
+        active_count=sum(s["active_count"] for s in seasons),
+        outdated_count=sum(s["outdated_count"] for s in seasons),
+    )
+    return pip, _PIP_LABELS[pip]
 
 
 def _show_pip_state(total: int, done_count: int, failed_count: int, active_count: int, outdated_count: int) -> str:
@@ -234,29 +257,18 @@ async def _load_last_scan_job(title_id: int) -> tuple[SceneJob | None, str | Non
 
 
 async def _load_scene_review_context(title_id: int) -> dict:
+    """Thin wrapper around scenes.py's _scene_review_context -- that's the complete
+    version (also fetches scan_job/blur_job/claude_verify_job, needed to render an
+    in-progress scan/apply/Claude-verify job's progress bar correctly), this one used
+    to be a stale, incomplete duplicate that left every caller here (the title detail
+    page's own GET route, plus every detail_view re-render after severity/process/etc.)
+    unable to show that progress bar until the embedded scene-review section's own
+    3-second self-poll caught up -- single source of truth now instead of two drifting
+    copies of the same query."""
+    from app.routers.scenes import _scene_review_context
+
     async with get_session() as session:
-        title = await session.get(Title, title_id)
-        scenes_result = await session.execute(
-            select(DetectedScene).where(DetectedScene.title_id == title_id).order_by(DetectedScene.start_seconds)
-        )
-        scenes = scenes_result.scalars().all()
-        high_confidence_fraction = float(await get_setting(session, "scene_high_confidence_fraction"))
-    pending_count = sum(1 for s in scenes if s.status == SceneReviewStatus.pending)
-    high_confidence_pending_count = sum(
-        1
-        for s in scenes
-        if s.status == SceneReviewStatus.pending
-        and s.verified_fraction is not None
-        and s.verified_fraction >= high_confidence_fraction
-    )
-    return {
-        "title_id": title_id,
-        "scene_scan_status": title.scene_scan_status if title else "not_scanned",
-        "scenes": scenes,
-        "high_confidence_fraction": high_confidence_fraction,
-        "pending_count": pending_count,
-        "high_confidence_pending_count": high_confidence_pending_count,
-    }
+        return await _scene_review_context(session, title_id)
 
 
 async def _render_title(request: Request, row: dict, detail_view: bool, **extra):
@@ -304,8 +316,11 @@ async def _load_movies(
 
     total = (await session.execute(select(func.count()).select_from(base.subquery()))).scalar_one()
 
-    sort_col = MOVIE_SORT_COLUMNS.get(sort, Title.display_name)
-    order = sort_col.desc() if sort_dir == "desc" else sort_col.asc()
+    if sort == "recent":
+        order = Title.last_processed_at.desc()
+    else:
+        sort_col = MOVIE_SORT_COLUMNS.get(sort, Title.display_name)
+        order = sort_col.desc() if sort_dir == "desc" else sort_col.asc()
 
     result = await session.execute(
         base.order_by(order, Title.display_name.collate("NOCASE")).offset((page - 1) * PAGE_SIZE).limit(PAGE_SIZE)
@@ -316,28 +331,68 @@ async def _load_movies(
     return rows, total
 
 
-async def _load_processed(
-    session, current_version: int, page: int, q: str | None, sort: str | None, sort_dir: str
+async def _load_processed_movies(
+    session, current_version: int, offset: int, limit: int, q: str | None, sort: str = "name"
 ) -> tuple[list[dict], int]:
-    """Every fully-processed title (movie or episode) -- the combined view shown at
-    the main /library route, per the sidebar's "Library" item being distinct from
-    the "Movies"/"TV Shows" sub-items (which list everything, not just done ones)."""
-    base: Select = select(Title).where(Title.status == "done")
+    """Done movies, one card each -- half of the main /library route's combined
+    feed (the other half is _load_processed_shows below). Takes an explicit
+    offset/limit rather than a page number since the two feeds are interleaved
+    into one virtual list by the caller (see library_page)."""
+    base: Select = select(Title).where(Title.media_type == MediaType.movie, Title.status == "done")
     if q:
         base = base.where(Title.display_name.like(f"%{_escape_like(q)}%", escape="\\"))
 
     total = (await session.execute(select(func.count()).select_from(base.subquery()))).scalar_one()
 
-    sort_col = MOVIE_SORT_COLUMNS.get(sort, Title.display_name)
-    order = sort_col.desc() if sort_dir == "desc" else sort_col.asc()
-
-    result = await session.execute(
-        base.order_by(order, Title.display_name.collate("NOCASE")).offset((page - 1) * PAGE_SIZE).limit(PAGE_SIZE)
-    )
+    order = Title.last_processed_at.desc() if sort == "recent" else Title.display_name.collate("NOCASE")
+    result = await session.execute(base.order_by(order).offset(offset).limit(limit))
     titles = result.scalars().all()
     pending_ids = await _pending_scene_title_ids(session, [t.id for t in titles])
     rows = [_row_dict(t, current_version, has_pending_scenes=t.id in pending_ids) for t in titles]
     return rows, total
+
+
+async def _load_processed_shows(
+    session, current_version: int, offset: int, limit: int, q: str | None, sort: str = "name"
+) -> tuple[list[dict], int]:
+    """Shows with at least one done episode, one card each (not one per episode) --
+    other half of the main /library route's combined feed. Same aggregation as
+    _load_shows (TV Shows page) but restricted to done_count > 0."""
+    total_col = func.count().label("total")
+    done_col = func.sum(case((Title.status == "done", 1), else_=0)).label("done_count")
+    failed_col = func.sum(case((Title.status == "failed", 1), else_=0)).label("failed_count")
+    active_col = func.sum(case((Title.status.in_(["queued", "processing"]), 1), else_=0)).label("active_count")
+    outdated_col = func.sum(_outdated_case(current_version)).label("outdated_count")
+    poster_col = func.max(Title.poster_url).label("poster_url")
+    last_processed_col = func.max(Title.last_processed_at).label("last_processed_at")
+
+    query = select(
+        Title.sonarr_series_id,
+        Title.series_title,
+        total_col,
+        done_col,
+        failed_col,
+        active_col,
+        outdated_col,
+        poster_col,
+        last_processed_col,
+    ).where(Title.media_type == MediaType.episode)
+    if q:
+        query = query.where(Title.series_title.like(f"%{_escape_like(q)}%", escape="\\"))
+    query = query.group_by(Title.sonarr_series_id, Title.series_title).having(done_col > 0)
+
+    count_subquery = query.with_only_columns(Title.sonarr_series_id).subquery()
+    total = (await session.execute(select(func.count()).select_from(count_subquery))).scalar_one()
+
+    order = last_processed_col.desc() if sort == "recent" else Title.series_title.collate("NOCASE")
+    result = await session.execute(query.order_by(order).offset(offset).limit(limit))
+    shows = [dict(row._mapping) for row in result.all()]
+    for show in shows:
+        show["pip"] = _show_pip_state(
+            show["total"], show["done_count"], show["failed_count"], show["active_count"], show["outdated_count"]
+        )
+        show["pip_label"] = _PIP_LABELS[show["pip"]]
+    return shows, total
 
 
 SHOW_SORT_KEYS = {"name", "total", "done_count", "active_count", "failed_count", "outdated_count"}
@@ -359,6 +414,7 @@ async def _load_shows(
     severity_col = func.min(Title.severity_levels).label("severity_levels")
     precise_col = func.min(Title.precise_mode).label("precise_mode")
     poster_col = func.max(Title.poster_url).label("poster_url")
+    last_processed_col = func.max(Title.last_processed_at).label("last_processed_at")
 
     query = select(
         Title.sonarr_series_id,
@@ -371,6 +427,7 @@ async def _load_shows(
         severity_col,
         precise_col,
         poster_col,
+        last_processed_col,
     ).where(Title.media_type == MediaType.episode)
 
     if q:
@@ -381,16 +438,19 @@ async def _load_shows(
     count_subquery = query.with_only_columns(Title.sonarr_series_id).subquery()
     total = (await session.execute(select(func.count()).select_from(count_subquery))).scalar_one()
 
-    sort_columns = {
-        "name": Title.series_title.collate("NOCASE"),
-        "total": total_col,
-        "done_count": done_col,
-        "active_count": active_col,
-        "failed_count": failed_col,
-        "outdated_count": outdated_col,
-    }
-    sort_col = sort_columns.get(sort, Title.series_title.collate("NOCASE"))
-    order = sort_col.desc() if sort_dir == "desc" else sort_col.asc()
+    if sort == "recent":
+        order = last_processed_col.desc()
+    else:
+        sort_columns = {
+            "name": Title.series_title.collate("NOCASE"),
+            "total": total_col,
+            "done_count": done_col,
+            "active_count": active_col,
+            "failed_count": failed_col,
+            "outdated_count": outdated_col,
+        }
+        sort_col = sort_columns.get(sort, Title.series_title.collate("NOCASE"))
+        order = sort_col.desc() if sort_dir == "desc" else sort_col.asc()
 
     result = await session.execute(
         query.order_by(order, Title.series_title.collate("NOCASE")).offset((page - 1) * PAGE_SIZE).limit(PAGE_SIZE)
@@ -404,7 +464,9 @@ async def _load_shows(
     return shows, total
 
 
-async def _load_seasons(session, series_id: int, current_version: int) -> tuple[str | None, list[dict]]:
+async def _load_seasons(
+    session, series_id: int, current_version: int, came_from: str | None = None
+) -> tuple[str | None, str | None, str | None, str | None, str | None, list[dict]]:
     outdated_expr = _outdated_case(current_version)
     query = (
         select(
@@ -425,6 +487,11 @@ async def _load_seasons(session, series_id: int, current_version: int) -> tuple[
     )
     result = await session.execute(query)
     seasons = [dict(row._mapping) for row in result.all()]
+    if came_from == "library":
+        # Reached from the Library page's "done only" view -- seasons with nothing
+        # processed yet aren't relevant there, same idea as filtering episodes below
+        # in _load_season_detail_context.
+        seasons = [s for s in seasons if s["done_count"]]
     for season in seasons:
         season["gating_message"] = await _non_mkv_gating_message(
             session,
@@ -433,53 +500,72 @@ async def _load_seasons(session, series_id: int, current_version: int) -> tuple[
             levels=season["severity_levels"] or "",
         )
 
-    name_result = await session.execute(
-        select(Title.series_title).where(Title.sonarr_series_id == series_id).limit(1)
+    meta_result = await session.execute(
+        select(
+            func.max(Title.series_title),
+            func.max(Title.poster_url),
+            # Same "representative, not a true aggregate" caveat as the per-season
+            # values above, one level up -- a show-wide bulk edit (see set_show_severity/
+            # set_show_precise_mode) overwrites every episode in every season with
+            # whatever's picked here, same as the per-season bulk edit already does.
+            func.min(Title.severity_levels),
+            func.min(Title.precise_mode),
+        ).where(Title.sonarr_series_id == series_id, Title.media_type == MediaType.episode)
     )
-    series_title = name_result.scalar_one_or_none()
-    return series_title, seasons
+    series_title, poster_url, severity_levels, precise_mode = meta_result.one()
+    gating_message = await _non_mkv_gating_message(
+        session, Title.sonarr_series_id == series_id, levels=severity_levels or ""
+    )
+    return series_title, poster_url, severity_levels, precise_mode, gating_message, seasons
 
 
 @router.get("", response_class=HTMLResponse)
-async def library_page(
-    request: Request,
-    q: str | None = None,
-    page: int = 1,
-    sort: str | None = None,
-    dir: str = "asc",
-):
-    """The main sidebar "Library" item -- every fully-processed title, movies and
-    episodes combined. Distinct from the "Movies"/"TV Shows" sub-items, which list
-    everything regardless of processing status."""
+async def library_page(request: Request, q: str | None = None, page: int = 1, sort: str = "name"):
+    """The main sidebar "Library" item -- every done movie (one card each) plus
+    every show with at least one done episode (one card per show, not per
+    episode). Distinct from the "Movies"/"TV Shows" sub-items, which list
+    everything regardless of processing status. The two queries are paginated
+    independently, then interleaved into one virtual list (movies first, then
+    shows) via the offset math below, so the single infinite-scroll feed here
+    doesn't need a real SQL UNION across two very different row shapes."""
     async with get_session() as session:
         current_version = int(await get_setting(session, "wordlist_version"))
-        rows, total = await _load_processed(session, current_version, page, q, sort, dir)
+        _, movie_total = await _load_processed_movies(session, current_version, 0, 0, q, sort)
+        _, show_total = await _load_processed_shows(session, current_version, 0, 0, q, sort)
 
-    current_params = {"q": q, "sort": sort, "dir": dir}
-    next_url = _qs(current_params, page=page + 1) if page * PAGE_SIZE < total else None
+        offset = (page - 1) * PAGE_SIZE
+        movie_rows: list[dict] = []
+        show_rows: list[dict] = []
+        if offset < movie_total:
+            movie_rows, _ = await _load_processed_movies(session, current_version, offset, PAGE_SIZE, q, sort)
+            remaining = PAGE_SIZE - len(movie_rows)
+            if remaining > 0:
+                show_rows, _ = await _load_processed_shows(session, current_version, 0, remaining, q, sort)
+        else:
+            show_rows, _ = await _load_processed_shows(
+                session, current_version, offset - movie_total, PAGE_SIZE, q, sort
+            )
 
-    if _is_htmx(request):
+    combined_total = movie_total + show_total
+    next_url = _qs({"q": q, "sort": sort}, page=page + 1) if offset + PAGE_SIZE < combined_total else None
+
+    if _is_load_more(request):
         # A revealed load-more sentinel asking for the next batch -- return just
         # the new cards (+ a fresh sentinel if there's still more), not the whole page.
         return templates.TemplateResponse(
-            "partials/poster_grid_items.html",
-            {"request": request, "rows": rows, "from_page": "library", "next_url": next_url},
+            "partials/poster_grid_library_items.html",
+            {"request": request, "movie_rows": movie_rows, "show_rows": show_rows, "next_url": next_url},
         )
-
-    def sort_link(key: str) -> str:
-        new_dir = "desc" if sort == key and dir == "asc" else "asc"
-        return _qs(current_params, sort=key, dir=new_dir, page=1)
 
     return templates.TemplateResponse(
         "library_processed.html",
         {
             "request": request,
             "q": q or "",
-            "movie_rows": rows,
-            "movie_total": total,
-            "movie_sort": sort,
-            "movie_dir": dir,
-            "movie_sort_link": sort_link,
+            "sort": sort,
+            "movie_rows": movie_rows,
+            "show_rows": show_rows,
+            "movie_total": combined_total,
             "next_url": next_url,
             "wordlist_version": current_version,
             "severity_options": SEVERITY_OPTIONS,
@@ -493,8 +579,9 @@ async def movies_page(
     q: str | None = None,
     movie_page: int = 1,
     movie_sort: str | None = None,
-    movie_dir: str = "asc",
+    movie_dir: str | None = None,
 ):
+    movie_dir = movie_dir or "asc"
     async with get_session() as session:
         current_version = int(await get_setting(session, "wordlist_version"))
         movie_rows, movie_total = await _load_movies(session, current_version, movie_page, q, movie_sort, movie_dir)
@@ -502,7 +589,7 @@ async def movies_page(
     current_params = {"q": q, "movie_sort": movie_sort, "movie_dir": movie_dir}
     next_url = _qs(current_params, movie_page=movie_page + 1) if movie_page * PAGE_SIZE < movie_total else None
 
-    if _is_htmx(request):
+    if _is_load_more(request):
         return templates.TemplateResponse(
             "partials/poster_grid_items.html",
             {"request": request, "rows": movie_rows, "next_url": next_url},
@@ -535,8 +622,9 @@ async def shows_page(
     q: str | None = None,
     show_page: int = 1,
     show_sort: str | None = None,
-    show_dir: str = "asc",
+    show_dir: str | None = None,
 ):
+    show_dir = show_dir or "asc"
     async with get_session() as session:
         current_version = int(await get_setting(session, "wordlist_version"))
         shows, show_total = await _load_shows(session, current_version, show_page, q, show_sort, show_dir)
@@ -544,7 +632,7 @@ async def shows_page(
     current_params = {"q": q, "show_sort": show_sort, "show_dir": show_dir}
     next_url = _qs(current_params, show_page=show_page + 1) if show_page * PAGE_SIZE < show_total else None
 
-    if _is_htmx(request):
+    if _is_load_more(request):
         return templates.TemplateResponse(
             "partials/poster_grid_shows_items.html",
             {"request": request, "shows": shows, "next_url": next_url},
@@ -606,6 +694,7 @@ async def _load_season(session, series_id: int, season_number: int, current_vers
             func.sum(outdated_expr).label("outdated_count"),
             func.min(Title.severity_levels).label("severity_levels"),
             func.min(Title.precise_mode).label("precise_mode"),
+            func.max(Title.poster_url).label("poster_url"),
         )
         .where(
             Title.sonarr_series_id == series_id,
@@ -625,6 +714,46 @@ async def _load_season(session, series_id: int, season_number: int, current_vers
         levels=season["severity_levels"] or "",
     )
     return season
+
+
+async def _load_season_detail_context(
+    session, series_id: int, season_number: int, current_version: int, came_from: str | None = None
+) -> dict:
+    """Everything season_detail.html needs -- shared by its own GET route and by
+    the season-level bulk actions below when called from that page's own header
+    (detail_view=true) rather than from a season row inside show_detail.html."""
+    name_result = await session.execute(
+        select(Title.series_title).where(Title.sonarr_series_id == series_id).limit(1)
+    )
+    series_title = name_result.scalar_one_or_none()
+
+    result = await session.execute(
+        select(Title)
+        .where(Title.sonarr_series_id == series_id, Title.season_number == season_number)
+        .order_by(Title.episode_number)
+    )
+    titles = result.scalars().all()
+    pending_ids = await _pending_scene_title_ids(session, [t.id for t in titles])
+    rows = [_row_dict(t, current_version, short_label=True, has_pending_scenes=t.id in pending_ids) for t in titles]
+    if came_from == "library":
+        # Reached from the Library page's "done only" view -- episodes that haven't
+        # been processed yet aren't relevant there.
+        rows = [r for r in rows if r["status"] != "not_processed"]
+
+    season = await _load_season(session, series_id, season_number, current_version)
+    pip, pip_label = _aggregate_show_pip([season] if season else [])
+
+    return {
+        "series_title": series_title,
+        "rows": rows,
+        "poster_url": season["poster_url"] if season else None,
+        "pip": pip,
+        "pip_label": pip_label,
+        "severity_levels": season["severity_levels"] if season else "",
+        "precise_mode": season["precise_mode"] if season else "whole_line",
+        "gating_message": season["gating_message"] if season else None,
+        "came_from": came_from,
+    }
 
 
 @router.get("/title/{title_id}", response_class=HTMLResponse)
@@ -697,17 +826,27 @@ async def title_card_refresh(request: Request, title_id: int, from_page: str | N
 
 
 @router.get("/shows/{series_id}", response_class=HTMLResponse)
-async def show_detail(request: Request, series_id: int):
+async def show_detail(request: Request, series_id: int, from_: str | None = Query(default=None, alias="from")):
     async with get_session() as session:
         current_version = int(await get_setting(session, "wordlist_version"))
-        series_title, seasons = await _load_seasons(session, series_id, current_version)
+        series_title, poster_url, severity_levels, precise_mode, gating_message, seasons = await _load_seasons(
+            session, series_id, current_version, came_from=from_
+        )
+    pip, pip_label = _aggregate_show_pip(seasons)
 
     return templates.TemplateResponse(
         "show_detail.html",
         {
             "request": request,
             "series_id": series_id,
+            "came_from": from_,
             "series_title": series_title,
+            "poster_url": poster_url,
+            "severity_levels": severity_levels,
+            "precise_mode": precise_mode,
+            "gating_message": gating_message,
+            "pip": pip,
+            "pip_label": pip_label,
             "seasons": seasons,
             "severity_options": SEVERITY_OPTIONS,
         },
@@ -723,32 +862,16 @@ async def season_detail(
 ):
     async with get_session() as session:
         current_version = int(await get_setting(session, "wordlist_version"))
-        name_result = await session.execute(
-            select(Title.series_title).where(Title.sonarr_series_id == series_id).limit(1)
-        )
-        series_title = name_result.scalar_one_or_none()
-
-        result = await session.execute(
-            select(Title)
-            .where(Title.sonarr_series_id == series_id, Title.season_number == season_number)
-            .order_by(Title.episode_number)
-        )
-        titles = result.scalars().all()
-        pending_ids = await _pending_scene_title_ids(session, [t.id for t in titles])
-        rows = [
-            _row_dict(t, current_version, short_label=True, has_pending_scenes=t.id in pending_ids) for t in titles
-        ]
+        context = await _load_season_detail_context(session, series_id, season_number, current_version, came_from=from_)
 
     return templates.TemplateResponse(
         "season_detail.html",
         {
             "request": request,
             "series_id": series_id,
-            "series_title": series_title,
             "season_number": season_number,
-            "rows": rows,
             "severity_options": SEVERITY_OPTIONS,
-            "came_from": from_,
+            **context,
         },
     )
 
@@ -846,24 +969,34 @@ async def _bulk_enqueue_titles(session, *conditions) -> tuple[int, int]:
 def _process_message(queued: int, skipped: int) -> str:
     message = f"Queued {queued} episode(s)."
     if skipped:
-        message += f" Skipped {skipped} with no subtitle -- use Search Bazarr & Process on those individually."
+        message += f" Skipped {skipped} with no subtitle -- use the Audio/Both button on those individually."
     return message
 
 
 @router.post("/shows/{series_id}/process", response_class=HTMLResponse)
-async def process_show(request: Request, series_id: int):
+async def process_show(request: Request, series_id: int, came_from: str | None = Form(default=None)):
     conditions = (Title.sonarr_series_id == series_id, Title.media_type == MediaType.episode)
     async with get_session() as session:
         queued, skipped = await _bulk_enqueue_titles(session, *conditions)
         current_version = int(await get_setting(session, "wordlist_version"))
-        series_title, seasons = await _load_seasons(session, series_id, current_version)
+        series_title, poster_url, severity_levels, precise_mode, gating_message, seasons = await _load_seasons(
+            session, series_id, current_version, came_from=came_from
+        )
+    pip, pip_label = _aggregate_show_pip(seasons)
 
     return templates.TemplateResponse(
-        "show_detail.html",
+        "partials/show_detail_card.html",
         {
             "request": request,
             "series_id": series_id,
+            "came_from": came_from,
             "series_title": series_title,
+            "poster_url": poster_url,
+            "severity_levels": severity_levels,
+            "precise_mode": precise_mode,
+            "gating_message": gating_message,
+            "pip": pip,
+            "pip_label": pip_label,
             "seasons": seasons,
             "severity_options": SEVERITY_OPTIONS,
             "process_message": _process_message(queued, skipped),
@@ -872,7 +1005,7 @@ async def process_show(request: Request, series_id: int):
 
 
 @router.post("/shows/{series_id}/process-both", response_class=HTMLResponse)
-async def process_both_show(request: Request, series_id: int):
+async def process_both_show(request: Request, series_id: int, came_from: str | None = Form(default=None)):
     """Audio + Video together for every episode in the show, one click --
     mirrors process_show (audio) and app.routers.scenes.scan_scenes_show
     (video) combined."""
@@ -882,16 +1015,26 @@ async def process_both_show(request: Request, series_id: int):
         result = await session.execute(select(Title.id).where(*conditions))
         title_ids = [row[0] for row in result.all()]
         current_version = int(await get_setting(session, "wordlist_version"))
-        series_title, seasons = await _load_seasons(session, series_id, current_version)
+        series_title, poster_url, severity_levels, precise_mode, gating_message, seasons = await _load_seasons(
+            session, series_id, current_version, came_from=came_from
+        )
+    pip, pip_label = _aggregate_show_pip(seasons)
 
     scan_queued = sum([await scene_job_queue.enqueue_scan_if_not_already_active(title_id) for title_id in title_ids])
 
     return templates.TemplateResponse(
-        "show_detail.html",
+        "partials/show_detail_card.html",
         {
             "request": request,
             "series_id": series_id,
+            "came_from": came_from,
             "series_title": series_title,
+            "poster_url": poster_url,
+            "severity_levels": severity_levels,
+            "precise_mode": precise_mode,
+            "gating_message": gating_message,
+            "pip": pip,
+            "pip_label": pip_label,
             "seasons": seasons,
             "severity_options": SEVERITY_OPTIONS,
             "process_message": _process_message(queued, skipped),
@@ -900,14 +1043,112 @@ async def process_both_show(request: Request, series_id: int):
     )
 
 
+@router.post("/shows/{series_id}/severity", response_class=HTMLResponse)
+async def set_show_severity(
+    request: Request,
+    series_id: int,
+    sev_child: bool = Form(False),
+    sev_teen: bool = Form(False),
+    came_from: str | None = Form(default=None),
+):
+    levels = _severity_levels_from_checkboxes(sev_child, sev_teen)
+    conditions = (Title.sonarr_series_id == series_id, Title.media_type == MediaType.episode)
+    async with get_session() as session:
+        await session.execute(update(Title).where(*conditions).values(severity_levels=levels))
+        await session.commit()
+        current_version = int(await get_setting(session, "wordlist_version"))
+        series_title, poster_url, severity_levels, precise_mode, gating_message, seasons = await _load_seasons(
+            session, series_id, current_version, came_from=came_from
+        )
+    pip, pip_label = _aggregate_show_pip(seasons)
+
+    return templates.TemplateResponse(
+        "partials/show_detail_card.html",
+        {
+            "request": request,
+            "series_id": series_id,
+            "came_from": came_from,
+            "series_title": series_title,
+            "poster_url": poster_url,
+            "severity_levels": severity_levels,
+            "precise_mode": precise_mode,
+            "gating_message": gating_message,
+            "pip": pip,
+            "pip_label": pip_label,
+            "seasons": seasons,
+            "severity_options": SEVERITY_OPTIONS,
+        },
+    )
+
+
+@router.post("/shows/{series_id}/set-precise-mode", response_class=HTMLResponse)
+async def set_show_precise_mode(
+    request: Request, series_id: int, precise_mode: str = Form(...), came_from: str | None = Form(default=None)
+):
+    async with get_session() as session:
+        if precise_mode in PRECISE_MODES:
+            await session.execute(
+                update(Title)
+                .where(Title.sonarr_series_id == series_id, Title.media_type == MediaType.episode)
+                .values(precise_mode=precise_mode)
+            )
+            await session.commit()
+        current_version = int(await get_setting(session, "wordlist_version"))
+        series_title, poster_url, severity_levels, precise_mode, gating_message, seasons = await _load_seasons(
+            session, series_id, current_version, came_from=came_from
+        )
+    pip, pip_label = _aggregate_show_pip(seasons)
+
+    return templates.TemplateResponse(
+        "partials/show_detail_card.html",
+        {
+            "request": request,
+            "series_id": series_id,
+            "came_from": came_from,
+            "series_title": series_title,
+            "poster_url": poster_url,
+            "severity_levels": severity_levels,
+            "precise_mode": precise_mode,
+            "gating_message": gating_message,
+            "pip": pip,
+            "pip_label": pip_label,
+            "seasons": seasons,
+            "severity_options": SEVERITY_OPTIONS,
+        },
+    )
+
+
 @router.post("/shows/{series_id}/season/{season_number}/process", response_class=HTMLResponse)
-async def process_season(request: Request, series_id: int, season_number: int):
+async def process_season(
+    request: Request,
+    series_id: int,
+    season_number: int,
+    detail_view: bool = Form(False),
+    came_from: str | None = Form(default=None),
+):
     conditions = (Title.sonarr_series_id == series_id, Title.season_number == season_number)
     async with get_session() as session:
         queued, skipped = await _bulk_enqueue_titles(session, *conditions)
         current_version = int(await get_setting(session, "wordlist_version"))
-        season = await _load_season(session, series_id, season_number, current_version)
+        if detail_view:
+            context = await _load_season_detail_context(
+                session, series_id, season_number, current_version, came_from=came_from
+            )
+        else:
+            season = await _load_season(session, series_id, season_number, current_version)
 
+    if detail_view:
+        return templates.TemplateResponse(
+            "partials/season_detail_card.html",
+            {
+                "request": request,
+                "series_id": series_id,
+                "season_number": season_number,
+                "severity_options": SEVERITY_OPTIONS,
+                "process_message": _process_message(queued, skipped),
+                **context,
+            },
+        )
     return templates.TemplateResponse(
         "partials/season_row.html",
         {
@@ -920,7 +1161,13 @@ async def process_season(request: Request, series_id: int, season_number: int):
 
 
 @router.post("/shows/{series_id}/season/{season_number}/process-both", response_class=HTMLResponse)
-async def process_both_season(request: Request, series_id: int, season_number: int):
+async def process_both_season(
+    request: Request,
+    series_id: int,
+    season_number: int,
+    detail_view: bool = Form(False),
+    came_from: str | None = Form(default=None),
+):
     """Audio + Video together for every episode in the season, one click --
     mirrors process_season (audio) and app.routers.scenes.scan_scenes_season
     (video) combined."""
@@ -930,10 +1177,28 @@ async def process_both_season(request: Request, series_id: int, season_number: i
         result = await session.execute(select(Title.id).where(*conditions))
         title_ids = [row[0] for row in result.all()]
         current_version = int(await get_setting(session, "wordlist_version"))
-        season = await _load_season(session, series_id, season_number, current_version)
+        if detail_view:
+            context = await _load_season_detail_context(
+                session, series_id, season_number, current_version, came_from=came_from
+            )
+        else:
+            season = await _load_season(session, series_id, season_number, current_version)
 
     scan_queued = sum([await scene_job_queue.enqueue_scan_if_not_already_active(title_id) for title_id in title_ids])
 
+    if detail_view:
+        return templates.TemplateResponse(
+            "partials/season_detail_card.html",
+            {
+                "request": request,
+                "series_id": series_id,
+                "season_number": season_number,
+                "severity_options": SEVERITY_OPTIONS,
+                "process_message": _process_message(queued, skipped),
+                "scan_message": f"Queued {scan_queued} episode(s) for scene scanning.",
+                **context,
+            },
+        )
     return templates.TemplateResponse(
         "partials/season_row.html",
         {
@@ -985,6 +1250,8 @@ async def set_season_severity(
     season_number: int,
     sev_child: bool = Form(False),
     sev_teen: bool = Form(False),
+    detail_view: bool = Form(False),
+    came_from: str | None = Form(default=None),
 ):
     levels = _severity_levels_from_checkboxes(sev_child, sev_teen)
     conditions = (Title.sonarr_series_id == series_id, Title.season_number == season_number)
@@ -992,8 +1259,18 @@ async def set_season_severity(
         await session.execute(update(Title).where(*conditions).values(severity_levels=levels))
         await session.commit()
         current_version = int(await get_setting(session, "wordlist_version"))
-        season = await _load_season(session, series_id, season_number, current_version)
+        if detail_view:
+            context = await _load_season_detail_context(
+                session, series_id, season_number, current_version, came_from=came_from
+            )
+        else:
+            season = await _load_season(session, series_id, season_number, current_version)
 
+    if detail_view:
+        return templates.TemplateResponse(
+            "partials/season_detail_card.html",
+            {"request": request, "series_id": series_id, "season_number": season_number, **context},
+        )
     return templates.TemplateResponse(
         "partials/season_row.html",
         {"request": request, "series_id": series_id, "season": season},
@@ -1024,7 +1301,14 @@ async def set_title_precise_mode(
 
 
 @router.post("/shows/{series_id}/season/{season_number}/set-precise-mode", response_class=HTMLResponse)
-async def set_season_precise_mode(request: Request, series_id: int, season_number: int, precise_mode: str = Form(...)):
+async def set_season_precise_mode(
+    request: Request,
+    series_id: int,
+    season_number: int,
+    precise_mode: str = Form(...),
+    detail_view: bool = Form(False),
+    came_from: str | None = Form(default=None),
+):
     async with get_session() as session:
         if precise_mode in PRECISE_MODES:
             await session.execute(
@@ -1034,8 +1318,18 @@ async def set_season_precise_mode(request: Request, series_id: int, season_numbe
             )
             await session.commit()
         current_version = int(await get_setting(session, "wordlist_version"))
-        season = await _load_season(session, series_id, season_number, current_version)
+        if detail_view:
+            context = await _load_season_detail_context(
+                session, series_id, season_number, current_version, came_from=came_from
+            )
+        else:
+            season = await _load_season(session, series_id, season_number, current_version)
 
+    if detail_view:
+        return templates.TemplateResponse(
+            "partials/season_detail_card.html",
+            {"request": request, "series_id": series_id, "season_number": season_number, **context},
+        )
     return templates.TemplateResponse(
         "partials/season_row.html",
         {"request": request, "series_id": series_id, "season": season},

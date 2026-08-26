@@ -91,7 +91,39 @@ async def _scene_review_context(session, title_id: int) -> dict:
     }
 
 
-async def _render_scene_review(request: Request, title_id: int) -> HTMLResponse:
+async def _render_scene_review(request: Request, title_id: int, detail_view: bool = False) -> HTMLResponse:
+    """Scene-review actions are reachable both from the standalone scene-review
+    page/section (just this fragment) and embedded on the title detail page
+    (where the Approve-all/Apply row now lives up in the Video column, outside
+    this fragment's own swap boundary) -- detail_view mirrors the same flag
+    library.py's _render_title already uses for the same reason, re-rendering
+    the whole card instead of just this section so nothing outside it goes
+    stale after an action."""
+    if detail_view:
+        from app.routers.library import _load_last_job, _load_last_scan_job, _pending_scene_title_ids, _row_dict
+
+        async with get_session() as session:
+            current_version = int(await get_setting(session, "wordlist_version"))
+            title = await session.get(Title, title_id)
+            if title is None:
+                return HTMLResponse("")
+            pending_ids = await _pending_scene_title_ids(session, [title_id])
+            row = _row_dict(title, current_version, has_pending_scenes=title_id in pending_ids)
+            context = await _scene_review_context(session, title_id)
+        last_job, last_job_duration = await _load_last_job(title_id)
+        last_scan_job, last_scan_job_duration = await _load_last_scan_job(title_id)
+        return templates.TemplateResponse(
+            "partials/title_detail_card.html",
+            {
+                "request": request,
+                "row": row,
+                "last_job": last_job,
+                "last_job_duration": last_job_duration,
+                "last_scan_job": last_scan_job,
+                "last_scan_job_duration": last_scan_job_duration,
+                **context,
+            },
+        )
     async with get_session() as session:
         context = await _scene_review_context(session, title_id)
     return templates.TemplateResponse(
@@ -100,11 +132,11 @@ async def _render_scene_review(request: Request, title_id: int) -> HTMLResponse:
 
 
 @router.get("/library/title/{title_id}/scenes", response_class=HTMLResponse)
-async def scene_review_refresh(request: Request, title_id: int):
+async def scene_review_refresh(request: Request, title_id: int, detail_view: bool = False):
     """Self-polling target for scene_review_list.html while a scan is in progress
     (see its own hx-get) -- same idea as title_row.html's self-poll on
     queued/processing status."""
-    return await _render_scene_review(request, title_id)
+    return await _render_scene_review(request, title_id, detail_view)
 
 
 @router.get("/library/title/{title_id}/scene-review", response_class=HTMLResponse)
@@ -126,13 +158,13 @@ async def scene_review_page(request: Request, title_id: int):
 
 
 @router.post("/library/title/{title_id}/scan-scenes", response_class=HTMLResponse)
-async def scan_scenes(request: Request, title_id: int):
+async def scan_scenes(request: Request, title_id: int, detail_view: bool = Form(False)):
     await scene_job_queue.enqueue_scan_if_not_already_active(title_id)
-    return await _render_scene_review(request, title_id)
+    return await _render_scene_review(request, title_id, detail_view)
 
 
 @router.post("/library/title/{title_id}/reverify-scenes-claude", response_class=HTMLResponse)
-async def reverify_scenes_claude(request: Request, title_id: int):
+async def reverify_scenes_claude(request: Request, title_id: int, detail_view: bool = Form(False)):
     """Manually re-runs the Claude Vision precision filter (see
     app.scenes.pipeline.reverify_scenes_with_claude) against this title's existing
     candidates -- for scenes scanned/auto-approved before claude_vision_verify_enabled
@@ -142,11 +174,11 @@ async def reverify_scenes_claude(request: Request, title_id: int):
     and reverify_scenes_with_claude both no-op harmlessly (an empty scene list, or an
     unconfigured endpoint failing every candidate) if it's ever hit anyway."""
     await scene_job_queue.enqueue_claude_verify_if_not_already_active(title_id)
-    return await _render_scene_review(request, title_id)
+    return await _render_scene_review(request, title_id, detail_view)
 
 
 @router.post("/library/title/{title_id}/apply-scenes", response_class=HTMLResponse)
-async def apply_scenes(request: Request, title_id: int):
+async def apply_scenes(request: Request, title_id: int, detail_view: bool = Form(False)):
     """Rebuilds the "Vulgarr Edit" sibling file from every currently-approved
     scene on this title. Real work happens in the queue worker
     (apply_scene_blur via SceneJobKind.blur) -- this just enqueues, same shape
@@ -168,13 +200,13 @@ async def apply_scenes(request: Request, title_id: int):
         has_approved = approved.first() is not None
     if has_approved:
         await scene_job_queue.enqueue_blur_if_not_already_active(title_id)
-    return await _render_scene_review(request, title_id)
+    return await _render_scene_review(request, title_id, detail_view)
 
 
 @router.post("/library/shows/{series_id}/scan-scenes", response_class=HTMLResponse)
-async def scan_scenes_show(request: Request, series_id: int):
+async def scan_scenes_show(request: Request, series_id: int, came_from: str | None = Form(default=None)):
     from app.db.models import MediaType
-    from app.routers.library import SEVERITY_OPTIONS, _load_seasons
+    from app.routers.library import SEVERITY_OPTIONS, _aggregate_show_pip, _load_seasons
 
     async with get_session() as session:
         result = await session.execute(
@@ -182,17 +214,27 @@ async def scan_scenes_show(request: Request, series_id: int):
         )
         title_ids = [row[0] for row in result.all()]
         current_version = int(await get_setting(session, "wordlist_version"))
-        series_title, seasons = await _load_seasons(session, series_id, current_version)
+        series_title, poster_url, severity_levels, precise_mode, gating_message, seasons = await _load_seasons(
+            session, series_id, current_version, came_from=came_from
+        )
+    pip, pip_label = _aggregate_show_pip(seasons)
 
     queued = sum([await scene_job_queue.enqueue_scan_if_not_already_active(title_id) for title_id in title_ids])
     scan_message = f"Queued {queued} episode(s) for scene scanning."
 
     return templates.TemplateResponse(
-        "show_detail.html",
+        "partials/show_detail_card.html",
         {
             "request": request,
             "series_id": series_id,
+            "came_from": came_from,
             "series_title": series_title,
+            "poster_url": poster_url,
+            "severity_levels": severity_levels,
+            "precise_mode": precise_mode,
+            "gating_message": gating_message,
+            "pip": pip,
+            "pip_label": pip_label,
             "seasons": seasons,
             "severity_options": SEVERITY_OPTIONS,
             "scan_message": scan_message,
@@ -201,9 +243,15 @@ async def scan_scenes_show(request: Request, series_id: int):
 
 
 @router.post("/library/shows/{series_id}/season/{season_number}/scan-scenes", response_class=HTMLResponse)
-async def scan_scenes_season(request: Request, series_id: int, season_number: int):
+async def scan_scenes_season(
+    request: Request,
+    series_id: int,
+    season_number: int,
+    detail_view: bool = Form(False),
+    came_from: str | None = Form(default=None),
+):
     from app.db.models import MediaType
-    from app.routers.library import _load_season
+    from app.routers.library import SEVERITY_OPTIONS, _load_season, _load_season_detail_context
 
     async with get_session() as session:
         result = await session.execute(
@@ -215,11 +263,28 @@ async def scan_scenes_season(request: Request, series_id: int, season_number: in
         )
         title_ids = [row[0] for row in result.all()]
         current_version = int(await get_setting(session, "wordlist_version"))
-        season = await _load_season(session, series_id, season_number, current_version)
+        if detail_view:
+            context = await _load_season_detail_context(
+                session, series_id, season_number, current_version, came_from=came_from
+            )
+        else:
+            season = await _load_season(session, series_id, season_number, current_version)
 
     queued = sum([await scene_job_queue.enqueue_scan_if_not_already_active(title_id) for title_id in title_ids])
     scan_message = f"Queued {queued} episode(s) for scene scanning."
 
+    if detail_view:
+        return templates.TemplateResponse(
+            "partials/season_detail_card.html",
+            {
+                "request": request,
+                "series_id": series_id,
+                "season_number": season_number,
+                "severity_options": SEVERITY_OPTIONS,
+                "scan_message": scan_message,
+                **context,
+            },
+        )
     return templates.TemplateResponse(
         "partials/season_row.html",
         {"request": request, "series_id": series_id, "season": season, "scan_message": scan_message},
@@ -238,7 +303,7 @@ async def cancel_scene_job(request: Request, job_id: int):
 
 
 @router.post("/scenes/{scene_id}/approve", response_class=HTMLResponse)
-async def approve_scene(request: Request, scene_id: int):
+async def approve_scene(request: Request, scene_id: int, detail_view: bool = Form(False)):
     async with get_session() as session:
         scene = await session.get(DetectedScene, scene_id)
         title_id = scene.title_id if scene else None
@@ -248,11 +313,11 @@ async def approve_scene(request: Request, scene_id: int):
             await session.commit()
     if title_id is None:
         return HTMLResponse("")
-    return await _render_scene_review(request, title_id)
+    return await _render_scene_review(request, title_id, detail_view)
 
 
 @router.post("/scenes/{scene_id}/reject", response_class=HTMLResponse)
-async def reject_scene(request: Request, scene_id: int):
+async def reject_scene(request: Request, scene_id: int, detail_view: bool = Form(False)):
     async with get_session() as session:
         scene = await session.get(DetectedScene, scene_id)
         title_id = scene.title_id if scene else None
@@ -262,11 +327,11 @@ async def reject_scene(request: Request, scene_id: int):
             await session.commit()
     if title_id is None:
         return HTMLResponse("")
-    return await _render_scene_review(request, title_id)
+    return await _render_scene_review(request, title_id, detail_view)
 
 
 @router.post("/scenes/{scene_id}/toggle-mute", response_class=HTMLResponse)
-async def toggle_scene_mute(request: Request, scene_id: int):
+async def toggle_scene_mute(request: Request, scene_id: int, detail_view: bool = Form(False)):
     """Flips whether Apply also mutes audio for this scene, on top of always
     blurring the video -- default off (see DetectedScene.mute_audio). Doesn't
     touch status/reviewed_at -- this is independent of approve/reject, and can
@@ -279,11 +344,11 @@ async def toggle_scene_mute(request: Request, scene_id: int):
             await session.commit()
     if title_id is None:
         return HTMLResponse("")
-    return await _render_scene_review(request, title_id)
+    return await _render_scene_review(request, title_id, detail_view)
 
 
 @router.post("/library/title/{title_id}/approve-high-confidence", response_class=HTMLResponse)
-async def approve_high_confidence_scenes(request: Request, title_id: int):
+async def approve_high_confidence_scenes(request: Request, title_id: int, detail_view: bool = Form(False)):
     """Bulk-approves every still-pending candidate whose dense verification pass
     (see app.scenes.pipeline.scan_for_scenes) cleared scene_high_confidence_fraction
     -- the review-friction reducer for the clear-cut cases, while anything short/
@@ -303,11 +368,11 @@ async def approve_high_confidence_scenes(request: Request, title_id: int):
             scene.status = SceneReviewStatus.approved
             scene.reviewed_at = now
         await session.commit()
-    return await _render_scene_review(request, title_id)
+    return await _render_scene_review(request, title_id, detail_view)
 
 
 @router.post("/library/title/{title_id}/approve-all-scenes", response_class=HTMLResponse)
-async def approve_all_scenes(request: Request, title_id: int):
+async def approve_all_scenes(request: Request, title_id: int, detail_view: bool = Form(False)):
     """Bulk-approves every still-pending candidate regardless of verified_fraction
     -- the blunt version of approve-high-confidence above, for anyone who'd rather
     just approve everything a scan found than review one at a time."""
@@ -323,7 +388,7 @@ async def approve_all_scenes(request: Request, title_id: int):
             scene.status = SceneReviewStatus.approved
             scene.reviewed_at = now
         await session.commit()
-    return await _render_scene_review(request, title_id)
+    return await _render_scene_review(request, title_id, detail_view)
 
 
 # Padding on each side of the requested [start, end], for the same reason the
@@ -428,6 +493,7 @@ async def adjust_scene(
     scene_id: int,
     start_seconds: float = Form(...),
     end_seconds: float = Form(...),
+    detail_view: bool = Form(False),
 ):
     async with get_session() as session:
         scene = await session.get(DetectedScene, scene_id)
@@ -438,4 +504,4 @@ async def adjust_scene(
             await session.commit()
     if title_id is None:
         return HTMLResponse("")
-    return await _render_scene_review(request, title_id)
+    return await _render_scene_review(request, title_id, detail_view)

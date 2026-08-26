@@ -1,3 +1,5 @@
+from datetime import datetime
+
 from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
@@ -80,46 +82,89 @@ async def _load_scene_jobs():
     return active, recent, running
 
 
-async def _render_queue_partial(request: Request, cancel_error: str | None = None) -> HTMLResponse:
+def _audio_row(job: ProcessingJob) -> dict:
+    return {
+        "title": job.title,
+        "kind_label": "Audio",
+        "detail": job.trigger_source.value,
+        "state": job.state,
+        "progress_percent": job.progress_percent,
+        "progress_message": job.progress_message,
+        "error": job.error,
+        "started_at": job.started_at,
+        "finished_at": job.finished_at,
+        "sort_key": job.created_at,
+        "cancel_url": f"/queue/{job.id}/cancel",
+        "waiting_status": None,
+    }
+
+
+def _scene_row(job: SceneJob) -> dict:
+    return {
+        "title": job.title,
+        "kind_label": "Scene",
+        "detail": job.kind.value,
+        "state": job.state,
+        "progress_percent": job.progress_percent,
+        "progress_message": job.progress_message,
+        "error": job.error,
+        "started_at": job.started_at,
+        "finished_at": job.finished_at,
+        "sort_key": job.created_at,
+        "cancel_url": f"/scene-jobs/{job.id}/cancel",
+        "waiting_status": None,
+    }
+
+
+def _waiting_row(title: Title) -> dict:
+    return {
+        "title": title,
+        "kind_label": "Audio",
+        "detail": "waiting",
+        "state": None,
+        "progress_percent": None,
+        "progress_message": None,
+        "error": None,
+        "started_at": None,
+        "finished_at": None,
+        "sort_key": title.replacement_requested_at or datetime.min,
+        "cancel_url": None,
+        "waiting_status": title.status,
+    }
+
+
+async def _queue_context(cancel_error: str | None = None) -> dict:
     active, recent, running, waiting = await _load_jobs()
     scene_active, scene_recent, scene_running = await _load_scene_jobs()
-    return templates.TemplateResponse(
-        "partials/queue_table.html",
-        {
-            "request": request,
-            "active": active,
-            "recent": recent,
-            "running": running,
-            "total_active": len(active),
-            "waiting": waiting,
-            "scene_active": scene_active,
-            "scene_recent": scene_recent,
-            "scene_running": scene_running,
-            "scene_total_active": len(scene_active),
-            "cancel_error": cancel_error,
-        },
+
+    in_progress = sorted(
+        [_audio_row(j) for j in active] + [_scene_row(j) for j in scene_active] + [_waiting_row(t) for t in waiting],
+        key=lambda r: r["sort_key"],
     )
+    completed = sorted(
+        [_audio_row(j) for j in recent] + [_scene_row(j) for j in scene_recent],
+        key=lambda r: r["finished_at"] or datetime.min,
+        reverse=True,
+    )[:30]
+
+    return {
+        "in_progress": in_progress,
+        "completed": completed,
+        "running": running + scene_running,
+        "total_active": len(in_progress),
+        "cancel_error": cancel_error,
+    }
+
+
+async def _render_queue_partial(request: Request, cancel_error: str | None = None) -> HTMLResponse:
+    context = await _queue_context(cancel_error)
+    return templates.TemplateResponse("partials/queue_table.html", {"request": request, **context})
 
 
 @router.get("", response_class=HTMLResponse)
 async def queue_page(request: Request):
-    active, recent, running, waiting = await _load_jobs()
-    scene_active, scene_recent, scene_running = await _load_scene_jobs()
-    return templates.TemplateResponse(
-        "queue.html",
-        {
-            "request": request,
-            "active": active,
-            "recent": recent,
-            "running": running,
-            "total_active": len(active),
-            "waiting": waiting,
-            "scene_active": scene_active,
-            "scene_recent": scene_recent,
-            "scene_running": scene_running,
-            "scene_total_active": len(scene_active),
-        },
-    )
+    context = await _queue_context()
+    return templates.TemplateResponse("queue.html", {"request": request, **context})
 
 
 @router.get("/topbar", response_class=HTMLResponse)
