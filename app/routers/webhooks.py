@@ -1,4 +1,5 @@
 import asyncio
+import hmac
 import logging
 import re
 from pathlib import Path
@@ -35,7 +36,7 @@ async def _check_token(request: Request) -> None:
         token = await get_setting(session, "webhook_token")
     if not token:
         return
-    if request.query_params.get("token") != token:
+    if not hmac.compare_digest(request.query_params.get("token", ""), token):
         raise HTTPException(status_code=401, detail="Invalid or missing webhook token")
 
 
