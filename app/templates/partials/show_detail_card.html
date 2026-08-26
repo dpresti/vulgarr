@@ -1,0 +1,88 @@
+  <div id="show-detail-{{ series_id }}">
+    <div class="detail-backdrop">
+      {% if poster_url %}<div class="detail-backdrop-img" style="background-image: url('{{ poster_url }}');"></div>{% endif %}
+      <div class="detail-backdrop-scrim"></div>
+      <div class="detail-header">
+        {% if poster_url %}
+          <img class="detail-poster" src="{{ poster_url }}" alt="">
+        {% else %}
+          <div class="detail-poster poster-placeholder">{{ (series_title or '?')[:1] }}</div>
+        {% endif %}
+        <div class="detail-heading">
+          <div class="detail-title-group">
+            <h1>{{ series_title or 'Unknown series' }}</h1>
+            <div class="detail-badges">
+              <span class="badge badge-{{ pip }}">{{ pip_label }}</span>
+            </div>
+          </div>
+          <div class="detail-actions">
+            <form hx-post="/library/shows/{{ series_id }}/scan-scenes" hx-target="#show-detail-{{ series_id }}" hx-swap="outerHTML">
+              <input type="hidden" name="came_from" value="{{ came_from or '' }}">
+              <button type="submit" class="secondary" title="Scan every episode in this show for candidate scenes -- no subtitle needed">Process Video</button>
+            </form>
+            <form hx-post="/library/shows/{{ series_id }}/process" hx-target="#show-detail-{{ series_id }}" hx-swap="outerHTML">
+              <input type="hidden" name="came_from" value="{{ came_from or '' }}">
+              <button type="submit" class="secondary" title="Queue every episode in this show that already has a subtitle (word-list mute)">Process Audio</button>
+            </form>
+            <form hx-post="/library/shows/{{ series_id }}/process-both" hx-target="#show-detail-{{ series_id }}" hx-swap="outerHTML">
+              <input type="hidden" name="came_from" value="{{ came_from or '' }}">
+              <button type="submit" title="Process the word list and scan for scenes together, for every episode in this show">Process Both</button>
+            </form>
+          </div>
+        </div>
+      </div>
+      <div class="detail-body">
+        {% if process_message %}<div class="muted">{{ process_message }}</div>{% endif %}
+        {% if scan_message %}<div class="muted">{{ scan_message }}</div>{% endif %}
+        {% set current_levels = (severity_levels or '').split(',') %}
+        <div style="display: flex; flex-wrap: nowrap; gap: 1rem;">
+          <div style="min-width: 0; flex-shrink: 1;">
+            <div class="detail-label" title="Applies to every episode in every season of this show">Severity</div>
+            <form hx-post="/library/shows/{{ series_id }}/severity" hx-target="#show-detail-{{ series_id }}" hx-swap="outerHTML">
+              <input type="hidden" name="came_from" value="{{ came_from or '' }}">
+              <span class="severity-checks">
+                <label><input type="checkbox" name="sev_child" {% if 'child' in current_levels %}checked{% endif %} onchange="this.form.requestSubmit()"> child</label>
+                <label><input type="checkbox" name="sev_teen" {% if 'teen' in current_levels %}checked{% endif %} onchange="this.form.requestSubmit()"> teen</label>
+              </span>
+            </form>
+            {% if gating_message %}<div class="muted" style="color: var(--vulgarr-outdated-text); margin-top: 0.3rem;">{{ gating_message }}</div>{% endif %}
+          </div>
+          <div style="min-width: 0; flex-shrink: 0;">
+            <div class="detail-label" title="Applies to every episode in every season of this show">Mute precision</div>
+            <form hx-post="/library/shows/{{ series_id }}/set-precise-mode" hx-target="#show-detail-{{ series_id }}" hx-swap="outerHTML">
+              <input type="hidden" name="came_from" value="{{ came_from or '' }}">
+              <select name="precise_mode" class="input-precise-inline" onchange="this.form.requestSubmit()" title="How precisely to time each muted word">
+                <option value="whole_line" {% if precise_mode == 'whole_line' %}selected{% endif %}>Whole line</option>
+                <option value="estimate" {% if precise_mode == 'estimate' %}selected{% endif %}>Precise (estimate)</option>
+                <option value="whisper" {% if precise_mode == 'whisper' %}selected{% endif %}>Precise (Whisper)</option>
+              </select>
+            </form>
+          </div>
+        </div>
+        <div class="table-scroll responsive-table" style="margin-top: 1rem;">
+        <table class="card-grid card-tap">
+          <thead>
+            <tr>
+              <th>Season</th>
+              <th>Episodes</th>
+              <th>Done</th>
+              <th>Active</th>
+              <th>Failed</th>
+              <th>Outdated</th>
+              <th>Severity</th>
+              <th>Precision</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for season in seasons %}
+              {% include "partials/season_row.html" %}
+            {% else %}
+            <tr><td colspan="9" class="muted">No seasons found.</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+        </div>
+      </div>
+    </div>
+  </div>

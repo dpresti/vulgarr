@@ -1,45 +1,11 @@
 {% extends "base.html" %}
 {% block content %}
+  {% if came_from == 'library' %}
+  <a class="back-link" href="/library"><i class="ti ti-arrow-left" aria-hidden="true"></i>Back to Library</a>
+  <a class="btn-link small" href="/library/shows/{{ series_id }}" style="margin-left: 0.5rem;">Show all seasons</a>
+  {% else %}
   <a class="back-link" href="/library/shows"><i class="ti ti-arrow-left" aria-hidden="true"></i>Back to TV Shows</a>
-  <div class="toolbar">
-    <h1>{{ series_title or 'Unknown series' }}</h1>
-    <div>
-      {% if process_message %}<div class="muted">{{ process_message }}</div>{% endif %}
-      {% if scan_message %}<div class="muted">{{ scan_message }}</div>{% endif %}
-      <form method="post" action="/library/shows/{{ series_id }}/process-both" class="inline">
-        <button type="submit" title="Process the word list and scan for scenes together, for every episode in this show">Process Both (all episodes)</button>
-      </form>
-      <form method="post" action="/library/shows/{{ series_id }}/process" class="inline">
-        <button type="submit" class="secondary" title="Queue every episode in this show that already has a subtitle (word-list mute)">Process Audio (all episodes)</button>
-      </form>
-      <form method="post" action="/library/shows/{{ series_id }}/scan-scenes" class="inline">
-        <button type="submit" class="secondary" title="Scan every episode in this show for candidate scenes -- no subtitle needed">Process Video (all episodes)</button>
-      </form>
-    </div>
-  </div>
+  {% endif %}
 
-  <div class="table-scroll responsive-table">
-  <table class="card-grid card-grid-lead card-tap">
-    <thead>
-      <tr>
-        <th>Season</th>
-        <th>Episodes</th>
-        <th>Done</th>
-        <th>Active</th>
-        <th>Failed</th>
-        <th>Outdated</th>
-        <th>Severity</th>
-        <th>Precision</th>
-        <th></th>
-      </tr>
-    </thead>
-    <tbody>
-      {% for season in seasons %}
-        {% include "partials/season_row.html" %}
-      {% else %}
-      <tr><td colspan="9" class="muted">No seasons found.</td></tr>
-      {% endfor %}
-    </tbody>
-  </table>
-  </div>
+  {% include "partials/show_detail_card.html" %}
 {% endblock %}

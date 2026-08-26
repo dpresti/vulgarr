@@ -1,5 +1,5 @@
 <div class="table-scroll responsive-table">
-<table id="library-table" class="card-grid card-grid-lead">
+<table id="library-table" class="card-grid card-grid-lead card-tap">
   <thead>
     <tr>
       <th>{% if movie_sort_link is defined %}<a href="{{ movie_sort_link('title') }}">Title{% if movie_sort == 'title' %} {{ '▲' if movie_dir == 'asc' else '▼' }}{% endif %}</a>{% else %}Title{% endif %}</th>

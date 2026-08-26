@@ -1,4 +1,7 @@
 {% set current_levels = row.title.severity_levels.split(',') %}
+{% set audio_verb = 'Reprocess' if row.status not in ('not_processed', 'failed', 'cancelled') else 'Process' %}
+{% set video_verb = 'Reprocess' if row.title.scene_scan_status not in ('not_scanned', 'scan_failed') else 'Process' %}
+{% set detail_view = true %}
 <div id="title-detail-{{ row.title.id }}">
   <div class="detail-backdrop">
     {% if row.title.poster_url %}<div class="detail-backdrop-img" style="background-image: url('{{ row.title.poster_url }}');"></div>{% endif %}
@@ -10,9 +13,44 @@
         <div class="detail-poster poster-placeholder">{{ row.display_name[:1] }}</div>
       {% endif %}
       <div class="detail-heading">
-        <h1>{{ row.display_name }}</h1>
-        <div class="detail-badges">
-          <span class="badge badge-{{ row.pip }}">{{ row.pip_label }}</span>
+        <div class="detail-title-group">
+          <h1>{{ row.display_name }}</h1>
+          <div class="detail-badges">
+            <span class="badge badge-{{ row.pip }}">{{ row.pip_label }}</span>
+          </div>
+          {% include "partials/title_job_status.html" %}
+        </div>
+        <div class="detail-actions">
+          {% if row.status != 'awaiting_mkv' %}
+            <form hx-post="/library/{{ row.title.id }}/process-video" hx-target="#title-detail-{{ row.title.id }}" hx-swap="outerHTML">
+              <input type="hidden" name="detail_view" value="true">
+              <button type="submit" class="secondary" title="Scan for candidate explicit-content scenes -- no subtitle needed">{{ video_verb }} Video</button>
+            </form>
+          {% endif %}
+          {% if row.status == 'awaiting_mkv' %}
+            <span class="muted">waiting on Sonarr/Radarr…</span>
+          {% elif row.status == 'awaiting_subtitle' %}
+            <span class="muted">waiting on Bazarr…</span>
+          {% elif not row.has_subtitle %}
+            <form hx-post="/library/{{ row.title.id }}/search-subtitle" hx-target="#title-detail-{{ row.title.id }}" hx-swap="outerHTML" hx-indicator="#detail-bazarr-indicator-{{ row.title.id }}">
+              <input type="hidden" name="detail_view" value="true">
+              <button type="submit" class="secondary" title="Search Bazarr for a subtitle, then queue audio processing if found">{{ audio_verb }} Audio</button>
+            </form>
+            <form hx-post="/library/{{ row.title.id }}/search-subtitle-and-process-both" hx-target="#title-detail-{{ row.title.id }}" hx-swap="outerHTML" hx-indicator="#detail-bazarr-indicator-{{ row.title.id }}">
+              <input type="hidden" name="detail_view" value="true">
+              <button type="submit" title="Search Bazarr for a subtitle, then queue both audio processing (if found) and a scene scan (either way)">{{ audio_verb }} Both</button>
+            </form>
+            <span id="detail-bazarr-indicator-{{ row.title.id }}" class="htmx-indicator muted">searching…</span>
+          {% else %}
+            <form hx-post="/library/{{ row.title.id }}/process" hx-target="#title-detail-{{ row.title.id }}" hx-swap="outerHTML">
+              <input type="hidden" name="detail_view" value="true">
+              <button type="submit" class="secondary" title="{{ audio_verb }} the word list (profanity mute)">{{ audio_verb }} Audio</button>
+            </form>
+            <form hx-post="/library/{{ row.title.id }}/process-both" hx-target="#title-detail-{{ row.title.id }}" hx-swap="outerHTML">
+              <input type="hidden" name="detail_view" value="true">
+              <button type="submit" title="Process the word list and scan for scenes together">{{ audio_verb }} Both</button>
+            </form>
+          {% endif %}
         </div>
       </div>
     </div>
@@ -32,6 +70,11 @@
             <div class="detail-label">Time to finish</div>
             <div class="detail-stat">{{ last_scan_job_duration or '—' }}</div>
           </div>
+          {% if scenes %}
+          <div class="detail-section" style="margin-top: 0.5rem;">
+            {% include "partials/scene_review_apply_row.html" %}
+          </div>
+          {% endif %}
         </div>
         <div class="detail-column">
           <h3 class="detail-column-heading">Audio</h3>
@@ -92,45 +135,10 @@
         </div>
       </div>
 
-      {% set audio_verb = 'Reprocess' if row.status not in ('not_processed', 'failed', 'cancelled') else 'Process' %}
-      {% set video_verb = 'Reprocess' if row.title.scene_scan_status not in ('not_scanned', 'scan_failed') else 'Process' %}
       {% set hide_scan_trigger = true %}
       <div class="detail-section" style="margin-top: 0.5rem;">
         <div class="detail-label">Scene review</div>
         {% include "partials/scene_review_list.html" %}
-      </div>
-
-      <div class="detail-actions">
-        {% if row.status != 'awaiting_mkv' %}
-          <form hx-post="/library/{{ row.title.id }}/process-video" hx-target="#title-detail-{{ row.title.id }}" hx-swap="outerHTML">
-            <input type="hidden" name="detail_view" value="true">
-            <button type="submit" class="secondary" title="Scan for candidate explicit-content scenes -- no subtitle needed">{{ video_verb }} Video</button>
-          </form>
-        {% endif %}
-        {% if row.status == 'awaiting_mkv' %}
-          <span class="muted">waiting on Sonarr/Radarr…</span>
-        {% elif row.status == 'awaiting_subtitle' %}
-          <span class="muted">waiting on Bazarr…</span>
-        {% elif not row.has_subtitle %}
-          <form hx-post="/library/{{ row.title.id }}/search-subtitle" hx-target="#title-detail-{{ row.title.id }}" hx-swap="outerHTML" hx-indicator="#detail-bazarr-indicator-{{ row.title.id }}">
-            <input type="hidden" name="detail_view" value="true">
-            <button type="submit" class="secondary" title="Search Bazarr for a subtitle, then queue audio processing if found">Search Bazarr &amp; Process Audio</button>
-          </form>
-          <form hx-post="/library/{{ row.title.id }}/search-subtitle-and-process-both" hx-target="#title-detail-{{ row.title.id }}" hx-swap="outerHTML" hx-indicator="#detail-bazarr-indicator-{{ row.title.id }}">
-            <input type="hidden" name="detail_view" value="true">
-            <button type="submit" title="Search Bazarr for a subtitle, then queue both audio processing (if found) and a scene scan (either way)">Search Bazarr &amp; Process Both</button>
-          </form>
-          <span id="detail-bazarr-indicator-{{ row.title.id }}" class="htmx-indicator muted">searching…</span>
-        {% else %}
-          <form hx-post="/library/{{ row.title.id }}/process" hx-target="#title-detail-{{ row.title.id }}" hx-swap="outerHTML">
-            <input type="hidden" name="detail_view" value="true">
-            <button type="submit" class="secondary" title="{{ audio_verb }} the word list (profanity mute)">{{ audio_verb }} Audio</button>
-          </form>
-          <form hx-post="/library/{{ row.title.id }}/process-both" hx-target="#title-detail-{{ row.title.id }}" hx-swap="outerHTML">
-            <input type="hidden" name="detail_view" value="true">
-            <button type="submit" title="Process the word list and scan for scenes together">{{ audio_verb }} Both</button>
-          </form>
-        {% endif %}
       </div>
     </div>
   </div>

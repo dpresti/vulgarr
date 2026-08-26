@@ -1,0 +1,36 @@
+{# The "what's actively happening to this title right now" bar -- shown once,
+   directly under the status pill, instead of scattered across the Video column
+   (Apply) and the Scene Review section (scan / Claude Vision) where you had to
+   scroll to find it. Only rendered from title_detail_card.html (detail_view);
+   scene_review_list.html/scene_review_apply_row.html render the equivalent
+   progress+message inline for the standalone scene-review page, where there's
+   no status pill to sit under. #}
+{% if scan_job and scene_scan_status in ('queued', 'scanning') %}
+<div class="job-status">
+  <div class="job-progress">{% if scan_job.progress_percent is not none %}<div class="job-progress-fill" style="width: {{ scan_job.progress_percent }}%"></div>{% endif %}</div>
+  <span class="job-status-msg">{{ scan_job.progress_message or 'Scanning…' }}</span>
+  <form hx-post="/scene-jobs/{{ scan_job.id }}/cancel" hx-target="#scene-review-{{ title_id }}" hx-swap="outerHTML" hx-confirm="Cancel this scan?">
+    <button type="submit" class="small danger">Cancel</button>
+  </form>
+</div>
+{% endif %}
+{% set claude_verify_active = claude_verify_job and claude_verify_job.state.value in ('queued', 'processing') %}
+{% if claude_verify_active %}
+<div class="job-status">
+  <div class="job-progress">{% if claude_verify_job.progress_percent is not none %}<div class="job-progress-fill" style="width: {{ claude_verify_job.progress_percent }}%"></div>{% endif %}</div>
+  <span class="job-status-msg">{{ claude_verify_job.progress_message or 'Verifying with Claude Vision…' }}</span>
+  <form hx-post="/scene-jobs/{{ claude_verify_job.id }}/cancel" hx-target="#scene-review-{{ title_id }}" hx-swap="outerHTML" hx-confirm="Cancel Claude Vision verification?">
+    <button type="submit" class="small danger">Cancel</button>
+  </form>
+</div>
+{% endif %}
+{% set blur_active = blur_job and blur_job.state.value in ('queued', 'processing') %}
+{% if blur_active %}
+<div class="job-status">
+  <div class="job-progress">{% if blur_job.progress_percent is not none %}<div class="job-progress-fill" style="width: {{ blur_job.progress_percent }}%"></div>{% endif %}</div>
+  <span class="job-status-msg">{{ blur_job.progress_message or 'Applying…' }}</span>
+  <form hx-post="/scene-jobs/{{ blur_job.id }}/cancel" hx-target="#scene-review-{{ title_id }}" hx-swap="outerHTML" hx-confirm="Cancel applying blur?">
+    <button type="submit" class="small danger">Cancel</button>
+  </form>
+</div>
+{% endif %}
