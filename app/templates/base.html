@@ -239,7 +239,14 @@
       font-size: 0.75rem; font-weight: 600; white-space: nowrap;
     }
     .stat-pill i { font-size: 0.9rem; }
-    .row-actions { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; }
+    /* nowrap on desktop -- the Process cell in a many-column table (title_row.html/
+       season_row.html) is narrow enough that flex-wrap would put each button on its
+       own line even though there's room for all of them on one if the cell weren't
+       artificially constrained by the table's column-sizing; .table-scroll's own
+       overflow-x:auto is the fallback for a genuinely-too-narrow desktop window,
+       same as the rest of this table. Mobile restores wrap below, once the table has
+       already reflowed into single-column cards with a full-width Process row. */
+    .row-actions { display: flex; align-items: center; gap: 0.5rem; flex-wrap: nowrap; }
     details { margin-top: 1.5rem; }
     details:first-of-type { margin-top: 0; }
     summary { cursor: pointer; padding: 0.4rem 0; }
@@ -487,6 +494,11 @@
          span-full/mobile-only-summary below) -- still real <td>s so the
          non-mobile <table> keeps its normal separate columns. */
       .responsive-table .card-grid td.stat-cell-hide-mobile { display: none !important; }
+      /* Restore wrapping for the Process button group once the table has
+         reflowed into full-width single-column cards -- the desktop nowrap
+         (see .row-actions) is specifically to counteract a many-column
+         table's narrow Process cell, which no longer applies here. */
+      .row-actions { flex-wrap: wrap; }
 
       /* ---- mobile: Word List reads better as one compact row per term than
          a 2x2 grid -- everything (term, severity, enabled, delete) on a

@@ -5,6 +5,16 @@
 <h1 align="center">Vulgarr</h1>
 <p align="center">A self-hosted, Radarr/Sonarr-styled profanity &amp; nudity filter for your Plex/Jellyfin library.</p>
 
+<p align="center">
+  <a href="https://github.com/dpresti/vulgarr/actions/workflows/tests.yml"><img src="https://github.com/dpresti/vulgarr/actions/workflows/tests.yml/badge.svg" alt="Tests"></a>
+  <a href="https://github.com/dpresti/vulgarr/pkgs/container/vulgarr"><img src="https://img.shields.io/badge/ghcr.io-dpresti%2Fvulgarr-blue?logo=docker" alt="GHCR"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/github/license/dpresti/vulgarr" alt="License"></a>
+</p>
+
+<!-- GHCR has no public API for live pull-count/image-size stats the way Docker
+     Hub does, so those two can't be added here as live badges without also
+     publishing to Docker Hub. -->
+
 Vulgarr runs two independent pipelines against your library:
 
 - **Audio**: adds a second, selectable **"Clean"** audio track to movies and
