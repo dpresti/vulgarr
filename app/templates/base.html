@@ -315,6 +315,18 @@
     .detail-waiting { font-size: 0.82rem; color: var(--vulgarr-text-secondary); display: flex; align-items: center; gap: 6px; }
     .spinner { width: 12px; height: 12px; border-radius: 50%; border: 2px solid var(--vulgarr-border); border-top-color: var(--vulgarr-accent); animation: spin .7s linear infinite; display: inline-block; }
     @keyframes spin { to { transform: rotate(360deg); } }
+    /* htmx's own default .htmx-indicator CSS (injected by htmx.js itself) hides
+       via opacity, not display -- the element still reserves its full layout box
+       while "hidden", which is fine for a lone 12px spinner but steals real space
+       from neighboring flex items (e.g. the Process buttons next to a subtitle-
+       search indicator) once the indicator's content is a spinner + a full
+       sentence. Overriding with display keeps it out of layout entirely until a
+       request is actually in flight. span.htmx-indicator (adds an element type)
+       is deliberately more specific than htmx's own bare .htmx-indicator, so this
+       wins regardless of whether htmx's injected <style> lands before or after
+       this one in the DOM.  */
+    span.htmx-indicator { display: none; }
+    .htmx-request span.htmx-indicator, span.htmx-request.htmx-indicator { display: inline-flex; align-items: center; gap: 6px; }
 
     @media (max-width: 720px) {
       .poster-grid { grid-template-columns: repeat(auto-fill, minmax(112px, 1fr)); gap: 1rem 0.7rem; }
