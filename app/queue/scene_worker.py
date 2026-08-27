@@ -8,10 +8,12 @@ instead; see the scene-detection plan for the reasoning."""
 import asyncio
 import datetime
 import logging
+import shutil
 import time
 
 from sqlalchemy import select, update
 
+from app.config import settings as app_settings
 from app.db.models import JobState, SceneJob, SceneJobKind, Title
 from app.db.session import get_session, get_setting
 from app.queue.worker import is_within_off_hours_window
@@ -433,6 +435,16 @@ class SceneJobQueue:
                 job.finished_at = datetime.datetime.utcnow()
                 if is_scan:
                     title.scene_scan_status = "scan_failed"
+                if job.kind == SceneJobKind.blur:
+                    # A failed blur job is terminal -- apply_scene_blur's docstring
+                    # only resumes a work_dir when the *same* job_id gets
+                    # redispatched after an interrupted (CancelledError) run; a
+                    # retry after a genuine failure is always a fresh Apply click
+                    # with a new job_id, so this one's work_dir is never coming
+                    # back for. Left behind otherwise, this is a multi-GB ffmpeg
+                    # scratch dir that sits on disk forever.
+                    work_dir = app_settings.data_dir / "blur_work" / str(job.id)
+                    await asyncio.to_thread(shutil.rmtree, work_dir, ignore_errors=True)
 
             await session.commit()
 
