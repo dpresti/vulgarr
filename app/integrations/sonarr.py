@@ -4,6 +4,8 @@ from dataclasses import dataclass
 
 import httpx
 
+from app.domain import is_own_temp_path
+
 
 @dataclass(frozen=True)
 class SonarrEpisodeFile:
@@ -120,6 +122,10 @@ def parse_import_webhook(payload: dict) -> dict | None:
     episodes = payload.get("episodes") or []
     episode_file = payload.get("episodeFile") or {}
     if not episodes or not episode_file.get("path"):
+        return None
+    if is_own_temp_path(episode_file["path"]):
+        # This app's own in-progress backup-then-swap temp file, not a real
+        # download -- see is_own_temp_path.
         return None
 
     ep = episodes[0]

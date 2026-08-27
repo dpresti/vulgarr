@@ -4,6 +4,8 @@ from dataclasses import dataclass
 
 import httpx
 
+from app.domain import is_own_temp_path
+
 
 @dataclass(frozen=True)
 class RadarrMovieFile:
@@ -99,6 +101,10 @@ def parse_import_webhook(payload: dict) -> dict | None:
     movie = payload.get("movie") or {}
     movie_file = payload.get("movieFile") or {}
     if not movie_file.get("path"):
+        return None
+    if is_own_temp_path(movie_file["path"]):
+        # This app's own in-progress backup-then-swap temp file, not a real
+        # download -- see is_own_temp_path.
         return None
 
     return {

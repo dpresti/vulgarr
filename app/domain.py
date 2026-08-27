@@ -80,6 +80,23 @@ def is_mkv_path(video_path: str) -> bool:
     return video_path.lower().endswith(".mkv")
 
 
+# Markers this app puts in its own transient files during a backup-then-swap
+# (see app.mux.remux.build_clean_track / app.mux.scene_blur.build_blurred_video)
+# -- both briefly sit right next to the real file, in the same directory
+# Sonarr/Radarr watches, so a library scan catching one mid-swap can fire an
+# import webhook for it just like a real download.
+_OWN_TEMP_FILE_MARKERS = (".spf-tmp.", ".spf-blur-tmp.")
+
+
+def is_own_temp_path(video_path: str) -> bool:
+    """True if video_path is one of this app's own transient files, not a real
+    media file -- see _OWN_TEMP_FILE_MARKERS. Used to make parse_import_webhook
+    ignore a webhook that fired on one of these, which would otherwise create a
+    bogus Title row with no real content behind it."""
+    name = video_path.rsplit("/", 1)[-1]
+    return any(marker in name for marker in _OWN_TEMP_FILE_MARKERS)
+
+
 def title_href(title) -> str:
     """Library URL for a Title row -- every title (movie or episode) has its own
     detail page at /library/title/{id}; title_detail_card.html has no

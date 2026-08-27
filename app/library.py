@@ -60,8 +60,25 @@ async def upsert_title(
     poster_url: str | None = None,
     commit: bool = True,
 ) -> Title:
-    result = await session.execute(select(Title).where(Title.video_path == video_path))
-    title = result.scalar_one_or_none()
+    # Matched by Sonarr/Radarr's own stable id first, not video_path -- a file
+    # upgrade (e.g. WEBRip -> Bluray) changes the path but not the id, and matching
+    # on path alone meant an upgrade silently created a second, orphaned Title row
+    # instead of updating the existing one, losing its processing history and
+    # dropping straight back to "not yet processed". Falls back to video_path for
+    # a row that predates these ids being reliably stored (or a caller that
+    # genuinely has neither, which shouldn't normally happen for a real sync/
+    # webhook call).
+    title = None
+    if radarr_movie_id is not None:
+        title = (
+            await session.execute(select(Title).where(Title.radarr_movie_id == radarr_movie_id))
+        ).scalar_one_or_none()
+    elif sonarr_episode_id is not None:
+        title = (
+            await session.execute(select(Title).where(Title.sonarr_episode_id == sonarr_episode_id))
+        ).scalar_one_or_none()
+    if title is None:
+        title = (await session.execute(select(Title).where(Title.video_path == video_path))).scalar_one_or_none()
 
     default_subtitle_language = await get_setting(session, "default_subtitle_language")
     # find_subtitle_for_video does synchronous directory.exists()/glob() calls --
@@ -88,6 +105,19 @@ async def upsert_title(
         session.add(title)
     else:
         title.display_name = display_name
+        # The whole point of matching by id above: a file upgrade changes the path,
+        # so it has to be written back here rather than left pointing at whatever
+        # (possibly now-deleted) file this row was originally created for.
+        title.video_path = video_path
+        # Backfill ids on a row that predates them being reliably stored/matched
+        # (found via the video_path fallback above) -- never overwrites a real id
+        # with None just because this particular call didn't have it.
+        if sonarr_series_id is not None:
+            title.sonarr_series_id = sonarr_series_id
+        if sonarr_episode_id is not None:
+            title.sonarr_episode_id = sonarr_episode_id
+        if radarr_movie_id is not None:
+            title.radarr_movie_id = radarr_movie_id
 
     title.series_title = series_title
     title.season_number = season_number
