@@ -1,10 +1,19 @@
 #!/usr/bin/env bash
-# Blocks a commit if the staged diff matches a pattern from
-# .git-hooks-patterns.local (repo root, gitignored -- never committed).
-# That file is where you put your own real name/email/hostnames/paths, one
-# grep -E pattern per line (# comments and blank lines ignored). See
-# .git-hooks-patterns.local.example for the format. If the file doesn't
-# exist, this hook is a no-op.
+# Two independent checks, either can block the commit:
+#
+# 1. Staged diff vs .git-hooks-patterns.local (repo root, gitignored -- never
+#    committed). That file is where you put your own real name/email/
+#    hostnames/paths, one grep -E pattern per line (# comments and blank
+#    lines ignored). See .git-hooks-patterns.local.example for the format.
+#    No-op if that file doesn't exist.
+#
+# 2. The full test suite (python -m pytest, not bare pytest -- this repo has
+#    no conftest.py/pytest.ini, so bare pytest can't resolve "from app...
+#    import" the way python -m pytest's own sys.path handling does; see the
+#    CI workflow's history for the exact failure that taught us that). Runs
+#    unconditionally, same ~3-4s either way -- not worth the complexity of
+#    only running it for .py changes. `git commit --no-verify` is the escape
+#    hatch if you deliberately need to skip this.
 #
 # Installed via scripts/install-hooks.sh. This copy under scripts/hooks/ is
 # the tracked source of truth -- edit here, then re-run the installer, not
@@ -16,24 +25,31 @@ set -euo pipefail
 repo_root="$(git rev-parse --show-toplevel)"
 patterns_file="$repo_root/.git-hooks-patterns.local"
 
-[ -f "$patterns_file" ] || exit 0
+if [ -f "$patterns_file" ]; then
+  staged_diff="$(git diff --cached -U0)"
+  hit=0
 
-staged_diff="$(git diff --cached -U0)"
-hit=0
+  while IFS= read -r pattern; do
+    case "$pattern" in
+      ''|'#'*) continue ;;
+    esac
+    if echo "$staged_diff" | grep -qiE "$pattern"; then
+      echo "pre-commit: blocked -- staged changes match a pattern from .git-hooks-patterns.local: $pattern" >&2
+      hit=1
+    fi
+  done < "$patterns_file"
 
-while IFS= read -r pattern; do
-  case "$pattern" in
-    ''|'#'*) continue ;;
-  esac
-  if echo "$staged_diff" | grep -qiE "$pattern"; then
-    echo "pre-commit: blocked -- staged changes match a pattern from .git-hooks-patterns.local: $pattern" >&2
-    hit=1
+  if [ "$hit" -ne 0 ]; then
+    echo "" >&2
+    echo "Remove the flagged content, or edit .git-hooks-patterns.local, then retry." >&2
+    exit 1
   fi
-done < "$patterns_file"
+fi
 
-if [ "$hit" -ne 0 ]; then
+if ! (cd "$repo_root" && python3 -m pytest tests/ -q); then
   echo "" >&2
-  echo "Remove the flagged content, or edit .git-hooks-patterns.local, then retry." >&2
+  echo "pre-commit: blocked -- tests failed (see above), or couldn't run at all (e.g. missing" >&2
+  echo "deps -- try: pip install -r requirements-dev.txt). Fix it, or git commit --no-verify to skip." >&2
   exit 1
 fi
 
