@@ -229,3 +229,38 @@ async def poll_for_subtitle_then_enqueue(
         if title is not None and title.status == "awaiting_subtitle":
             title.status = "not_processed"
             await session.commit()
+
+
+async def reconcile_stale_awaiting_subtitle_titles() -> None:
+    """Run once at startup. A title in awaiting_subtitle has a
+    poll_for_subtitle_then_enqueue task watching for its subtitle to show up --
+    but that task lives only in memory (see spawn_background above), so it's
+    silently killed by a container restart/rebuild along with everything else,
+    leaving the title stuck in awaiting_subtitle with nothing left watching it:
+    invisible to the manual buttons (hidden while awaiting_subtitle) and to any
+    future poll, until it's manually reset. Re-starts the same bounded poll for
+    each one found still in that state -- its first check happens immediately,
+    so this also doubles as catching a subtitle that landed while the app was
+    down, without waiting for the full poll interval."""
+    async with get_session() as session:
+        result = await session.execute(select(Title).where(Title.status == "awaiting_subtitle"))
+        stale_titles = result.scalars().all()
+        resume_args = [
+            {
+                "video_path": t.video_path,
+                "media_type": t.media_type,
+                "display_name": t.display_name,
+                "sonarr_series_id": t.sonarr_series_id,
+                "sonarr_episode_id": t.sonarr_episode_id,
+                "radarr_movie_id": t.radarr_movie_id,
+                "series_title": t.series_title,
+                "season_number": t.season_number,
+                "episode_number": t.episode_number,
+            }
+            for t in stale_titles
+        ]
+    if not resume_args:
+        return
+    logger.info("Resuming subtitle search for %d title(s) left awaiting_subtitle across a restart", len(resume_args))
+    for kwargs in resume_args:
+        spawn_background(poll_for_subtitle_then_enqueue(**kwargs, trigger_source=TriggerSource.manual))
