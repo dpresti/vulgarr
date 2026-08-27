@@ -132,4 +132,7 @@ def parse_import_webhook(payload: dict) -> dict | None:
         "display_name": f"{series.get('title', 'Unknown')} - "
         f"S{ep.get('seasonNumber', 0):02d}E{ep.get('episodeNumber', 0):02d}",
         "video_path": episode_file["path"],
+        # Same reasoning as radarr.parse_import_webhook's poster_url -- the payload's
+        # "series" object already carries the images array, no extra API call needed.
+        "poster_url": _extract_poster_url(series.get("images", [])),
     }

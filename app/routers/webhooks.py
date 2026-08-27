@@ -85,6 +85,7 @@ async def sonarr_webhook(request: Request):
             series_title=parsed["series_title"],
             season_number=parsed["season_number"],
             episode_number=parsed["episode_number"],
+            poster_url=parsed["poster_url"],
         )
 
     tags: set[str] = set()
@@ -146,6 +147,7 @@ async def radarr_webhook(request: Request):
             display_name=parsed["display_name"],
             video_path=parsed["video_path"],
             radarr_movie_id=parsed["movie_id"],
+            poster_url=parsed["poster_url"],
         )
 
     tags: set[str] = set()

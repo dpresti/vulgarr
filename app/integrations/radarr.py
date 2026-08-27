@@ -105,4 +105,10 @@ def parse_import_webhook(payload: dict) -> dict | None:
         "movie_id": movie.get("id"),
         "display_name": f"{movie.get('title', 'Unknown')} ({movie.get('year', '')})",
         "video_path": movie_file["path"],
+        # The webhook payload's "movie" object carries the same images array as the
+        # REST API's Movie resource, so this needs no extra API call -- but a new
+        # Title row created straight off the webhook (see routers/webhooks.py) was
+        # never getting a poster at all, since this went unextracted here and the
+        # webhook handler had nothing to pass upsert_title.
+        "poster_url": _extract_poster_url(movie.get("images", [])),
     }
