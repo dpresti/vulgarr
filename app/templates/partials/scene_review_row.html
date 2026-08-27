@@ -30,6 +30,7 @@
 
     <div class="scene-review-adjust">
       <form class="inline" hx-post="/scenes/{{ scene.id }}/adjust" hx-target="{{ scene_review_target }}" hx-swap="outerHTML">
+        <input type="hidden" name="title_id" value="{{ title_id }}">
         {% if detail_view %}<input type="hidden" name="detail_view" value="true">{% endif %}
         <label class="muted">Start <input type="number" name="start_seconds" step="0.1" min="0" value="{{ '%.1f'|format(scene.start_seconds) }}" class="input-sm"></label>
         <label class="muted">End <input type="number" name="end_seconds" step="0.1" min="0" value="{{ '%.1f'|format(scene.end_seconds) }}" class="input-sm"></label>
@@ -39,14 +40,17 @@
 
     <div class="scene-review-buttons">
       <form class="inline" hx-post="/scenes/{{ scene.id }}/approve" hx-target="{{ scene_review_target }}" hx-swap="outerHTML">
+        <input type="hidden" name="title_id" value="{{ title_id }}">
         {% if detail_view %}<input type="hidden" name="detail_view" value="true">{% endif %}
         <button type="submit" class="small {{ 'secondary' if scene.status.value == 'approved' else '' }}">Approve</button>
       </form>
       <form class="inline" hx-post="/scenes/{{ scene.id }}/reject" hx-target="{{ scene_review_target }}" hx-swap="outerHTML" hx-confirm="Reject this candidate scene?">
+        <input type="hidden" name="title_id" value="{{ title_id }}">
         {% if detail_view %}<input type="hidden" name="detail_view" value="true">{% endif %}
         <button type="submit" class="small {{ 'secondary' if scene.status.value == 'rejected' else 'danger' }}">Reject</button>
       </form>
       <form class="inline" hx-post="/scenes/{{ scene.id }}/toggle-mute" hx-target="{{ scene_review_target }}" hx-swap="outerHTML">
+        <input type="hidden" name="title_id" value="{{ title_id }}">
         {% if detail_view %}<input type="hidden" name="detail_view" value="true">{% endif %}
         <label class="muted" title="Video is always blurred for an approved scene -- this separately controls whether Apply also mutes the audio for it. Off by default, since nudity isn't always something the dialogue needs muting for too.">
           <input type="checkbox" {% if scene.mute_audio %}checked{% endif %} onchange="this.form.requestSubmit()"> Mute audio

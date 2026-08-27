@@ -462,6 +462,27 @@ async def apply_scene_blur(
     blur_power = int(await get_setting(session, "scene_blur_power"))
 
     work_dir = app_settings.data_dir / "blur_work" / str(job_id)
+
+    # build_blurred_video's on_progress only covers the video-blur phase --
+    # the audio-mute split/re-encode/concat pipeline that runs afterward
+    # (when mute_intervals is non-empty) only calls on_stage, which doesn't
+    # move progress_percent at all. The caller (scene_worker) maps on_progress's
+    # fraction=1.0 to a ~97% "almost done" ceiling that also gates whether a
+    # job can still be cancelled -- left unscaled, that ceiling gets hit as
+    # soon as video finishes, well before a long audio-mute phase (measured
+    # up to ~27 minutes for a large multi-track file) actually completes,
+    # making the job effectively uncancellable for that whole stretch. Halving
+    # the reported fraction whenever there's an audio phase to follow keeps
+    # progress (and the cancel floor built on top of it) from prematurely
+    # implying the job is nearly done.
+    video_progress = on_progress
+    if on_progress is not None and mute_intervals:
+
+        async def _scaled_progress(fraction: float, _inner=on_progress) -> None:
+            await _inner(fraction * 0.5)
+
+        video_progress = _scaled_progress
+
     final_path = await apply_blur(
         video_path=Path(title.video_path),
         blur_intervals=blur_intervals,
@@ -473,7 +494,7 @@ async def apply_scene_blur(
         work_dir=work_dir,
         blur_radius=blur_radius,
         blur_power=blur_power,
-        on_progress=on_progress,
+        on_progress=video_progress,
         on_stage=on_stage,
     )
 

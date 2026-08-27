@@ -18,6 +18,7 @@ import json
 import logging
 import shutil
 import time
+import uuid
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Awaitable, Callable
@@ -179,10 +180,20 @@ def plan_audio_streams(
         existing_clean_indices = sorted(set(valid_known))
     else:
         normalized_title = clean_track_title.strip().lower()
+        # Exact match against every title this app itself could actually have
+        # written (see build_clean_track's track_title above: the plain base
+        # title for a single track, or "<base> (Child)"/"<base> (Teen)" for a
+        # multi-track run) -- not startswith(), which could misidentify a real
+        # original track whose own embedded title happens to start with the
+        # same text (e.g. a generic clean_track_title of "Clean" matching a
+        # legitimate "Clean Surround 5.1" source track) and permanently drop it.
+        expected_titles = {normalized_title} | {
+            f"{normalized_title} ({sev.value.capitalize()})".lower() for sev in Severity
+        }
         existing_clean_indices = [
             i
             for i, s in enumerate(audio_streams)
-            if (s.get("tags", {}).get("title") or "").strip().lower().startswith(normalized_title)
+            if (s.get("tags", {}).get("title") or "").strip().lower() in expected_titles
         ]
 
     candidates = [(i, s) for i, s in enumerate(audio_streams) if i not in existing_clean_indices]
@@ -265,7 +276,10 @@ async def build_clean_track(
         ]
 
     filter_str = ";".join(filter_parts)
-    tmp_path = video_path.with_name(f".{video_path.stem}.spf-tmp{video_path.suffix}")
+    # Unique per call, not just per video_path -- two concurrent jobs on the
+    # same title (a double-click, or a webhook firing while a manual job is
+    # already running) would otherwise share this exact path and race on it.
+    tmp_path = video_path.with_name(f".{video_path.stem}.spf-tmp.{uuid.uuid4().hex[:8]}{video_path.suffix}")
 
     cmd = [
         ffmpeg_bin,
@@ -331,7 +345,11 @@ async def verify_output(
             f"Duration mismatch for {tmp_path}: original={orig_duration:.1f}s new={new_duration:.1f}s"
         )
 
-    # Decode a few seconds of each new track to confirm none of them are corrupt.
+    # Decode each new track in full (audio-only, cheap even for a full movie's
+    # length) to confirm none of them are corrupt -- a fixed short window here
+    # previously only caught corruption in the first few seconds, leaving any
+    # mid-file or end-of-file glitch in a 2+ hour track undetected before the
+    # file gets swapped into place as "verified".
     for idx in new_track_output_indices:
         code, _out, err = await _run(
             [
@@ -342,13 +360,11 @@ async def verify_output(
                 str(tmp_path),
                 "-map",
                 f"0:a:{idx}",
-                "-t",
-                "5",
                 "-f",
                 "null",
                 "-",
             ],
-            timeout=120,
+            timeout=600,
         )
         if code != 0 or err.strip():
             raise RemuxError(f"Clean track a:{idx} failed decode check for {tmp_path}: {err.strip()[-2000:]}")
@@ -375,6 +391,7 @@ async def remux_with_clean_track(
     clean_track_title: str,
     clean_track_language: str,
     known_clean_indices: list[int] | None = None,
+    keep_backup: bool = True,
     on_progress: ProgressCallback | None = None,
     on_stage: StageCallback | None = None,
 ) -> RemuxResult:
@@ -429,14 +446,40 @@ async def remux_with_clean_track(
     # synchronous, so it's pushed onto a worker thread -- otherwise it would
     # freeze the entire app (including progress polling for every other job)
     # for as long as the copy takes.
-    await asyncio.to_thread(shutil.move, str(video_path), str(backup_path))
-    try:
-        tmp_path.replace(video_path)
-    except Exception:
-        # Best-effort restore of the original if the final swap somehow fails.
-        await asyncio.to_thread(shutil.move, str(backup_path), str(video_path))
-        tmp_path.unlink(missing_ok=True)
-        raise
+    #
+    # The whole backup-then-swap sequence is shielded from cancellation --
+    # asyncio.to_thread can't actually stop the underlying OS-thread move once
+    # started, so an unshielded cancellation here (e.g. JobQueue.stop() on
+    # container shutdown, which cancels unconditionally with none of
+    # cancel_job()'s 97%-progress protection) could let the background move
+    # finish *after* the coroutine has already unwound as cancelled, leaving
+    # video_path missing with the replacement swap never applied. Shielding
+    # means a cancellation here still reports promptly, but the file ends up
+    # correctly swapped in (or restored on failure) either way -- the job row
+    # may end up marked "cancelled" even though the file was actually
+    # finished, which is the better of the two outcomes.
+    async def _finalize_swap() -> None:
+        await asyncio.to_thread(shutil.move, str(video_path), str(backup_path))
+        try:
+            tmp_path.replace(video_path)
+        except Exception:
+            # Best-effort restore of the original if the final swap somehow fails.
+            await asyncio.to_thread(shutil.move, str(backup_path), str(video_path))
+            tmp_path.unlink(missing_ok=True)
+            raise
+
+    await asyncio.shield(asyncio.create_task(_finalize_swap()))
+
+    if not keep_backup:
+        # Backups disabled -- the original still had to be moved aside above for
+        # crash-safety during the swap (so a failed swap can restore it), but with
+        # backups off there's no reason to keep that copy around now that the swap
+        # succeeded. Best-effort: a failure to delete here shouldn't fail the job.
+        try:
+            await asyncio.to_thread(backup_path.unlink)
+            await asyncio.to_thread(backup_path.parent.rmdir)
+        except OSError:
+            pass
 
     return RemuxResult(
         output_path=video_path,

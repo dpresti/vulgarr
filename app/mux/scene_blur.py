@@ -232,10 +232,17 @@ def plan_video_segments(
     for seg_start, seg_end in reencode_ranges:
         if seg_start > cursor:
             segments.append(VideoSegmentPlan(start=cursor, end=seg_start, reencode=False))
+        # Overlap + clamp to the segment's own (possibly keyframe/duration-
+        # clamped) bounds, rather than requiring the scene's original,
+        # unclamped interval to fit entirely inside it -- a scene padded past
+        # total_duration (e.g. near the file's end) would otherwise fail a
+        # strict containment check against the clamped seg_end and silently
+        # get dropped from local_blur_intervals, leaving its segment
+        # re-encoded but never actually blurred.
         local_scenes = tuple(
-            MuteInterval(start=iv.start - seg_start, end=iv.end - seg_start)
+            MuteInterval(start=max(iv.start, seg_start) - seg_start, end=min(iv.end, seg_end) - seg_start)
             for iv in blur_intervals
-            if iv.start >= seg_start - 1e-6 and iv.end <= seg_end + 1e-6
+            if iv.start < seg_end - 1e-6 and iv.end > seg_start + 1e-6
         )
         segments.append(VideoSegmentPlan(start=seg_start, end=seg_end, reencode=True, local_blur_intervals=local_scenes))
         cursor = seg_end
@@ -672,11 +679,21 @@ def _reencode_video_codec(source_codec: str) -> str:
     as an H.264 track -- confirmed directly against a real file to produce
     outright garbage (H.264 decoder logging "missing picture in access unit",
     "no frame!" etc. -- a different, more basic failure than any reference-
-    frame/keyframe-type issue). x264 remains the default for everything else,
-    unchanged from the original behavior."""
-    if source_codec in ("hevc", "h265"):
-        return "libx265"
-    return "libx264"
+    frame/keyframe-type issue). Same class of splice mismatch applies to any
+    non-H.264 source, not just HEVC -- extended to cover the other codecs
+    this ffmpeg build has an encoder for (vp9/av1/mpeg2/mpeg4, all realistic
+    for older DVD rips or web-dl remuxes); libx264 remains the default for
+    true H.264 sources and anything else unrecognized, unchanged from the
+    original behavior."""
+    codec_map = {
+        "hevc": "libx265",
+        "h265": "libx265",
+        "vp9": "libvpx-vp9",
+        "av1": "libsvtav1",
+        "mpeg2video": "mpeg2video",
+        "mpeg4": "mpeg4",
+    }
+    return codec_map.get(source_codec, "libx264")
 
 
 async def _extract_reencode_segment(
@@ -867,7 +884,12 @@ async def build_blurred_video(
     if not audio_streams:
         raise RemuxError("No audio streams found in source file")
 
-    tmp_path = video_path.with_name(f".{video_path.stem}.spf-blur-tmp{video_path.suffix}")
+    # Scoped by job id (work_dir.name), not just video_path -- two concurrent
+    # Apply jobs for the same title (e.g. a double-clicked button, or a scan's
+    # auto-chain racing a manual click) would otherwise share this exact path
+    # and one job's failure/cancel cleanup could delete it out from under the
+    # other mid-mux.
+    tmp_path = video_path.with_name(f".{video_path.stem}.spf-blur-tmp.{work_dir.name}{video_path.suffix}")
 
     work_dir.mkdir(parents=True, exist_ok=True)
     fingerprint = _blur_job_fingerprint(

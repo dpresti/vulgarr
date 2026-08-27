@@ -24,10 +24,20 @@ def test_reencode_codec_matches_hevc_source():
     assert _reencode_video_codec("h265") == "libx265"
 
 
+def test_reencode_codec_matches_other_known_sources():
+    # Same splice-corruption bug applies to any non-H.264 source, not just
+    # HEVC -- extended to cover every other codec this ffmpeg build has an
+    # encoder for.
+    assert _reencode_video_codec("vp9") == "libvpx-vp9"
+    assert _reencode_video_codec("av1") == "libsvtav1"
+    assert _reencode_video_codec("mpeg2video") == "mpeg2video"
+    assert _reencode_video_codec("mpeg4") == "mpeg4"
+
+
 def test_reencode_codec_defaults_to_h264_for_everything_else():
     assert _reencode_video_codec("h264") == "libx264"
     assert _reencode_video_codec("") == "libx264"
-    assert _reencode_video_codec("mpeg2video") == "libx264"
+    assert _reencode_video_codec("prores") == "libx264"
 
 
 def _nal_bytes(nal_type: int, extra: bytes = b"\x00\x00\x00") -> bytes:

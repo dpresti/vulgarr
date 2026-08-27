@@ -303,48 +303,59 @@ async def cancel_scene_job(request: Request, job_id: int):
 
 
 @router.post("/scenes/{scene_id}/approve", response_class=HTMLResponse)
-async def approve_scene(request: Request, scene_id: int, detail_view: bool = Form(False)):
+async def approve_scene(
+    request: Request, scene_id: int, title_id: int | None = Form(None), detail_view: bool = Form(False)
+):
     async with get_session() as session:
         scene = await session.get(DetectedScene, scene_id)
-        title_id = scene.title_id if scene else None
+        # Fall back to the title_id the form itself was rendered for (a rescan
+        # can delete pending/rejected scenes out from under an open review
+        # page -- see scan_for_scenes) rather than going blank with no
+        # indication the click did nothing; still re-renders the (now fresh)
+        # review list for that title even though this specific scene is gone.
+        resolved_title_id = scene.title_id if scene is not None else title_id
         if scene is not None:
             scene.status = SceneReviewStatus.approved
             scene.reviewed_at = datetime.datetime.utcnow()
             await session.commit()
-    if title_id is None:
+    if resolved_title_id is None:
         return HTMLResponse("")
-    return await _render_scene_review(request, title_id, detail_view)
+    return await _render_scene_review(request, resolved_title_id, detail_view)
 
 
 @router.post("/scenes/{scene_id}/reject", response_class=HTMLResponse)
-async def reject_scene(request: Request, scene_id: int, detail_view: bool = Form(False)):
+async def reject_scene(
+    request: Request, scene_id: int, title_id: int | None = Form(None), detail_view: bool = Form(False)
+):
     async with get_session() as session:
         scene = await session.get(DetectedScene, scene_id)
-        title_id = scene.title_id if scene else None
+        resolved_title_id = scene.title_id if scene is not None else title_id
         if scene is not None:
             scene.status = SceneReviewStatus.rejected
             scene.reviewed_at = datetime.datetime.utcnow()
             await session.commit()
-    if title_id is None:
+    if resolved_title_id is None:
         return HTMLResponse("")
-    return await _render_scene_review(request, title_id, detail_view)
+    return await _render_scene_review(request, resolved_title_id, detail_view)
 
 
 @router.post("/scenes/{scene_id}/toggle-mute", response_class=HTMLResponse)
-async def toggle_scene_mute(request: Request, scene_id: int, detail_view: bool = Form(False)):
+async def toggle_scene_mute(
+    request: Request, scene_id: int, title_id: int | None = Form(None), detail_view: bool = Form(False)
+):
     """Flips whether Apply also mutes audio for this scene, on top of always
     blurring the video -- default off (see DetectedScene.mute_audio). Doesn't
     touch status/reviewed_at -- this is independent of approve/reject, and can
     be changed either before or after approving."""
     async with get_session() as session:
         scene = await session.get(DetectedScene, scene_id)
-        title_id = scene.title_id if scene else None
+        resolved_title_id = scene.title_id if scene is not None else title_id
         if scene is not None:
             scene.mute_audio = not scene.mute_audio
             await session.commit()
-    if title_id is None:
+    if resolved_title_id is None:
         return HTMLResponse("")
-    return await _render_scene_review(request, title_id, detail_view)
+    return await _render_scene_review(request, resolved_title_id, detail_view)
 
 
 @router.post("/library/title/{title_id}/approve-high-confidence", response_class=HTMLResponse)
@@ -493,15 +504,32 @@ async def adjust_scene(
     scene_id: int,
     start_seconds: float = Form(...),
     end_seconds: float = Form(...),
+    title_id: int | None = Form(None),
     detail_view: bool = Form(False),
 ):
+    from app.mux.remux import probe
+
     async with get_session() as session:
         scene = await session.get(DetectedScene, scene_id)
-        title_id = scene.title_id if scene else None
+        # Fall back to the title_id the form itself was rendered for -- see
+        # approve_scene's comment for why (a concurrent rescan can delete this
+        # scene out from under an open review page).
+        resolved_title_id = scene.title_id if scene is not None else title_id
         if scene is not None and end_seconds > start_seconds:
+            title = await session.get(Title, scene.title_id)
+            duration = None
+            if title is not None:
+                try:
+                    probe_data = await probe(app_settings.ffprobe_bin, Path(title.video_path))
+                    duration = float(probe_data["format"].get("duration", 0)) or None
+                except Exception:
+                    # Best-effort clamp only -- if the probe fails (file moved,
+                    # ffprobe error), fall back to trusting the submitted value
+                    # rather than blocking the edit entirely.
+                    duration = None
             scene.start_seconds = max(0.0, start_seconds)
-            scene.end_seconds = end_seconds
+            scene.end_seconds = min(end_seconds, duration) if duration else end_seconds
             await session.commit()
-    if title_id is None:
+    if resolved_title_id is None:
         return HTMLResponse("")
-    return await _render_scene_review(request, title_id, detail_view)
+    return await _render_scene_review(request, resolved_title_id, detail_view)
