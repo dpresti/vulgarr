@@ -155,7 +155,7 @@ toggle hiding the finer classifier/encode-tuning knobs by default:
 
 - Backups accumulate under `/data/backups` for 7 days by default (Settings > Backups); set it to 0 to keep every backup forever instead.
 - `backup_root` (`/data/backups`) should ideally be on the same filesystem as your media mount; otherwise the "move original aside" step becomes a slower copy+delete instead of an instant rename.
-- Subtitle matching mutes the whole subtitle cue's time range (padded slightly), not word-level timing — there's no word-level timestamp data available from a plain `.srt`.
+- Subtitle matching mutes the whole subtitle cue's time range (padded slightly) by default — a plain `.srt` has no word-level timestamps of its own. Settings > Audio Processing has two opt-in, narrower alternatives: `estimate` (a proportional guess based on the word's position in the cue's text) and `whisper` (real word-level forced alignment against the actual audio, not a guess).
 - Scene detection is a classifier, not a certainty — it's tuned to prefer false positives over missed scenes, since every candidate goes through human review (or Claude Vision, if enabled) before anything is blurred, unless you turn auto-approve on.
 - There's no per-user accounts/roles — Settings > Authentication is a single shared username/password (or nothing) in front of the whole app, not a multi-user system.
 

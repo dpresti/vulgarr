@@ -272,7 +272,7 @@ class JobQueue:
         async with get_session() as session:
             retention_days = int(await get_setting(session, "backup_retention_days") or 0)
         if retention_days <= 0:
-            return  # 0 = keep forever, the default -- opt-in only
+            return  # 0 = keep every backup forever (defaults to 7 -- see DEFAULT_SETTINGS)
         backup_root = app_settings.data_dir / "backups"
         try:
             deleted = await asyncio.to_thread(_delete_backups_older_than, backup_root, retention_days)
