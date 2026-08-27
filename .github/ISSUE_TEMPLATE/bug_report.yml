@@ -1,0 +1,60 @@
+name: Bug report
+description: Something isn't working the way it should
+title: "[Bug] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report this — the more detail you give here, the faster it can actually get fixed.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: What did you expect to happen instead?
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. ...
+        2. ...
+        3. ...
+    validations:
+      required: true
+  - type: dropdown
+    id: pipeline
+    attributes:
+      label: Which part of the app?
+      options:
+        - Audio (profanity muting)
+        - Video (nudity detection / blur)
+        - Sonarr/Radarr/Bazarr integration
+        - Settings / UI
+        - Other / not sure
+    validations:
+      required: true
+  - type: input
+    id: commit
+    attributes:
+      label: Commit / version
+      description: Output of `git -C /path/to/vulgarr rev-parse --short HEAD` on the machine running it, or the image build date if you don't know.
+    validations:
+      required: false
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs
+      description: "`docker logs vulgarr` output around when this happened. Leave out anything sensitive (API keys, tokens, real file paths you don't want public)."
+      render: shell
+    validations:
+      required: false
+  - type: textarea
+    id: env
+    attributes:
+      label: Environment
+      description: OS/platform running Docker, and versions of Sonarr/Radarr/Bazarr if relevant.
+    validations:
+      required: false
