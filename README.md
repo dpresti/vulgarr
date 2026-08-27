@@ -115,6 +115,24 @@ pip install -r requirements-dev.txt
 python -m pytest tests/ -q
 ```
 
+## Releasing
+
+Every push to `main` builds and pushes `ghcr.io/dpresti/vulgarr:latest` (plus a
+`sha-<short-sha>` tag) automatically -- fine for tracking `main`, but not a
+real version. To cut an actual release (a clean version tag on the image, e.g.
+`2.1.0`, plus a GitHub Release with auto-generated notes):
+
+```bash
+git tag -a v2.1.0 -m "v2.1.0"
+git push origin v2.1.0
+```
+
+Pushing a `vX.Y.Z` tag is what triggers both of those -- a plain push to `main`
+never does. `docker-compose.yml` pins to a specific released version rather
+than `:latest`, so bumping it is a deliberate `image:` tag edit +
+`docker compose pull && up -d`, not something that happens silently underneath
+a running deployment.
+
 ## Quick start
 
 ```bash
