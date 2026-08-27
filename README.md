@@ -107,9 +107,11 @@ pip install -r requirements.txt
 SPF_DATA_DIR=./data SPF_MEDIA_ROOT=./data uvicorn app.main:app --reload
 ```
 
-Run tests:
+Run tests (needs `requirements-dev.txt`, which layers `pytest` on top of the
+same runtime requirements above -- also what CI installs):
 
 ```bash
+pip install -r requirements-dev.txt
 pytest tests/ -q
 ```
 
