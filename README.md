@@ -112,7 +112,7 @@ same runtime requirements above -- also what CI installs):
 
 ```bash
 pip install -r requirements-dev.txt
-pytest tests/ -q
+python -m pytest tests/ -q
 ```
 
 ## Quick start
