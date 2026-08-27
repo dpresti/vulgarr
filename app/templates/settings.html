@@ -6,5 +6,10 @@
       <button type="submit" class="secondary">Sync from Sonarr/Radarr</button>
     </form>
   </div>
+  {% if sync_error %}
+  <p style="color: var(--vulgarr-danger-text);">
+    Sync from {{ sync_error.replace(',', ' and ').title() }} failed -- check the container logs for details. The other source (if configured) still synced normally.
+  </p>
+  {% endif %}
   {% include "partials/settings_form.html" %}
 {% endblock %}

@@ -28,6 +28,7 @@ SETTING_KEYS = [
     "clean_track_title",
     "clean_track_language",
     "default_subtitle_language",
+    "backups_enabled",
     "backup_retention_days",
     "auth_enabled",
     "auth_username",
@@ -71,9 +72,11 @@ async def _load_all() -> dict:
 
 
 @router.get("", response_class=HTMLResponse)
-async def settings_page(request: Request):
+async def settings_page(request: Request, sync_error: str | None = None):
     values = await _load_all()
-    return templates.TemplateResponse("settings.html", {"request": request, "values": values})
+    return templates.TemplateResponse(
+        "settings.html", {"request": request, "values": values, "sync_error": sync_error}
+    )
 
 
 @router.post("", response_class=HTMLResponse)
@@ -97,6 +100,7 @@ async def update_settings(
     clean_track_title: str = Form("Clean"),
     clean_track_language: str = Form("eng"),
     default_subtitle_language: str = Form("en"),
+    backups_enabled: bool = Form(False),
     backup_retention_days: int = Form(0),
     auth_enabled: bool = Form(False),
     auth_username: str = Form(""),
@@ -149,6 +153,7 @@ async def update_settings(
         await set_setting(session, "clean_track_title", clean_track_title.strip() or "Clean")
         await set_setting(session, "clean_track_language", clean_track_language.strip() or "eng")
         await set_setting(session, "default_subtitle_language", default_subtitle_language.strip() or "en")
+        await set_setting(session, "backups_enabled", backups_enabled)
         await set_setting(session, "backup_retention_days", max(0, backup_retention_days))
 
         # auth_enabled is only allowed on once a username and (new or existing)

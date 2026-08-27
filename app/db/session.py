@@ -204,6 +204,10 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     # 0 = keep every backup forever. Defaults to 7 so backups don't accumulate
     # unbounded out of the box; editable in Settings > Backups.
     "backup_retention_days": 7,
+    # False disables backups entirely -- the original is still moved aside
+    # during the swap for crash-safety (see remux_with_clean_track), but the
+    # backup copy is deleted immediately afterward instead of being kept.
+    "backups_enabled": True,
     # Scene detection/blur has no master on/off switch -- it never runs
     # automatically on import (unlike the word-list mute pipeline), only ever
     # starting from an explicit "Scan for scenes" click, so there's nothing an

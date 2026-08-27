@@ -25,6 +25,14 @@ logger = logging.getLogger(__name__)
 # tolerance for container duration rounding/slop, not for genuine drift.
 SUBTITLE_OVERRUN_TOLERANCE_SECONDS = 10.0
 
+# NOTE: a symmetric "underrun" check (subtitle ending far short of the video) was
+# considered and deliberately NOT added -- see test_subtitle_ending_well_before_video_is_fine,
+# which documents that a subtitle whose dialogue simply ends early (sparse-dialogue
+# content, long wordless stretches) is legitimate and common enough that any coverage-
+# fraction threshold tried here produced false positives against it. Unlike overrun
+# (never legitimate), there's no reliable signal to distinguish "truncated download"
+# from "this video just doesn't have much dialogue" from duration alone.
+
 
 class ProcessingError(RuntimeError):
     pass
@@ -140,6 +148,7 @@ async def process_video(
 
     clean_track_title = await get_setting(session, "clean_track_title")
     clean_track_language = await get_setting(session, "clean_track_language")
+    backups_enabled = bool(await get_setting(session, "backups_enabled"))
 
     backup_root = app_settings.data_dir / "backups"
     result = await remux_with_clean_track(
@@ -153,6 +162,7 @@ async def process_video(
         clean_track_title=clean_track_title,
         clean_track_language=clean_track_language,
         known_clean_indices=known_clean_indices,
+        keep_backup=backups_enabled,
         on_progress=on_progress,
         on_stage=on_stage,
     )

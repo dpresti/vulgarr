@@ -274,10 +274,15 @@
 
   <h2 style="margin-top: 1.75rem;">Backups</h2>
   <div class="settings-grid">
+    <label class="checkbox-row">
+      <input type="checkbox" id="backups_enabled" name="backups_enabled" {% if values.backups_enabled %}checked{% endif %}>
+      Keep backups
+    </label>
+    <div class="muted">Off = the original is deleted right after processing instead of kept under <code>/data/backups</code>. There is no other copy of the unmodified file once this is off.</div>
     <label for="backup_retention_days">Delete backups older than (days)</label>
     <div>
       <input type="number" id="backup_retention_days" name="backup_retention_days" min="0" value="{{ values.backup_retention_days }}" class="input-sm">
-      <div class="muted">0 = keep every backup forever. Defaults to 7 days. Backups live under <code>/data/backups</code> and are the only copy of the original, unmodified file.</div>
+      <div class="muted">0 = keep every backup forever. Defaults to 7 days. Backups live under <code>/data/backups</code> and are the only copy of the original, unmodified file. Ignored while "Keep backups" above is off.</div>
     </div>
   </div>
 
