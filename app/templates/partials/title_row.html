@@ -9,6 +9,7 @@
   <td data-label="Status" class="stat-cell-hide-mobile">
     <span class="badge badge-{{ row.status }}">{{ row.status.replace('_', ' ') }}</span>
     {% if row.outdated %}<span class="badge badge-outdated">outdated</span>{% endif %}
+    <span class="htmx-indicator bazarr-indicator-{{ row.title.id }} detail-waiting" style="margin-top: 4px;"><span class="spinner"></span>Searching for subtitles…</span>
   </td>
   <td data-label="Subtitle" class="muted stat-cell-hide-mobile">
     {% if row.has_subtitle %}
@@ -25,6 +26,7 @@
         <span class="row-stat-label">Status</span>
         <span class="badge badge-{{ row.status }}">{{ row.status.replace('_', ' ') }}</span>
         {% if row.outdated %}<span class="badge badge-outdated">outdated</span>{% endif %}
+        <span class="htmx-indicator bazarr-indicator-{{ row.title.id }} detail-waiting"><span class="spinner"></span>Searching for subtitles…</span>
       </div>
       <div class="row-stat">
         <span class="row-stat-label">Subtitle</span>
@@ -80,15 +82,14 @@
       {% elif row.status == 'awaiting_subtitle' %}
         <span class="detail-waiting"><span class="spinner"></span>Searching for subtitles…</span>
       {% elif not row.has_subtitle %}
-      <form class="inline" hx-post="/library/{{ row.title.id }}/search-subtitle" hx-target="#title-row-{{ row.title.id }}" hx-swap="outerHTML" hx-indicator="#bazarr-indicator-{{ row.title.id }}">
+      <form class="inline" hx-post="/library/{{ row.title.id }}/search-subtitle" hx-target="#title-row-{{ row.title.id }}" hx-swap="outerHTML" hx-indicator=".bazarr-indicator-{{ row.title.id }}">
         {% if season_context %}<input type="hidden" name="short_label" value="true">{% endif %}
         <button type="submit" class="small secondary" title="Search Bazarr for a subtitle, then queue audio processing if found">Audio</button>
       </form>
-      <form class="inline" hx-post="/library/{{ row.title.id }}/search-subtitle-and-process-both" hx-target="#title-row-{{ row.title.id }}" hx-swap="outerHTML" hx-indicator="#bazarr-indicator-{{ row.title.id }}">
+      <form class="inline" hx-post="/library/{{ row.title.id }}/search-subtitle-and-process-both" hx-target="#title-row-{{ row.title.id }}" hx-swap="outerHTML" hx-indicator=".bazarr-indicator-{{ row.title.id }}">
         {% if season_context %}<input type="hidden" name="short_label" value="true">{% endif %}
         <button type="submit" class="small" title="Search Bazarr for a subtitle, then queue both audio processing (if found) and a scene scan (either way)">Both</button>
       </form>
-      <span id="bazarr-indicator-{{ row.title.id }}" class="htmx-indicator detail-waiting"><span class="spinner"></span>Searching for subtitles…</span>
       {% else %}
       {% set audio_verb = 'Reprocess' if row.status not in ('not_processed', 'failed', 'cancelled') else 'Process' %}
       <form class="inline" hx-post="/library/{{ row.title.id }}/process" hx-target="#title-row-{{ row.title.id }}" hx-swap="outerHTML">
