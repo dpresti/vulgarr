@@ -42,7 +42,7 @@
               <input type="hidden" name="detail_view" value="true">
               <button type="submit" title="Search Bazarr for a subtitle, then queue both audio processing (if found) and a scene scan (either way)">{{ audio_verb }} Both</button>
             </form>
-            <span id="detail-bazarr-indicator-{{ row.title.id }}" class="htmx-indicator muted">searching…</span>
+            <span id="detail-bazarr-indicator-{{ row.title.id }}" class="htmx-indicator detail-waiting"><span class="spinner"></span>Searching for subtitles…</span>
           {% else %}
             <form hx-post="/library/{{ row.title.id }}/process" hx-target="#title-detail-{{ row.title.id }}" hx-swap="outerHTML">
               <input type="hidden" name="detail_view" value="true">
