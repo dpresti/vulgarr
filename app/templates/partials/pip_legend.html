@@ -1,10 +1,27 @@
+{# pip_action/pip_target/pip_link/pip are supplied by whichever of the 3 browse pages
+   (library_processed.html, library_movies.html, library_shows.html) includes this --
+   clicking a status filters the grid to just that status; clicking the active one
+   again clears the filter. Same hx-target/hx-select/hx-swap/hx-push-url pattern as
+   that page's own search input and sort select, so this behaves identically. #}
 <div class="legend">
-  <span><i style="background: var(--vulgarr-success-text);"></i>done</span>
-  <span><i style="background: var(--vulgarr-warning-text);"></i>processing</span>
-  <span><i style="background: var(--vulgarr-info-text);"></i>queued</span>
-  <span><i style="background: var(--vulgarr-danger-text);"></i>failed</span>
-  <span><i style="background: var(--vulgarr-outdated-text);"></i>outdated word list</span>
-  <span><i style="background: var(--vulgarr-nosub-text);"></i>no subtitle</span>
-  <span><i style="background: var(--vulgarr-scenereview-text);"></i>scenes pending review</span>
-  <span><i style="background: var(--vulgarr-text-muted);"></i>not processed</span>
+  {% for key, label, color_var in [
+    ('done', 'done', 'success-text'),
+    ('processing', 'processing', 'warning-text'),
+    ('queued', 'queued', 'info-text'),
+    ('failed', 'failed', 'danger-text'),
+    ('outdated', 'outdated word list', 'outdated-text'),
+    ('no_subtitle', 'no subtitle', 'nosub-text'),
+    ('scenes_pending_review', 'scenes pending review', 'scenereview-text'),
+    ('not_processed', 'not processed', 'text-muted')
+  ] %}
+  <button
+    type="button"
+    class="legend-item {{ 'active' if pip == key else '' }}"
+    hx-get="{{ pip_action }}{{ pip_link(key) }}"
+    hx-target="{{ pip_target }}"
+    hx-select="{{ pip_target }}"
+    hx-swap="outerHTML"
+    hx-push-url="true"
+  ><i style="background: var(--vulgarr-{{ color_var }});"></i>{{ label }}</button>
+  {% endfor %}
 </div>

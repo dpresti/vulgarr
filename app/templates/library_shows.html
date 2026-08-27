@@ -14,7 +14,9 @@
     </select>
   </form>
 
-  {% include "partials/pip_legend.html" %}
+  {% with pip_action='/library/shows', pip_target='#show-results' %}
+    {% include "partials/pip_legend.html" %}
+  {% endwith %}
 
   <div id="show-results">
     {% with shows=shows, next_url=next_url %}

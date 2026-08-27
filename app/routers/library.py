@@ -317,13 +317,11 @@ MOVIE_SORT_COLUMNS = {
 
 
 async def _load_movies(
-    session, current_version: int, page: int, q: str | None, sort: str | None, sort_dir: str
+    session, current_version: int, page: int, q: str | None, sort: str | None, sort_dir: str, pip: str | None = None
 ) -> tuple[list[dict], int]:
     base: Select = select(Title).where(Title.media_type == MediaType.movie)
     if q:
         base = base.where(Title.display_name.like(f"%{_escape_like(q)}%", escape="\\"))
-
-    total = (await session.execute(select(func.count()).select_from(base.subquery()))).scalar_one()
 
     if sort == "recent":
         order = Title.last_processed_at.desc()
@@ -331,6 +329,21 @@ async def _load_movies(
         sort_col = MOVIE_SORT_COLUMNS.get(sort, Title.display_name)
         order = sort_col.desc() if sort_dir == "desc" else sort_col.asc()
 
+    if pip:
+        # pip is derived per-row (has_subtitle alone needs a real filesystem check --
+        # see _row_dict), not a plain column, so there's no SQL WHERE for it: fetch
+        # every matching title, compute pip in Python, filter, then paginate the
+        # filtered list ourselves instead of pushing offset/limit to the query.
+        result = await session.execute(base.order_by(order, Title.display_name.collate("NOCASE")))
+        titles = result.scalars().all()
+        pending_ids = await _pending_scene_title_ids(session, [t.id for t in titles])
+        rows = [_row_dict(t, current_version, has_pending_scenes=t.id in pending_ids) for t in titles]
+        rows = [r for r in rows if r["pip"] == pip]
+        total = len(rows)
+        start = (page - 1) * PAGE_SIZE
+        return rows[start : start + PAGE_SIZE], total
+
+    total = (await session.execute(select(func.count()).select_from(base.subquery()))).scalar_one()
     result = await session.execute(
         base.order_by(order, Title.display_name.collate("NOCASE")).offset((page - 1) * PAGE_SIZE).limit(PAGE_SIZE)
     )
@@ -341,7 +354,7 @@ async def _load_movies(
 
 
 async def _load_processed_movies(
-    session, current_version: int, offset: int, limit: int, q: str | None, sort: str = "name"
+    session, current_version: int, offset: int, limit: int, q: str | None, sort: str = "name", pip: str | None = None
 ) -> tuple[list[dict], int]:
     """Done movies, one card each -- half of the main /library route's combined
     feed (the other half is _load_processed_shows below). Takes an explicit
@@ -351,16 +364,27 @@ async def _load_processed_movies(
     While actively searching (q set), the done-only filter is dropped so the
     search reaches every movie regardless of processing status -- otherwise
     a title that hasn't been processed yet is invisible from this page even
-    though the user typed its exact name."""
+    though the user typed its exact name. Same reasoning applies to a pip
+    filter: e.g. "not processed" or "failed" would otherwise never match
+    anything here."""
     base: Select = select(Title).where(Title.media_type == MediaType.movie)
-    if not q:
+    if not q and not pip:
         base = base.where(Title.status == "done")
     if q:
         base = base.where(Title.display_name.like(f"%{_escape_like(q)}%", escape="\\"))
 
-    total = (await session.execute(select(func.count()).select_from(base.subquery()))).scalar_one()
-
     order = Title.last_processed_at.desc() if sort == "recent" else Title.display_name.collate("NOCASE")
+
+    if pip:
+        result = await session.execute(base.order_by(order))
+        titles = result.scalars().all()
+        pending_ids = await _pending_scene_title_ids(session, [t.id for t in titles])
+        rows = [_row_dict(t, current_version, has_pending_scenes=t.id in pending_ids) for t in titles]
+        rows = [r for r in rows if r["pip"] == pip]
+        total = len(rows)
+        return rows[offset : offset + limit], total
+
+    total = (await session.execute(select(func.count()).select_from(base.subquery()))).scalar_one()
     result = await session.execute(base.order_by(order).offset(offset).limit(limit))
     titles = result.scalars().all()
     pending_ids = await _pending_scene_title_ids(session, [t.id for t in titles])
@@ -369,7 +393,7 @@ async def _load_processed_movies(
 
 
 async def _load_processed_shows(
-    session, current_version: int, offset: int, limit: int, q: str | None, sort: str = "name"
+    session, current_version: int, offset: int, limit: int, q: str | None, sort: str = "name", pip: str | None = None
 ) -> tuple[list[dict], int]:
     """Shows with at least one done episode, one card each (not one per episode) --
     other half of the main /library route's combined feed. Same aggregation as
@@ -400,13 +424,25 @@ async def _load_processed_shows(
     if q:
         query = query.where(Title.series_title.like(f"%{_escape_like(q)}%", escape="\\"))
     query = query.group_by(Title.sonarr_series_id, Title.series_title)
-    if not q:
+    if not q and not pip:
         query = query.having(done_col > 0)
+
+    order = last_processed_col.desc() if sort == "recent" else Title.series_title.collate("NOCASE")
+
+    if pip:
+        result = await session.execute(query.order_by(order))
+        shows = [dict(row._mapping) for row in result.all()]
+        for show in shows:
+            show["pip"] = _show_pip_state(
+                show["total"], show["done_count"], show["failed_count"], show["active_count"], show["outdated_count"]
+            )
+            show["pip_label"] = _PIP_LABELS[show["pip"]]
+        shows = [s for s in shows if s["pip"] == pip]
+        total = len(shows)
+        return shows[offset : offset + limit], total
 
     count_subquery = query.with_only_columns(Title.sonarr_series_id).subquery()
     total = (await session.execute(select(func.count()).select_from(count_subquery))).scalar_one()
-
-    order = last_processed_col.desc() if sort == "recent" else Title.series_title.collate("NOCASE")
     result = await session.execute(query.order_by(order).offset(offset).limit(limit))
     shows = [dict(row._mapping) for row in result.all()]
     for show in shows:
@@ -421,7 +457,7 @@ SHOW_SORT_KEYS = {"name", "total", "done_count", "active_count", "failed_count",
 
 
 async def _load_shows(
-    session, current_version: int, page: int, q: str | None, sort: str | None, sort_dir: str
+    session, current_version: int, page: int, q: str | None, sort: str | None, sort_dir: str, pip: str | None = None
 ) -> tuple[list[dict], int]:
     outdated_expr = _outdated_case(current_version)
 
@@ -457,9 +493,6 @@ async def _load_shows(
 
     query = query.group_by(Title.sonarr_series_id, Title.series_title)
 
-    count_subquery = query.with_only_columns(Title.sonarr_series_id).subquery()
-    total = (await session.execute(select(func.count()).select_from(count_subquery))).scalar_one()
-
     if sort == "recent":
         order = last_processed_col.desc()
     else:
@@ -473,6 +506,27 @@ async def _load_shows(
         }
         sort_col = sort_columns.get(sort, Title.series_title.collate("NOCASE"))
         order = sort_col.desc() if sort_dir == "desc" else sort_col.asc()
+
+    if pip:
+        # Every value _show_pip_state needs is already an aggregate column, so no
+        # filesystem check is required here (unlike the movie side) -- still can't
+        # push the filter into SQL though, since it's derived (priority-ordered
+        # across 5 aggregate columns), not a plain one. Fetch every group, compute,
+        # filter, then paginate the filtered list ourselves.
+        result = await session.execute(query.order_by(order, Title.series_title.collate("NOCASE")))
+        shows = [dict(row._mapping) for row in result.all()]
+        for show in shows:
+            show["pip"] = _show_pip_state(
+                show["total"], show["done_count"], show["failed_count"], show["active_count"], show["outdated_count"]
+            )
+            show["pip_label"] = _PIP_LABELS[show["pip"]]
+        shows = [s for s in shows if s["pip"] == pip]
+        total = len(shows)
+        start = (page - 1) * PAGE_SIZE
+        return shows[start : start + PAGE_SIZE], total
+
+    count_subquery = query.with_only_columns(Title.sonarr_series_id).subquery()
+    total = (await session.execute(select(func.count()).select_from(count_subquery))).scalar_one()
 
     result = await session.execute(
         query.order_by(order, Title.series_title.collate("NOCASE")).offset((page - 1) * PAGE_SIZE).limit(PAGE_SIZE)
@@ -542,7 +596,9 @@ async def _load_seasons(
 
 
 @router.get("", response_class=HTMLResponse)
-async def library_page(request: Request, q: str | None = None, page: int = 1, sort: str = "name"):
+async def library_page(
+    request: Request, q: str | None = None, page: int = 1, sort: str = "name", pip: str | None = None
+):
     """The main sidebar "Library" item -- every done movie (one card each) plus
     every show with at least one done episode (one card per show, not per
     episode). Distinct from the "Movies"/"TV Shows" sub-items, which list
@@ -557,24 +613,25 @@ async def library_page(request: Request, q: str | None = None, page: int = 1, so
     ones that have already finished."""
     async with get_session() as session:
         current_version = int(await get_setting(session, "wordlist_version"))
-        _, movie_total = await _load_processed_movies(session, current_version, 0, 0, q, sort)
-        _, show_total = await _load_processed_shows(session, current_version, 0, 0, q, sort)
+        _, movie_total = await _load_processed_movies(session, current_version, 0, 0, q, sort, pip)
+        _, show_total = await _load_processed_shows(session, current_version, 0, 0, q, sort, pip)
 
         offset = (page - 1) * PAGE_SIZE
         movie_rows: list[dict] = []
         show_rows: list[dict] = []
         if offset < movie_total:
-            movie_rows, _ = await _load_processed_movies(session, current_version, offset, PAGE_SIZE, q, sort)
+            movie_rows, _ = await _load_processed_movies(session, current_version, offset, PAGE_SIZE, q, sort, pip)
             remaining = PAGE_SIZE - len(movie_rows)
             if remaining > 0:
-                show_rows, _ = await _load_processed_shows(session, current_version, 0, remaining, q, sort)
+                show_rows, _ = await _load_processed_shows(session, current_version, 0, remaining, q, sort, pip)
         else:
             show_rows, _ = await _load_processed_shows(
-                session, current_version, offset - movie_total, PAGE_SIZE, q, sort
+                session, current_version, offset - movie_total, PAGE_SIZE, q, sort, pip
             )
 
     combined_total = movie_total + show_total
-    next_url = _qs({"q": q, "sort": sort}, page=page + 1) if offset + PAGE_SIZE < combined_total else None
+    current_params = {"q": q, "sort": sort, "pip": pip}
+    next_url = _qs(current_params, page=page + 1) if offset + PAGE_SIZE < combined_total else None
 
     if _is_load_more(request):
         # A revealed load-more sentinel asking for the next batch -- return just
@@ -584,12 +641,17 @@ async def library_page(request: Request, q: str | None = None, page: int = 1, so
             {"request": request, "movie_rows": movie_rows, "show_rows": show_rows, "next_url": next_url},
         )
 
+    def pip_link(key: str) -> str:
+        return _qs(current_params, pip=None if pip == key else key, page=1)
+
     return templates.TemplateResponse(
         "library_processed.html",
         {
             "request": request,
             "q": q or "",
             "sort": sort,
+            "pip": pip,
+            "pip_link": pip_link,
             "movie_rows": movie_rows,
             "show_rows": show_rows,
             "movie_total": combined_total,
@@ -607,13 +669,16 @@ async def movies_page(
     movie_page: int = 1,
     movie_sort: str | None = None,
     movie_dir: str | None = None,
+    pip: str | None = None,
 ):
     movie_dir = movie_dir or "asc"
     async with get_session() as session:
         current_version = int(await get_setting(session, "wordlist_version"))
-        movie_rows, movie_total = await _load_movies(session, current_version, movie_page, q, movie_sort, movie_dir)
+        movie_rows, movie_total = await _load_movies(
+            session, current_version, movie_page, q, movie_sort, movie_dir, pip
+        )
 
-    current_params = {"q": q, "movie_sort": movie_sort, "movie_dir": movie_dir}
+    current_params = {"q": q, "movie_sort": movie_sort, "movie_dir": movie_dir, "pip": pip}
     next_url = _qs(current_params, movie_page=movie_page + 1) if movie_page * PAGE_SIZE < movie_total else None
 
     if _is_load_more(request):
@@ -626,11 +691,16 @@ async def movies_page(
         new_dir = "desc" if movie_sort == key and movie_dir == "asc" else "asc"
         return _qs(current_params, movie_sort=key, movie_dir=new_dir, movie_page=1)
 
+    def pip_link(key: str) -> str:
+        return _qs(current_params, pip=None if pip == key else key, movie_page=1)
+
     return templates.TemplateResponse(
         "library_movies.html",
         {
             "request": request,
             "q": q or "",
+            "pip": pip,
+            "pip_link": pip_link,
             "movie_rows": movie_rows,
             "movie_total": movie_total,
             "movie_sort": movie_sort,
@@ -650,13 +720,14 @@ async def shows_page(
     show_page: int = 1,
     show_sort: str | None = None,
     show_dir: str | None = None,
+    pip: str | None = None,
 ):
     show_dir = show_dir or "asc"
     async with get_session() as session:
         current_version = int(await get_setting(session, "wordlist_version"))
-        shows, show_total = await _load_shows(session, current_version, show_page, q, show_sort, show_dir)
+        shows, show_total = await _load_shows(session, current_version, show_page, q, show_sort, show_dir, pip)
 
-    current_params = {"q": q, "show_sort": show_sort, "show_dir": show_dir}
+    current_params = {"q": q, "show_sort": show_sort, "show_dir": show_dir, "pip": pip}
     next_url = _qs(current_params, show_page=show_page + 1) if show_page * PAGE_SIZE < show_total else None
 
     if _is_load_more(request):
@@ -669,11 +740,16 @@ async def shows_page(
         new_dir = "desc" if show_sort == key and show_dir == "asc" else "asc"
         return _qs(current_params, show_sort=key, show_dir=new_dir, show_page=1)
 
+    def pip_link(key: str) -> str:
+        return _qs(current_params, pip=None if pip == key else key, show_page=1)
+
     return templates.TemplateResponse(
         "library_shows.html",
         {
             "request": request,
             "q": q or "",
+            "pip": pip,
+            "pip_link": pip_link,
             "shows": shows,
             "show_total": show_total,
             "show_sort": show_sort,

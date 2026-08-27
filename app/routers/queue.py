@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Form, Request
 from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
 from sqlalchemy import select
@@ -200,6 +200,23 @@ async def queue_partial(request: Request):
 
 
 @router.post("/{job_id}/cancel", response_class=HTMLResponse)
-async def cancel_job(request: Request, job_id: int):
+async def cancel_job(request: Request, job_id: int, title_id: int | None = Form(None), detail_view: bool = Form(False)):
+    """Reachable from the standalone queue page (no title_id -- re-renders the
+    queue table) and from the title detail card's audio job-status bar (title_id
+    set, detail_view True -- re-renders the whole card), mirroring how
+    app.routers.scenes._render_scene_review handles the same two callers for
+    scene jobs."""
     success, error = await job_queue.cancel_job(job_id)
+    if title_id is not None:
+        from app.db.session import get_session, get_setting
+        from app.routers.library import _pending_scene_title_ids, _render_title, _row_dict
+
+        async with get_session() as session:
+            current_version = int(await get_setting(session, "wordlist_version"))
+            title = await session.get(Title, title_id)
+            if title is None:
+                return HTMLResponse("")
+            pending_ids = await _pending_scene_title_ids(session, [title_id])
+            row = _row_dict(title, current_version, has_pending_scenes=title_id in pending_ids)
+        return await _render_title(request, row, detail_view)
     return await _render_queue_partial(request, cancel_error=None if success else error)

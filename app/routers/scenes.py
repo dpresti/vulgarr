@@ -292,13 +292,18 @@ async def scan_scenes_season(
 
 
 @router.post("/scene-jobs/{job_id}/cancel", response_class=HTMLResponse)
-async def cancel_scene_job(request: Request, job_id: int):
-    """Standalone cancel action (queue page context, not tied to one title's review
-    section) -- unlike the other scene endpoints, this re-renders the main queue
-    partial, not scene_review_list.html."""
+async def cancel_scene_job(
+    request: Request, job_id: int, title_id: int | None = Form(None), detail_view: bool = Form(False)
+):
+    """Reachable from three places: the standalone queue page (no title_id --
+    re-renders the queue table), the standalone scene-review page (title_id set,
+    detail_view False -- re-renders scene_review_list.html), and the title detail
+    card (title_id set, detail_view True -- re-renders the whole card)."""
+    success, error = await scene_job_queue.cancel_job(job_id)
+    if title_id is not None:
+        return await _render_scene_review(request, title_id, detail_view)
     from app.routers.queue import _render_queue_partial
 
-    success, error = await scene_job_queue.cancel_job(job_id)
     return await _render_queue_partial(request, cancel_error=None if success else error)
 
 

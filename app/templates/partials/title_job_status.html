@@ -6,12 +6,11 @@
    progress+message inline for the standalone scene-review page, where there's
    no status pill to sit under.
 
-   The audio mute job (last_job below) is the one job kind here with no
-   dedicated cancel button -- unlike the scene-pipeline jobs, which all target
-   #scene-review-{{ title_id }} to re-render just that section, there's no
-   equivalent scoped target for it on this card, and swapping the whole
-   #title-detail-{{ title_id }} div just to add Cancel wasn't worth it. It can
-   still be cancelled from the Activity/Queue page. #}
+   Every cancel form here targets #title-detail-{{ title_id }} (this card's own
+   root, from title_detail_card.html) and carries title_id + detail_view=true so
+   /queue/{id}/cancel and /scene-jobs/{id}/cancel know to re-render the whole
+   card instead of their other callers' targets (the queue table, or the
+   standalone scene-review page's #scene-review-{{ title_id }}). #}
 {% if row and row.status == 'awaiting_subtitle' %}
 <div class="job-status">
   <span class="spinner"></span>
@@ -23,13 +22,22 @@
 <div class="job-status">
   <div class="job-progress">{% if last_job.progress_percent is not none %}<div class="job-progress-fill" style="width: {{ last_job.progress_percent }}%"></div>{% endif %}</div>
   <span class="job-status-msg">{{ last_job.progress_message or 'Processing…' }}</span>
+  {% if last_job.state.value == 'queued' or (last_job.progress_percent or 0) < 97 %}
+  <form hx-post="/queue/{{ last_job.id }}/cancel" hx-target="#title-detail-{{ title_id }}" hx-swap="outerHTML" hx-confirm="Cancel this audio processing job?">
+    <input type="hidden" name="title_id" value="{{ title_id }}">
+    <input type="hidden" name="detail_view" value="true">
+    <button type="submit" class="small danger">Cancel</button>
+  </form>
+  {% endif %}
 </div>
 {% endif %}
 {% if scan_job and scene_scan_status in ('queued', 'scanning') %}
 <div class="job-status">
   <div class="job-progress">{% if scan_job.progress_percent is not none %}<div class="job-progress-fill" style="width: {{ scan_job.progress_percent }}%"></div>{% endif %}</div>
   <span class="job-status-msg">{{ scan_job.progress_message or 'Scanning…' }}</span>
-  <form hx-post="/scene-jobs/{{ scan_job.id }}/cancel" hx-target="#scene-review-{{ title_id }}" hx-swap="outerHTML" hx-confirm="Cancel this scan?">
+  <form hx-post="/scene-jobs/{{ scan_job.id }}/cancel" hx-target="#title-detail-{{ title_id }}" hx-swap="outerHTML" hx-confirm="Cancel this scan?">
+    <input type="hidden" name="title_id" value="{{ title_id }}">
+    <input type="hidden" name="detail_view" value="true">
     <button type="submit" class="small danger">Cancel</button>
   </form>
 </div>
@@ -39,7 +47,9 @@
 <div class="job-status">
   <div class="job-progress">{% if claude_verify_job.progress_percent is not none %}<div class="job-progress-fill" style="width: {{ claude_verify_job.progress_percent }}%"></div>{% endif %}</div>
   <span class="job-status-msg">{{ claude_verify_job.progress_message or 'Verifying with Claude Vision…' }}</span>
-  <form hx-post="/scene-jobs/{{ claude_verify_job.id }}/cancel" hx-target="#scene-review-{{ title_id }}" hx-swap="outerHTML" hx-confirm="Cancel Claude Vision verification?">
+  <form hx-post="/scene-jobs/{{ claude_verify_job.id }}/cancel" hx-target="#title-detail-{{ title_id }}" hx-swap="outerHTML" hx-confirm="Cancel Claude Vision verification?">
+    <input type="hidden" name="title_id" value="{{ title_id }}">
+    <input type="hidden" name="detail_view" value="true">
     <button type="submit" class="small danger">Cancel</button>
   </form>
 </div>
@@ -49,7 +59,9 @@
 <div class="job-status">
   <div class="job-progress">{% if blur_job.progress_percent is not none %}<div class="job-progress-fill" style="width: {{ blur_job.progress_percent }}%"></div>{% endif %}</div>
   <span class="job-status-msg">{{ blur_job.progress_message or 'Applying…' }}</span>
-  <form hx-post="/scene-jobs/{{ blur_job.id }}/cancel" hx-target="#scene-review-{{ title_id }}" hx-swap="outerHTML" hx-confirm="Cancel applying blur?">
+  <form hx-post="/scene-jobs/{{ blur_job.id }}/cancel" hx-target="#title-detail-{{ title_id }}" hx-swap="outerHTML" hx-confirm="Cancel applying blur?">
+    <input type="hidden" name="title_id" value="{{ title_id }}">
+    <input type="hidden" name="detail_view" value="true">
     <button type="submit" class="small danger">Cancel</button>
   </form>
 </div>

@@ -294,8 +294,10 @@
     .poster-progress { margin-top: 0.4rem; height: 4px; border-radius: 2px; background: var(--vulgarr-border); overflow: hidden; }
     .poster-progress-fill { height: 100%; background: var(--vulgarr-accent); }
     .legend { display: flex; gap: 1.1rem; flex-wrap: wrap; margin-top: 1.25rem; font-size: 0.78rem; color: var(--vulgarr-text-secondary); }
-    .legend span { display: inline-flex; align-items: center; gap: 5px; }
-    .legend i { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+    .legend-item { display: inline-flex; align-items: center; gap: 5px; background: none; border: none; padding: 3px 6px; margin: -3px -6px; border-radius: 4px; font: inherit; color: inherit; cursor: pointer; }
+    .legend-item:hover { background: var(--vulgarr-bg-elevated); color: var(--vulgarr-text-primary); }
+    .legend-item.active { background: var(--vulgarr-bg-elevated); color: var(--vulgarr-text-primary); font-weight: 700; }
+    .legend-item i { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
 
     /* ---- title detail page ---- */
     .detail-backdrop { position: relative; border-radius: 12px; overflow: hidden; background: var(--vulgarr-bg-surface); border: 1px solid var(--vulgarr-border); }
@@ -512,20 +514,20 @@
       .responsive-table .card-row button { padding: 0.28rem 0.5rem; font-size: 0.78rem; white-space: nowrap; }
       .responsive-table .card-row button i { font-size: 0.95rem; }
       .responsive-table .card-row .btn-label { display: none; }
+    }
 
-      /* ---- mobile: the season/show-detail table's whole card should feel
-         tappable (it already looks like a button/card), not just the small
-         "Season N" text inside it -- a transparent full-card overlay on the
-         link handles that, while explicitly raising the real controls
-         (checkboxes/buttons) above it so they still get their own taps. ---- */
-      .responsive-table .card-tap tr { position: relative; }
-      .responsive-table .card-tap td:first-child a.title-link { position: static; }
-      .responsive-table .card-tap td:first-child a.title-link::after {
-        content: ""; position: absolute; inset: 0; z-index: 1;
-      }
-      .responsive-table .card-tap td form, .responsive-table .card-tap td button {
-        position: relative; z-index: 2;
-      }
+    /* ---- the season/show-detail table's whole row should feel clickable/tappable
+       (it already looks like a button/card), not just the small "Season N"/episode
+       text inside it -- a transparent full-row overlay on the link handles that, on
+       both desktop and mobile, while explicitly raising the real controls
+       (checkboxes/buttons) above it so they still get their own clicks/taps. ---- */
+    .responsive-table .card-tap tr { position: relative; }
+    .responsive-table .card-tap td:first-child a.title-link { position: static; }
+    .responsive-table .card-tap td:first-child a.title-link::after {
+      content: ""; position: absolute; inset: 0; z-index: 1;
+    }
+    .responsive-table .card-tap td form, .responsive-table .card-tap td button {
+      position: relative; z-index: 2;
     }
 
     /* A second, tighter tier for the smallest phones (e.g. iPhone SE-class,
@@ -688,7 +690,7 @@
       <nav>
         <div class="nav-group">
           <a href="/library" title="Library" class="{{ 'active' if request.url.path == '/library' else '' }}"><i class="ti ti-layout-grid" aria-hidden="true"></i><span class="nav-label">Library</span></a>
-          <div class="nav-sub-group {{ 'open' if request.url.path.startswith('/library') else '' }}">
+          <div class="nav-sub-group open">
             <a href="/library/movies" class="nav-sub {{ 'active' if request.url.path.startswith('/library/movies') else '' }}"><i class="ti ti-movie" aria-hidden="true"></i>Movies</a>
             <a href="/library/shows" class="nav-sub {{ 'active' if request.url.path.startswith('/library/shows') else '' }}"><i class="ti ti-device-tv" aria-hidden="true"></i>TV shows</a>
           </div>
@@ -699,17 +701,11 @@
         <a href="/queue" title="Activity" class="{{ 'active' if request.url.path.startswith('/queue') else '' }}"><i class="ti ti-activity" aria-hidden="true"></i><span class="nav-label">Activity</span></a>
         <a href="/settings" title="Settings" class="{{ 'active' if request.url.path.startswith('/settings') else '' }}"><i class="ti ti-settings" aria-hidden="true"></i><span class="nav-label">Settings</span></a>
       </nav>
-      {% if request.url.path in ('/library', '/library/movies', '/library/shows') %}
-      {# Only on the 3 browse/grid pages -- everywhere else that has a single title
-         to focus on (a title/season/show detail page) shows that title's own job
-         progress under its own status pill instead (see title_job_status.html),
-         so this list of *every* active job would be redundant there. Desktop-only:
-         collapses away with the rest of the sidebar (html.sidebar-collapsed, see
-         CSS) and the innerWidth guard on hx-trigger below skips the request
-         entirely under the mobile breakpoint, where the sidebar becomes a
-         horizontal icon bar with no room for this. #}
+      {# Shown on every page. Desktop-only: collapses away with the rest of the
+         sidebar (html.sidebar-collapsed, see CSS) and the innerWidth guard on
+         hx-trigger below skips the request entirely under the mobile breakpoint,
+         where the sidebar becomes a horizontal icon bar with no room for this. #}
       <div class="sidebar-jobs" id="topbar" hx-get="/queue/topbar" hx-trigger="load[window.innerWidth > 720], every 3s[window.innerWidth > 720]" hx-swap="innerHTML"></div>
-      {% endif %}
     </aside>
     <div class="main-wrap">
       <main>
