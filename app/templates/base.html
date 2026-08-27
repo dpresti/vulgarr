@@ -245,16 +245,21 @@
     summary { cursor: pointer; padding: 0.4rem 0; }
     summary:hover h2 { color: var(--vulgarr-accent); }
     summary h2 { transition: color 0.1s; }
+    /* ---- sidebar job list (Library / Movies / TV Shows only, desktop only -- see
+       the hx-trigger innerWidth guard and html.sidebar-collapsed rule below) ---- */
+    .sidebar-jobs { border-top: 1px solid var(--vulgarr-border); margin-top: 0.75rem; padding-top: 0.5rem; }
+    .sidebar-jobs-heading { font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--vulgarr-text-secondary); font-weight: 700; padding: 0 0.9rem 0.4rem; }
+    html.sidebar-collapsed .sidebar-jobs { display: none; }
     .topbar-job {
-      display: flex; align-items: center; gap: 0.6rem; cursor: pointer;
-      padding: 0.4rem 1.5rem; background: var(--vulgarr-bg-elevated); border-bottom: 1px solid var(--vulgarr-border);
-      font-size: 0.82rem;
+      display: flex; flex-direction: column; gap: 0.3rem; cursor: pointer;
+      padding: 0.45rem 0.9rem; font-size: 0.78rem;
     }
     .topbar-job:hover { background: var(--vulgarr-bg-row-hover); }
-    .topbar-job-title { font-weight: 600; white-space: nowrap; }
-    .topbar-job .job-progress { width: 120px; }
-    .topbar-job-pct { color: var(--vulgarr-text-secondary); width: 2.5em; }
-    .topbar-job-msg { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .topbar-job-title { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .topbar-job .job-progress { width: 100%; }
+    .topbar-job-meta { display: flex; justify-content: space-between; gap: 0.5rem; }
+    .topbar-job-pct { color: var(--vulgarr-text-secondary); flex-shrink: 0; }
+    .topbar-job-msg { color: var(--vulgarr-text-secondary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
     /* ---- poster grid (Library / Movies / TV Shows) ---- */
     .poster-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(148px, 1fr)); gap: 1.35rem 1.1rem; margin-top: 1.25rem; }
@@ -416,11 +421,8 @@
          same idea as .scene-review-adjust .input-sm below, scoped here instead. */
       .settings-grid input[type=number], .settings-grid .input-sm { width: 100px; max-width: 100px; }
 
-      /* ---- mobile: page headers and the queue topbar wrap instead of overflowing ---- */
+      /* ---- mobile: page headers wrap instead of overflowing ---- */
       .toolbar { flex-wrap: wrap; gap: 0.5rem; }
-      .topbar-job { flex-wrap: wrap; padding: 0.5rem 1rem; row-gap: 0.3rem; }
-      .topbar-job-title { white-space: normal; max-width: 100%; }
-      .topbar-job-msg { flex-basis: 100%; white-space: normal; }
 
       /* ---- mobile: forms with several fields in a row (add/filter/inline-edit
          forms) wrap instead of forcing the page to scroll sideways ---- */
@@ -697,9 +699,19 @@
         <a href="/queue" title="Activity" class="{{ 'active' if request.url.path.startswith('/queue') else '' }}"><i class="ti ti-activity" aria-hidden="true"></i><span class="nav-label">Activity</span></a>
         <a href="/settings" title="Settings" class="{{ 'active' if request.url.path.startswith('/settings') else '' }}"><i class="ti ti-settings" aria-hidden="true"></i><span class="nav-label">Settings</span></a>
       </nav>
+      {% if request.url.path in ('/library', '/library/movies', '/library/shows') %}
+      {# Only on the 3 browse/grid pages -- everywhere else that has a single title
+         to focus on (a title/season/show detail page) shows that title's own job
+         progress under its own status pill instead (see title_job_status.html),
+         so this list of *every* active job would be redundant there. Desktop-only:
+         collapses away with the rest of the sidebar (html.sidebar-collapsed, see
+         CSS) and the innerWidth guard on hx-trigger below skips the request
+         entirely under the mobile breakpoint, where the sidebar becomes a
+         horizontal icon bar with no room for this. #}
+      <div class="sidebar-jobs" id="topbar" hx-get="/queue/topbar" hx-trigger="load[window.innerWidth > 720], every 3s[window.innerWidth > 720]" hx-swap="innerHTML"></div>
+      {% endif %}
     </aside>
     <div class="main-wrap">
-      <div id="topbar" hx-get="/queue/topbar" hx-trigger="load, every 3s" hx-swap="innerHTML"></div>
       <main>
         {% block content %}{% endblock %}
       </main>

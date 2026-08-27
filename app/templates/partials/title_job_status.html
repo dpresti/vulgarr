@@ -4,11 +4,25 @@
    scroll to find it. Only rendered from title_detail_card.html (detail_view);
    scene_review_list.html/scene_review_apply_row.html render the equivalent
    progress+message inline for the standalone scene-review page, where there's
-   no status pill to sit under. #}
+   no status pill to sit under.
+
+   The audio mute job (last_job below) is the one job kind here with no
+   dedicated cancel button -- unlike the scene-pipeline jobs, which all target
+   #scene-review-{{ title_id }} to re-render just that section, there's no
+   equivalent scoped target for it on this card, and swapping the whole
+   #title-detail-{{ title_id }} div just to add Cancel wasn't worth it. It can
+   still be cancelled from the Activity/Queue page. #}
 {% if row and row.status == 'awaiting_subtitle' %}
 <div class="job-status">
   <span class="spinner"></span>
   <span class="job-status-msg">Searching for subtitles…</span>
+</div>
+{% endif %}
+{% set audio_job_active = last_job and last_job.state.value in ('queued', 'processing') %}
+{% if audio_job_active %}
+<div class="job-status">
+  <div class="job-progress">{% if last_job.progress_percent is not none %}<div class="job-progress-fill" style="width: {{ last_job.progress_percent }}%"></div>{% endif %}</div>
+  <span class="job-status-msg">{{ last_job.progress_message or 'Processing…' }}</span>
 </div>
 {% endif %}
 {% if scan_job and scene_scan_status in ('queued', 'scanning') %}
