@@ -56,12 +56,26 @@ def normalize_cue_text(text: str) -> str:
 
 
 def _compile_term_pattern(term: str, whole_word: bool) -> re.Pattern:
-    escaped = re.escape(term.lower().strip())
+    # Normalized the same way match_cue normalizes the cue text it's matched
+    # against (dash-to-space, strip punctuation except apostrophes) -- a term
+    # entered with a hyphen (e.g. "mother-fucker") previously compiled a
+    # pattern requiring a literal hyphen that the normalized cue text (hyphen
+    # already converted to a space) could never contain, a silent recall miss.
+    escaped = re.escape(normalize_cue_text(term).strip())
     # Allow the term's internal whitespace to match one-or-more whitespace,
     # so multi-word phrases survive subtitle line-wrapping/double-spacing.
     escaped = escaped.replace(r"\ ", r"\s+")
     if whole_word:
-        pattern = rf"\b{escaped}\b"
+        # (?<!\w)/(?!\w) rather than \b -- \b requires a \w/\W *transition*,
+        # which fails for a term ending or starting in an apostrophe (the one
+        # punctuation mark normalize_cue_text preserves): apostrophe is \W,
+        # so "nothin'" followed by a space (also \W) has no transition and
+        # \bnothin'\b could never match, a silent recall miss for any
+        # dropped-g/contraction term. The lookaround form only checks what's
+        # outside the match, not the match's own edge character, so it
+        # behaves identically to \b for ordinary word-char-edged terms while
+        # actually working for apostrophe-edged ones.
+        pattern = rf"(?<!\w){escaped}(?!\w)"
     else:
         pattern = escaped
     return re.compile(pattern, re.IGNORECASE)

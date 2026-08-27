@@ -23,16 +23,21 @@ def find_subtitle_for_video(video_path: Path, preferred_language: str = "en") ->
         candidates.append(f"{stem}.{lang}.forced.srt")
     candidates.append(f"{stem}.srt")
 
-    lower_index = {p.name.lower(): p for p in directory.glob(f"{_glob_escape(stem)}*.srt")}
+    # glob() itself is case-sensitive on Linux, which used to undermine the
+    # case-insensitive matching below before it even got a chance to run --
+    # a video "Movie.Name.2020.mkv" with a subtitle downloaded as
+    # "movie.name.2020.en.srt" (a common release/Bazarr casing mismatch)
+    # would never be found, since the glob pattern (built from the
+    # video's own, differently-cased stem) wouldn't match it at all.
+    # List every .srt in the directory instead and do the casing-insensitive
+    # comparison ourselves, all the way through.
+    stem_lower = stem.lower()
+    lower_index = {
+        p.name.lower(): p for p in directory.glob("*.srt") if p.name.lower().startswith(stem_lower)
+    }
     for candidate in candidates:
         match = lower_index.get(candidate.lower())
         if match is not None:
             return match
 
     return None
-
-
-def _glob_escape(s: str) -> str:
-    for ch in "[]?*":
-        s = s.replace(ch, f"[{ch}]")
-    return s
