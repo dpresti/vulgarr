@@ -1,5 +1,6 @@
 import asyncio
 import datetime
+import logging
 from pathlib import Path
 from urllib.parse import urlencode
 
@@ -25,13 +26,21 @@ from app.integrations.bazarr import BazarrClient
 from app.integrations.radarr import RadarrClient
 from app.integrations.sonarr import SonarrClient
 from app.integrations.subtitle_lookup import find_subtitle_for_video
-from app.library import enqueue_if_not_already_active, is_outdated, sync_radarr_library, sync_sonarr_library
+from app.library import (
+    enqueue_if_not_already_active,
+    is_outdated,
+    poll_for_subtitle_then_enqueue,
+    spawn_background,
+    sync_radarr_library,
+    sync_sonarr_library,
+)
 from app.queue.scene_worker import scene_job_queue
 from app.queue.worker import job_queue
 
 router = APIRouter(prefix="/library", tags=["library"])
 templates = Jinja2Templates(directory="app/templates")
 templates.env.globals["title_href"] = title_href
+logger = logging.getLogger(__name__)
 templates.env.globals["format_duration"] = format_duration
 
 PAGE_SIZE = 100
@@ -337,8 +346,15 @@ async def _load_processed_movies(
     """Done movies, one card each -- half of the main /library route's combined
     feed (the other half is _load_processed_shows below). Takes an explicit
     offset/limit rather than a page number since the two feeds are interleaved
-    into one virtual list by the caller (see library_page)."""
-    base: Select = select(Title).where(Title.media_type == MediaType.movie, Title.status == "done")
+    into one virtual list by the caller (see library_page).
+
+    While actively searching (q set), the done-only filter is dropped so the
+    search reaches every movie regardless of processing status -- otherwise
+    a title that hasn't been processed yet is invisible from this page even
+    though the user typed its exact name."""
+    base: Select = select(Title).where(Title.media_type == MediaType.movie)
+    if not q:
+        base = base.where(Title.status == "done")
     if q:
         base = base.where(Title.display_name.like(f"%{_escape_like(q)}%", escape="\\"))
 
@@ -357,7 +373,11 @@ async def _load_processed_shows(
 ) -> tuple[list[dict], int]:
     """Shows with at least one done episode, one card each (not one per episode) --
     other half of the main /library route's combined feed. Same aggregation as
-    _load_shows (TV Shows page) but restricted to done_count > 0."""
+    _load_shows (TV Shows page) but restricted to done_count > 0.
+
+    While actively searching (q set), that done_count > 0 restriction is dropped
+    so the search reaches every show regardless of processing status -- see
+    _load_processed_movies above for the same reasoning on the movie side."""
     total_col = func.count().label("total")
     done_col = func.sum(case((Title.status == "done", 1), else_=0)).label("done_count")
     failed_col = func.sum(case((Title.status == "failed", 1), else_=0)).label("failed_count")
@@ -379,7 +399,9 @@ async def _load_processed_shows(
     ).where(Title.media_type == MediaType.episode)
     if q:
         query = query.where(Title.series_title.like(f"%{_escape_like(q)}%", escape="\\"))
-    query = query.group_by(Title.sonarr_series_id, Title.series_title).having(done_col > 0)
+    query = query.group_by(Title.sonarr_series_id, Title.series_title)
+    if not q:
+        query = query.having(done_col > 0)
 
     count_subquery = query.with_only_columns(Title.sonarr_series_id).subquery()
     total = (await session.execute(select(func.count()).select_from(count_subquery))).scalar_one()
@@ -527,7 +549,12 @@ async def library_page(request: Request, q: str | None = None, page: int = 1, so
     everything regardless of processing status. The two queries are paginated
     independently, then interleaved into one virtual list (movies first, then
     shows) via the offset math below, so the single infinite-scroll feed here
-    doesn't need a real SQL UNION across two very different row shapes."""
+    doesn't need a real SQL UNION across two very different row shapes.
+
+    When a search query is active, the done-only restriction is dropped (see
+    _load_processed_movies/_load_processed_shows) so searching from this page
+    reaches every movie and show regardless of processing status, not just
+    ones that have already finished."""
     async with get_session() as session:
         current_version = int(await get_setting(session, "wordlist_version"))
         _, movie_total = await _load_processed_movies(session, current_version, 0, 0, q, sort)
@@ -878,25 +905,58 @@ async def season_detail(
 
 @router.post("/sync")
 async def sync_library(request: Request):
+    # Sonarr and Radarr are synced independently -- one failing (unreachable,
+    # unexpected response shape) previously raised unhandled from inside the
+    # session and aborted the whole route, so Radarr's sync never even ran
+    # since Sonarr's happens first. Each is now caught and logged on its own,
+    # so a Sonarr outage doesn't also silently skip Radarr.
+    sync_errors: list[str] = []
     async with get_session() as session:
         sonarr_url = await get_setting(session, "sonarr_url")
         sonarr_api_key = await get_setting(session, "sonarr_api_key")
         radarr_url = await get_setting(session, "radarr_url")
         radarr_api_key = await get_setting(session, "radarr_api_key")
         if sonarr_url and sonarr_api_key:
-            client = SonarrClient(sonarr_url, sonarr_api_key)
-            await sync_sonarr_library(session, client)
+            try:
+                client = SonarrClient(sonarr_url, sonarr_api_key)
+                await sync_sonarr_library(session, client)
+            except Exception:  # noqa: BLE001 -- log and continue to Radarr regardless
+                logger.exception("Sonarr sync failed")
+                sync_errors.append("sonarr")
+                # A caught-but-not-rolled-back exception can leave the session's
+                # transaction in a state SQLAlchemy refuses to reuse (e.g. after
+                # a flush failure) -- without this, Radarr's sync below (same
+                # session) could itself immediately fail with a confusing
+                # PendingRollbackError misattributed to Radarr.
+                await session.rollback()
         if radarr_url and radarr_api_key:
-            client = RadarrClient(radarr_url, radarr_api_key)
-            await sync_radarr_library(session, client)
+            try:
+                client = RadarrClient(radarr_url, radarr_api_key)
+                await sync_radarr_library(session, client)
+            except Exception:  # noqa: BLE001 -- log, still return normally
+                logger.exception("Radarr sync failed")
+                sync_errors.append("radarr")
+                await session.rollback()
 
-    return RedirectResponse(url="/settings", status_code=303)
+    redirect_url = "/settings"
+    if sync_errors:
+        redirect_url += "?" + urlencode({"sync_error": ",".join(sync_errors)})
+    return RedirectResponse(url=redirect_url, status_code=303)
 
 
 @router.post("/{title_id}/process", response_class=HTMLResponse)
 async def process_title(
     request: Request, title_id: int, short_label: bool = Form(False), detail_view: bool = Form(False)
 ):
+    # Verify the title still exists before enqueueing -- enqueue() unconditionally
+    # inserts a ProcessingJob row even for a nonexistent title_id (e.g. deleted
+    # between page load and click), leaving a dangling FK the worker later has to
+    # notice and mark failed, with this route meanwhile returning an empty
+    # response as if the click did nothing.
+    async with get_session() as session:
+        if await session.get(Title, title_id) is None:
+            return HTMLResponse("")
+
     await job_queue.enqueue(title_id, TriggerSource.manual)
 
     async with get_session() as session:
@@ -916,6 +976,10 @@ async def process_video_title(
 ):
     """Video-side counterpart to /process (audio-only, word-list mute) -- scans
     for candidate scenes without touching the audio pipeline."""
+    async with get_session() as session:
+        if await session.get(Title, title_id) is None:
+            return HTMLResponse("")
+
     await scene_job_queue.enqueue_scan_if_not_already_active(title_id)
 
     async with get_session() as session:
@@ -934,6 +998,10 @@ async def process_both_title(
     request: Request, title_id: int, short_label: bool = Form(False), detail_view: bool = Form(False)
 ):
     """Audio + Video together, one click -- both jobs always enqueue."""
+    async with get_session() as session:
+        if await session.get(Title, title_id) is None:
+            return HTMLResponse("")
+
     await job_queue.enqueue(title_id, TriggerSource.manual)
     await scene_job_queue.enqueue_scan_if_not_already_active(title_id)
 
@@ -1020,7 +1088,7 @@ async def process_both_show(request: Request, series_id: int, came_from: str | N
         )
     pip, pip_label = _aggregate_show_pip(seasons)
 
-    scan_queued = sum([await scene_job_queue.enqueue_scan_if_not_already_active(title_id) for title_id in title_ids])
+    scan_queued = await scene_job_queue.enqueue_scan_for_titles_if_not_already_active(title_ids)
 
     return templates.TemplateResponse(
         "partials/show_detail_card.html",
@@ -1184,7 +1252,7 @@ async def process_both_season(
         else:
             season = await _load_season(session, series_id, season_number, current_version)
 
-    scan_queued = sum([await scene_job_queue.enqueue_scan_if_not_already_active(title_id) for title_id in title_ids])
+    scan_queued = await scene_job_queue.enqueue_scan_for_titles_if_not_already_active(title_ids)
 
     if detail_view:
         return templates.TemplateResponse(
@@ -1340,11 +1408,30 @@ _SUBTITLE_POLL_ATTEMPTS = 6
 _SUBTITLE_POLL_INTERVAL_SECONDS = 3.0
 
 
-async def _search_and_queue_subtitle(session, title: Title, default_subtitle_language: str) -> str:
+async def _search_and_queue_subtitle(
+    title_id: int,
+    media_type: MediaType,
+    video_path: str,
+    sonarr_series_id: int | None,
+    sonarr_episode_id: int | None,
+    radarr_movie_id: int | None,
+    default_subtitle_language: str,
+    bazarr_url: str,
+    bazarr_api_key: str,
+) -> str:
     """Search Bazarr for a subtitle and, if found, enqueue an audio-mute job.
     Returns a human-readable status message. Shared by search_subtitle_via_bazarr
     and search_subtitle_and_process_both below -- the only difference between
     those two is whether a scene-scan job also gets enqueued alongside this.
+
+    Takes plain values rather than an open session/Title object on purpose --
+    this runs a Bazarr HTTP call plus up to ~18s of polling (see below), and
+    previously did all of that with a DB session/pooled connection held open
+    the whole time. With the app's own self-polling UI (title/queue/scene-review
+    refresh every few seconds) opening additional concurrent sessions, a
+    couple of in-flight searches could exhaust a small connection pool and
+    stall unrelated requests. Only the final DB write, at the very end, opens
+    its own short-lived session.
 
     Bazarr's search API replies success as soon as the search is *triggered*,
     not once a subtitle is actually downloaded -- the real provider search +
@@ -1359,26 +1446,23 @@ async def _search_and_queue_subtitle(session, title: Title, default_subtitle_lan
     caught this bug) still won't show up in this one request/response cycle
     -- see the honest, non-final message below rather than pretending
     otherwise."""
-    bazarr_url = await get_setting(session, "bazarr_url")
-    bazarr_api_key = await get_setting(session, "bazarr_api_key")
-
     if not bazarr_url or not bazarr_api_key:
         return "Bazarr isn't configured (missing URL/API key) -- set it in Settings."
-    if title.media_type == MediaType.episode and not (title.sonarr_series_id and title.sonarr_episode_id):
+    if media_type == MediaType.episode and not (sonarr_series_id and sonarr_episode_id):
         return "Missing Sonarr series/episode ID -- try syncing the library first."
-    if title.media_type == MediaType.movie and not title.radarr_movie_id:
+    if media_type == MediaType.movie and not radarr_movie_id:
         return "Missing Radarr movie ID -- try syncing the library first."
 
     client = BazarrClient(bazarr_url, bazarr_api_key)
     try:
-        if title.media_type == MediaType.episode:
+        if media_type == MediaType.episode:
             ok = await client.search_episode_subtitle(
-                series_id=title.sonarr_series_id, episode_id=title.sonarr_episode_id,
+                series_id=sonarr_series_id, episode_id=sonarr_episode_id,
                 language=default_subtitle_language,
             )
         else:
             ok = await client.search_movie_subtitle(
-                radarr_id=title.radarr_movie_id, language=default_subtitle_language
+                radarr_id=radarr_movie_id, language=default_subtitle_language
             )
     except Exception as exc:  # noqa: BLE001 -- surface any connection/API error to the UI
         return f"Bazarr request failed: {exc}"
@@ -1388,7 +1472,7 @@ async def _search_and_queue_subtitle(session, title: Title, default_subtitle_lan
 
     subtitle = None
     for attempt in range(_SUBTITLE_POLL_ATTEMPTS):
-        subtitle = find_subtitle_for_video(Path(title.video_path), default_subtitle_language)
+        subtitle = await asyncio.to_thread(find_subtitle_for_video, Path(video_path), default_subtitle_language)
         if subtitle:
             break
         if attempt < _SUBTITLE_POLL_ATTEMPTS - 1:
@@ -1398,19 +1482,51 @@ async def _search_and_queue_subtitle(session, title: Title, default_subtitle_lan
         # Not "no subtitle was found" -- that's a claim about Bazarr's own
         # search outcome, which this request has no way to know yet. Bazarr
         # may still be searching/downloading well past this request's own
-        # lifetime (see the docstring above) -- the honest status is "we
-        # don't know yet", not "it failed".
+        # lifetime (see the docstring above).
+        #
+        # Real bug this fixes: this used to just return the message below and
+        # stop -- unlike the Sonarr/Radarr/Bazarr webhook flows (and the mkv-
+        # replacement flow), a manual "Process Audio" click had no fallback
+        # once its own short inline poll gave up, so a subtitle landing any
+        # time after ~18s (confirmed to take up to ~1m45s in a real case, see
+        # above) was never picked up by anything -- the title just sat there
+        # looking stuck until someone happened to notice and retry by hand.
+        # Falls back to the same bounded background poller the automated
+        # paths use, and flips status to "awaiting_subtitle" so the row
+        # starts self-polling and picks up the change once the poller finds it.
+        async with get_session() as session:
+            title = await session.get(Title, title_id)
+            if title is not None:
+                title.status = "awaiting_subtitle"
+                await session.commit()
+                spawn_background(
+                    poll_for_subtitle_then_enqueue(
+                        video_path=video_path,
+                        media_type=media_type,
+                        display_name=title.display_name,
+                        sonarr_series_id=sonarr_series_id,
+                        sonarr_episode_id=sonarr_episode_id,
+                        radarr_movie_id=radarr_movie_id,
+                        trigger_source=TriggerSource.manual,
+                        series_title=title.series_title,
+                        season_number=title.season_number,
+                        episode_number=title.episode_number,
+                    )
+                )
         return (
             "Bazarr search triggered, but no subtitle has landed yet after "
             f"~{_SUBTITLE_POLL_ATTEMPTS * _SUBTITLE_POLL_INTERVAL_SECONDS:.0f}s -- "
-            "it may still be searching. Reprocess audio manually once one appears, "
-            "or enable the Bazarr webhook in Settings to pick it up automatically."
+            "still watching for it in the background, this page will pick it up "
+            "automatically once it appears."
         )
 
-    title.subtitle_path = str(subtitle)
-    title.subtitle_language = default_subtitle_language
-    await session.commit()
-    await job_queue.enqueue(title.id, TriggerSource.manual)
+    async with get_session() as session:
+        title = await session.get(Title, title_id)
+        if title is not None:
+            title.subtitle_path = str(subtitle)
+            title.subtitle_language = default_subtitle_language
+            await session.commit()
+    await job_queue.enqueue(title_id, TriggerSource.manual)
     return "Found it! Subtitle downloaded, queued for processing."
 
 
@@ -1419,14 +1535,27 @@ async def search_subtitle_via_bazarr(
     request: Request, title_id: int, short_label: bool = Form(False), detail_view: bool = Form(False)
 ):
     async with get_session() as session:
-        current_version = int(await get_setting(session, "wordlist_version"))
         title = await session.get(Title, title_id)
         if title is None:
             return HTMLResponse("")
         default_subtitle_language = await get_setting(session, "default_subtitle_language")
-        message = await _search_and_queue_subtitle(session, title, default_subtitle_language)
+        bazarr_url = await get_setting(session, "bazarr_url")
+        bazarr_api_key = await get_setting(session, "bazarr_api_key")
+        search_args = (
+            title.id, title.media_type, title.video_path,
+            title.sonarr_series_id, title.sonarr_episode_id, title.radarr_movie_id,
+        )
 
-        await session.refresh(title)
+    # No session held open across this -- see _search_and_queue_subtitle's docstring.
+    message = await _search_and_queue_subtitle(
+        *search_args, default_subtitle_language, bazarr_url, bazarr_api_key
+    )
+
+    async with get_session() as session:
+        current_version = int(await get_setting(session, "wordlist_version"))
+        title = await session.get(Title, title_id)
+        if title is None:
+            return HTMLResponse("")
         pending_ids = await _pending_scene_title_ids(session, [title_id])
         row = _row_dict(
             title, current_version, bazarr_message=message, short_label=short_label,
@@ -1454,14 +1583,27 @@ async def search_subtitle_and_process_both(
     await scene_job_queue.enqueue_scan_if_not_already_active(title_id)
 
     async with get_session() as session:
-        current_version = int(await get_setting(session, "wordlist_version"))
         title = await session.get(Title, title_id)
         if title is None:
             return HTMLResponse("")
         default_subtitle_language = await get_setting(session, "default_subtitle_language")
-        subtitle_message = await _search_and_queue_subtitle(session, title, default_subtitle_language)
+        bazarr_url = await get_setting(session, "bazarr_url")
+        bazarr_api_key = await get_setting(session, "bazarr_api_key")
+        search_args = (
+            title.id, title.media_type, title.video_path,
+            title.sonarr_series_id, title.sonarr_episode_id, title.radarr_movie_id,
+        )
 
-        await session.refresh(title)
+    # No session held open across this -- see _search_and_queue_subtitle's docstring.
+    subtitle_message = await _search_and_queue_subtitle(
+        *search_args, default_subtitle_language, bazarr_url, bazarr_api_key
+    )
+
+    async with get_session() as session:
+        current_version = int(await get_setting(session, "wordlist_version"))
+        title = await session.get(Title, title_id)
+        if title is None:
+            return HTMLResponse("")
         pending_ids = await _pending_scene_title_ids(session, [title_id])
         row = _row_dict(
             title, current_version, bazarr_message=subtitle_message, short_label=short_label,

@@ -5,6 +5,12 @@
    scene_review_list.html/scene_review_apply_row.html render the equivalent
    progress+message inline for the standalone scene-review page, where there's
    no status pill to sit under. #}
+{% if row and row.status == 'awaiting_subtitle' %}
+<div class="job-status">
+  <span class="spinner"></span>
+  <span class="job-status-msg">Searching for subtitles…</span>
+</div>
+{% endif %}
 {% if scan_job and scene_scan_status in ('queued', 'scanning') %}
 <div class="job-status">
   <div class="job-progress">{% if scan_job.progress_percent is not none %}<div class="job-progress-fill" style="width: {{ scan_job.progress_percent }}%"></div>{% endif %}</div>

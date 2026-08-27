@@ -173,9 +173,16 @@ class JobQueue:
         if task is not None:
             async with get_session() as session:
                 job = await session.get(ProcessingJob, job_id)
-                if job is None or job.state != JobState.processing:
+                # A task is registered here as soon as it's created (see
+                # _dispatch_loop), before _run_job's own body has necessarily
+                # run far enough to flip state to "processing" -- treat that
+                # brief "queued" window the same as "processing" rather than
+                # rejecting the cancel, since task.cancel() is what actually
+                # matters here (cancelling before the coroutine body has even
+                # started prevents it from ever running at all).
+                if job is None or job.state not in (JobState.queued, JobState.processing):
                     return False, "Job is no longer running"
-                if (job.progress_percent or 0) >= 97:
+                if job.state == JobState.processing and (job.progress_percent or 0) >= 97:
                     return False, "Too far along to cancel -- finishing up"
             # Let _run_job's own CancelledError handler own the state transition,
             # rather than writing to the job row from this separate session too --

@@ -10,7 +10,7 @@ import datetime
 import logging
 import time
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 
 from app.db.models import JobState, SceneJob, SceneJobKind, Title
 from app.db.session import get_session, get_setting
@@ -101,9 +101,14 @@ class SceneJobQueue:
         if task is not None:
             async with get_session() as session:
                 job = await session.get(SceneJob, job_id)
-                if job is None or job.state != JobState.processing:
+                # A task is registered here as soon as it's created, before its
+                # own body has necessarily run far enough to flip state to
+                # "processing" -- treat that brief "queued" window the same as
+                # "processing" rather than rejecting the cancel (see
+                # JobQueue.cancel_job for the same fix/reasoning).
+                if job is None or job.state not in (JobState.queued, JobState.processing):
                     return False, "Job is no longer running"
-                if (job.progress_percent or 0) >= 97:
+                if job.state == JobState.processing and (job.progress_percent or 0) >= 97:
                     return False, "Too far along to cancel -- finishing up"
             task.cancel()
             return True, None
@@ -151,6 +156,41 @@ class SceneJobQueue:
                 return False
         await self.enqueue_scan(title_id)
         return True
+
+    async def enqueue_scan_for_titles_if_not_already_active(self, title_ids: list[int]) -> int:
+        """Batched form of enqueue_scan_if_not_already_active for the bulk
+        "process both" season/show actions -- one session/transaction for the
+        whole list instead of 1-2 DB round trips per title, so a large show
+        doesn't turn one click into dozens of sequential queries before the
+        request can return. Returns how many were actually enqueued (vs.
+        skipped as already active)."""
+        if not title_ids:
+            return 0
+        async with get_session() as session:
+            existing = await session.execute(
+                select(SceneJob.title_id).where(
+                    SceneJob.title_id.in_(title_ids),
+                    SceneJob.kind == SceneJobKind.scan,
+                    SceneJob.state.in_([JobState.queued, JobState.processing]),
+                )
+            )
+            already_active = {row[0] for row in existing.all()}
+            to_enqueue = [tid for tid in title_ids if tid not in already_active]
+            if not to_enqueue:
+                return 0
+            jobs = [SceneJob(title_id=tid, kind=SceneJobKind.scan, state=JobState.queued) for tid in to_enqueue]
+            session.add_all(jobs)
+            await session.execute(update(Title).where(Title.id.in_(to_enqueue)).values(scene_scan_status="queued"))
+            # Flush (not commit) to assign each job's id while the objects are still
+            # attached and readable -- commit would expire them, and this async
+            # session can't do the implicit lazy-reload that a sync session would
+            # use to re-fetch an expired attribute on next access.
+            await session.flush()
+            job_ids = [job.id for job in jobs]
+            await session.commit()
+        for job_id in job_ids:
+            await self._pending.put(job_id)
+        return len(job_ids)
 
     async def enqueue_blur(self, title_id: int) -> int:
         async with get_session() as session:
@@ -290,6 +330,11 @@ class SceneJobQueue:
             # scene segment, not just at the tail), so on_stage below no longer
             # forces a progress floor -- fraction naturally reaches ~97% once all
             # scene segments are done re-encoding, before verify/publish ever run.
+            # (When any approved scene has mute_audio set, apply_scene_blur scales
+            # this fraction down to leave room for the audio-mute phase that
+            # follows -- see its docstring -- so this doesn't hit 97% until that
+            # phase, which on_stage alone doesn't move progress_percent for, has
+            # also actually finished.)
             async def on_blur_progress(fraction: float) -> None:
                 nonlocal last_update_monotonic
                 now = time.monotonic()

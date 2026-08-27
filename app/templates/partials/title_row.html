@@ -78,7 +78,7 @@
       {% if row.status == 'awaiting_mkv' %}
         <span class="muted">waiting on Sonarr/Radarr…</span>
       {% elif row.status == 'awaiting_subtitle' %}
-        <span class="muted">waiting on Bazarr…</span>
+        <span class="detail-waiting"><span class="spinner"></span>Searching for subtitles…</span>
       {% elif not row.has_subtitle %}
       <form class="inline" hx-post="/library/{{ row.title.id }}/search-subtitle" hx-target="#title-row-{{ row.title.id }}" hx-swap="outerHTML" hx-indicator="#bazarr-indicator-{{ row.title.id }}">
         {% if season_context %}<input type="hidden" name="short_label" value="true">{% endif %}

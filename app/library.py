@@ -17,6 +17,25 @@ from app.integrations.subtitle_lookup import find_subtitle_for_video
 
 logger = logging.getLogger(__name__)
 
+# asyncio only holds a weak reference to a task once nothing else references
+# it -- a fire-and-forget task from a request handler (nothing awaits it, no
+# caller keeps the returned Task around) is otherwise eligible for GC mid-run,
+# especially one that spends most of its life just sleeping in a poll loop
+# like poll_for_subtitle_then_enqueue below (can run up to
+# sonarr_radarr_subtitle_poll_timeout_seconds, default 900s). Standard fix
+# per asyncio's own docs: keep a strong reference in a module-level set,
+# discarded once the task actually finishes. Shared here (rather than one
+# copy per caller) since both the Sonarr/Radarr/Bazarr webhooks and the
+# manual "Process Audio" button's Bazarr search both spawn this same poller.
+_background_tasks: set[asyncio.Task] = set()
+
+
+def spawn_background(coro) -> asyncio.Task:
+    task = asyncio.create_task(coro)
+    _background_tasks.add(task)
+    task.add_done_callback(_background_tasks.discard)
+    return task
+
 
 def is_outdated(title: Title, current_wordlist_version: int) -> bool:
     return (
@@ -39,12 +58,18 @@ async def upsert_title(
     episode_number: int | None = None,
     default_precise_mode: str | None = None,
     poster_url: str | None = None,
+    commit: bool = True,
 ) -> Title:
     result = await session.execute(select(Title).where(Title.video_path == video_path))
     title = result.scalar_one_or_none()
 
     default_subtitle_language = await get_setting(session, "default_subtitle_language")
-    subtitle = find_subtitle_for_video(Path(video_path), default_subtitle_language)
+    # find_subtitle_for_video does synchronous directory.exists()/glob() calls --
+    # pushed onto a worker thread so a full library sync (this runs once per
+    # title, sequentially, for potentially tens of thousands of titles) doesn't
+    # block the event loop -- and every other concurrent request (webhooks, UI
+    # polling, the job worker's own DB polling) -- for the whole sync duration.
+    subtitle = await asyncio.to_thread(find_subtitle_for_video, Path(video_path), default_subtitle_language)
 
     if title is None:
         if default_precise_mode is None:
@@ -74,8 +99,16 @@ async def upsert_title(
         # real /library/sync already found with None just because this call has none.
         title.poster_url = poster_url
 
-    await session.commit()
-    await session.refresh(title)
+    if commit:
+        await session.commit()
+        await session.refresh(title)
+    else:
+        # Bulk sync path (sync_sonarr_library/sync_radarr_library below) -- flush
+        # instead of committing so a new title gets its id (and stays visible to
+        # the next iteration's SELECT via autoflush) without paying for a round
+        # trip to disk on every single title. The caller commits once for the
+        # whole batch instead.
+        await session.flush()
     return title
 
 
@@ -95,8 +128,10 @@ async def sync_sonarr_library(session: AsyncSession, client: SonarrClient) -> in
             episode_number=ep_file.episode_number,
             default_precise_mode=default_precise_mode,
             poster_url=ep_file.poster_url,
+            commit=False,
         )
         count += 1
+    await session.commit()
     return count
 
 
@@ -112,8 +147,10 @@ async def sync_radarr_library(session: AsyncSession, client: RadarrClient) -> in
             radarr_movie_id=movie_file.movie_id,
             default_precise_mode=default_precise_mode,
             poster_url=movie_file.poster_url,
+            commit=False,
         )
         count += 1
+    await session.commit()
     return count
 
 
@@ -160,7 +197,7 @@ async def poll_for_subtitle_then_enqueue(
 
     elapsed = 0.0
     while elapsed < timeout:
-        subtitle = find_subtitle_for_video(Path(video_path), default_subtitle_language)
+        subtitle = await asyncio.to_thread(find_subtitle_for_video, Path(video_path), default_subtitle_language)
         if subtitle is not None:
             async with get_session() as session:
                 title = await upsert_title(

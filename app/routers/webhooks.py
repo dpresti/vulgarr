@@ -13,7 +13,7 @@ from app.integrations import bazarr as bazarr_integration
 from app.integrations import radarr as radarr_integration
 from app.integrations import sonarr as sonarr_integration
 from app.integrations.subtitle_lookup import find_subtitle_for_video
-from app.library import enqueue_if_not_already_active, poll_for_subtitle_then_enqueue, upsert_title
+from app.library import enqueue_if_not_already_active, poll_for_subtitle_then_enqueue, spawn_background, upsert_title
 from app.queue.scene_worker import scene_job_queue
 
 router = APIRouter(prefix="/webhooks", tags=["webhooks"])
@@ -34,9 +34,13 @@ def _guess_media_type(video_path: Path) -> MediaType:
 async def _check_token(request: Request) -> None:
     async with get_session() as session:
         token = await get_setting(session, "webhook_token")
-    if not token:
-        return
-    if not hmac.compare_digest(request.query_params.get("token", ""), token):
+    # Fail closed, not open -- an empty stored token used to skip the check
+    # entirely (auth silently disabled) rather than reject every request. In
+    # practice webhook_token is always non-empty (DEFAULT_SETTINGS seeds a
+    # random one, the settings form refuses to save a blank value), but
+    # nothing structurally guarantees that stays true, so treat "empty" as
+    # "misconfigured" rather than "no auth required".
+    if not token or not hmac.compare_digest(request.query_params.get("token", ""), token):
         raise HTTPException(status_code=401, detail="Invalid or missing webhook token")
 
 
@@ -100,7 +104,7 @@ async def sonarr_webhook(request: Request):
         if subtitle is not None:
             await enqueue_if_not_already_active(title.id, TriggerSource.sonarr)
             return {"status": "queued"}
-        asyncio.create_task(
+        spawn_background(
             poll_for_subtitle_then_enqueue(
                 video_path=video_path,
                 media_type=MediaType.episode,
@@ -161,7 +165,7 @@ async def radarr_webhook(request: Request):
         if subtitle is not None:
             await enqueue_if_not_already_active(title.id, TriggerSource.radarr)
             return {"status": "queued"}
-        asyncio.create_task(
+        spawn_background(
             poll_for_subtitle_then_enqueue(
                 video_path=video_path,
                 media_type=MediaType.movie,

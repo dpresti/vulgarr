@@ -30,7 +30,9 @@
           {% if row.status == 'awaiting_mkv' %}
             <span class="muted">waiting on Sonarr/Radarr…</span>
           {% elif row.status == 'awaiting_subtitle' %}
-            <span class="muted">waiting on Bazarr…</span>
+            {# Message already shown once above via title_job_status.html -- nothing
+               to put here except keep this branch so the Audio/Both buttons below
+               don't render while a search is still in flight. #}
           {% elif not row.has_subtitle %}
             <form hx-post="/library/{{ row.title.id }}/search-subtitle" hx-target="#title-detail-{{ row.title.id }}" hx-swap="outerHTML" hx-indicator="#detail-bazarr-indicator-{{ row.title.id }}">
               <input type="hidden" name="detail_view" value="true">
