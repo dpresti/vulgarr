@@ -761,14 +761,14 @@ async def _segment_actual_start_time(ffprobe_bin: str, ts_path: Path) -> float |
     return timestamps[0] if timestamps else None
 
 
-async def _segment_actual_end_time(ffprobe_bin: str, ts_path: Path, actual_start: float) -> float | None:
-    """actual_start plus this segment's own real container duration -- the
-    ground truth for the OTHER boundary a copy segment touches (the cut
-    AFTER it, where the next re-encode segment is expected to pick up).
-    Checking only a copy segment's start (_segment_actual_start_time) misses
-    this side entirely, which is the more dangerous direction to get wrong:
-    a late real cut here means the copy segment eats into the front of the
-    next approved scene, and unlike the start-side case, the re-encode
+async def _segment_actual_end_time(ffprobe_bin: str, ts_path: Path) -> float | None:
+    """Reads an already-produced copy segment's own true last video frame
+    timestamp -- the ground truth for the OTHER boundary a copy segment
+    touches (the cut AFTER it, where the next re-encode segment is expected
+    to pick up). Checking only a copy segment's start (_segment_actual_start_time)
+    misses this side entirely, which is the more dangerous direction to get
+    wrong: a late real cut here means the copy segment eats into the front of
+    the next approved scene, and unlike the start-side case, the re-encode
     segment right after it always covers its own exact planned window
     regardless (accurate `-ss`/`-t` seek from the original source, see
     _extract_reencode_segment) -- so a bad cut here isn't just wasted
@@ -776,12 +776,57 @@ async def _segment_actual_end_time(ffprobe_bin: str, ts_path: Path, actual_start
     start of an approved scene sitting in the *unblurred* copy segment,
     before the (correctly blurred, but now late) re-encode segment even
     begins. Both directions have to be checked -- see build_blurred_video's
-    retry loop, which probes every copy segment's start AND end."""
-    probe_result = await probe(ffprobe_bin, ts_path)
-    duration = probe_result["format"].get("duration")
-    if duration is None:
+    retry loop, which probes every copy segment's start AND end.
+
+    Used to compute `actual_start + probe(ts_path)["format"]["duration"]` --
+    a REAL, confirmed bug found live this session: _split_copy_segments
+    deliberately keeps each copy segment's packets at their original
+    SOURCE-relative (non-zero) timestamps rather than resetting them per
+    segment (see that function's own docstring for why). For a segment that
+    doesn't start at absolute zero, ffprobe's container-level `format.duration`
+    field comes back as the segment's own ABSOLUTE end timestamp, not a true
+    zero-based duration -- confirmed directly: a real segment starting at
+    1142.476s and truly ending around 1323s reported format.duration as
+    1327.911 (its own absolute end, not a ~181s span). Adding actual_start on
+    top of that double-counted the offset, producing "actual_end" values that
+    were off by roughly the segment's own start time -- which is exactly the
+    ~1140s-scale drift that sent build_blurred_video's retry loop wandering
+    toward increasingly distant, spuriously-"confirmed" keyframes on a real
+    file this session, chasing a bug that was never actually about keyframe
+    placement at all. Reading the real last frame directly here, the same way
+    _segment_actual_start_time already reads the real first frame, sidesteps
+    the unreliable container-duration field entirely."""
+    code, out, _err = await _run(
+        [
+            ffprobe_bin, "-v", "error", "-select_streams", "v:0",
+            "-show_entries", "frame=pts_time",
+            # A deliberately-too-large seek target, same technique as
+            # _segment_file_ends_with_cra's -sseof -- forces ffprobe to land
+            # near the file's real end regardless of its actual duration,
+            # without needing to already know that duration up front. NO
+            # frame-count cap after the seek (a real, confirmed bug found
+            # live this session in an earlier version of this line: an
+            # initial "+#20" cap was FAR too small for this file's actual GOP
+            # size -- confirmed directly, the seek landed at the start of an
+            # 85-frame GOP, so 20 frames stopped well short of the real end,
+            # reporting a "last frame" over 3 seconds early. This is the
+            # exact same bug SHAPE this session's _annexb_buf_last_picture_nal_type
+            # scan-limit bug already was: a frame/NAL count cap that seemed
+            # generous but wasn't, near a buffer's or file's real tail).
+            # Reading every frame from the seek point to true EOF and taking
+            # the max, rather than a single one, is still necessary despite
+            # no longer capping the count: B-frame reordering means the LAST
+            # frame ffprobe emits isn't guaranteed to be the one with the
+            # highest presentation timestamp.
+            "-read_intervals", "999999%",
+            "-of", "csv=p=0", str(ts_path),
+        ],
+        timeout=30,
+    )
+    if code != 0:
         return None
-    return actual_start + float(duration)
+    timestamps = _parse_keyframe_csv(out)
+    return max(timestamps) if timestamps else None
 
 
 async def _split_copy_segments(
@@ -1424,12 +1469,33 @@ async def build_blurred_video(
                                 bad_reason = f"actually cut at {actual_start:.3f}s"
                                 confirmed_keyframe = actual_start
                                 break
-                            if seg.end < total_duration and actual_start is not None:
-                                actual_end = await _segment_actual_end_time(ffprobe_bin, ts_path, actual_start)
+                            if seg.end < total_duration:
+                                actual_end = await _segment_actual_end_time(ffprobe_bin, ts_path)
                                 if actual_end is not None and abs(actual_end - seg.end) > _BOUNDARY_DRIFT_TOLERANCE_SECONDS:
                                     bad_boundary = seg.end
                                     bad_reason = f"actually cut at {actual_end:.3f}s"
-                                    confirmed_keyframe = actual_end
+                                    # Deliberately NOT setting confirmed_keyframe = actual_end
+                                    # here, unlike the start-side case above -- a real bug
+                                    # found live this session. actual_start is always a real
+                                    # keyframe (it's literally where the segment muxer cut a
+                                    # NEW segment to begin), safe to feed back into
+                                    # keyframe_timestamps as a trustworthy candidate. A copy
+                                    # segment's actual_end is NOT a keyframe -- it's just
+                                    # whatever frame happens to precede wherever the NEXT
+                                    # segment's real keyframe starts, essentially never a
+                                    # valid cut point itself. Confirmed directly: injecting it
+                                    # as if it were one let a later re-plan pick it via
+                                    # at_or_before for the reencode segment's (accurately
+                                    # `-ss`/`-t` seeked, so it lands exactly there regardless)
+                                    # start, while the copy segment's own re-split -- keyframe-
+                                    # muxer-based, so it can't actually cut at a non-keyframe --
+                                    # snapped forward to the next REAL keyframe instead, leaving
+                                    # the two segments overlapping over that gap. That overlap,
+                                    # summed across every scene in the file, is exactly what
+                                    # produced a real ~13.5s total-duration overshoot on a real
+                                    # file. Excluding the bad boundary without injecting a fake
+                                    # replacement lets the retry fall through to the next
+                                    # genuine candidate already in keyframe_timestamps instead.
                                     break
                             if (
                                 seg.end < total_duration
