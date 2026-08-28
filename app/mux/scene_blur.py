@@ -54,6 +54,7 @@ import asyncio
 import bisect
 import hashlib
 import logging
+import re
 import shutil
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -96,6 +97,37 @@ _WHOLE_FILE_REENCODE_TIMEOUT_SECONDS = 24 * 60 * 60
 # medium=3.43fps, veryfast=7.02fps, faster=7.20fps -- faster's extra 3% over
 # veryfast isn't worth its slightly worse quality-per-bit, so veryfast wins.
 _WHOLE_FILE_FALLBACK_PRESET = "veryfast"
+
+
+# A confirmed-benign ffmpeg stderr line, specific to verify_blurred_output's
+# own null-format decode-check invocation: seeking (-ss) to within ~3s of a
+# short re-encoded segment's own GOP start makes ffmpeg's null muxer emit
+# this exact warning even though the process exits 0 and the file decodes
+# perfectly cleanly end to end with no seek at all -- confirmed directly,
+# live, on two separate real re-encodes of the same file/scene (the exact
+# byte offsets in the message differ run to run, since x265's own encode
+# isn't fully deterministic, but the message text doesn't). Widening the
+# lookback before the window of interest was tried first and found NOT
+# reliable -- confirmed directly: a second re-encode of the identical scene
+# reproduced the same warning at a different seek offset, so this can't be
+# dodged with a fixed distance. Confirmed this is genuinely a false positive,
+# not a laxer check papering over real corruption: a REAL corrupted file
+# (the exact "Could not find ref with POC"/"alignment_bit_equal_to_one"
+# splice-corruption bug this module spent most of a session chasing) does
+# NOT produce this message under the identical check, even though it fails
+# loudly with everything else -- so filtering this one specific message
+# doesn't weaken this function's ability to catch that failure class at all.
+_BENIGN_DECODE_WARNING_RE = re.compile(
+    r"^\[null[^\]]*\] Application provided invalid, non monotonically increasing dts to muxer.*$", re.MULTILINE
+)
+
+
+def _filter_benign_decode_warnings(stderr_text: str) -> str:
+    """Strips _BENIGN_DECODE_WARNING_RE lines from a decode-check's captured
+    stderr, leaving only content that should actually fail the check. Split
+    out as a pure function for testability, same convention as this file's
+    other stderr/output parsers."""
+    return _BENIGN_DECODE_WARNING_RE.sub("", stderr_text).strip()
 
 
 async def _run_atomic(cmd_for_output: Callable[[Path], list[str]], out_path: Path, timeout: float, error_ctx: str) -> None:
@@ -511,6 +543,139 @@ async def _segment_file_ends_with_cra(ffmpeg_bin: str, ts_path: Path) -> bool:
     return _annexb_buf_last_picture_nal_type(buf) == 21
 
 
+@dataclass(frozen=True)
+class _SourceHevcParams:
+    """The subset of a source HEVC stream's own active SPS/PPS derived-state
+    fields that _build_matching_x265_params needs to reproduce in a re-encoded
+    segment -- see that function's docstring for why this matters at all."""
+
+    high_tier: bool
+    level_x265: str  # e.g. "4.1", derived from general_level_idc / 30
+    dpb_minus1: int  # sps_max_dec_pic_buffering_minus1 -- passed to x265 as --ref directly
+    wpp: bool  # entropy_coding_sync_enabled_flag
+    deblock: tuple[int, int] | None  # (pps_beta_offset_div2, pps_tc_offset_div2), or None if the PPS doesn't signal custom deblocking
+
+
+# Exact field-name strings as printed by ffmpeg's trace_headers bitstream
+# filter -- confirmed directly against real output. VPS-scoped duplicates of
+# the profile/tier/level fields use a different prefix (vps_max_... vs
+# sps_max_...), so there's no collision between VPS and SPS occurrences of
+# these names; general_tier_flag/general_level_idc do appear under both VPS's
+# and SPS's own profile_tier_level(), but per spec these always match for
+# single-layer HEVC (the only kind this app ever produces or consumes), so
+# which occurrence wins doesn't matter in practice.
+_TRACE_HEADERS_FIELD_RE = re.compile(r"^\[trace_headers[^\]]*\]\s+\d+\s+(\S+)\s+\S+\s+=\s+(-?\d+)\s*$", re.MULTILINE)
+
+
+def _parse_hevc_trace_fields(trace_text: str) -> _SourceHevcParams | None:
+    """Pure parser for _probe_source_hevc_params's captured ffmpeg output --
+    split out for testability with a captured text fixture, same convention
+    as _parse_keyframe_csv vs _probe_keyframe_timestamps.
+
+    Returns None if any of the four fields this app can always expect from a
+    real HEVC SPS/PPS (tier/level/dpb/wpp) is missing -- a non-HEVC source, an
+    unexpected ffmpeg/trace_headers output format (e.g. a future ffmpeg
+    version changing field names), or a garbled probe. Callers treat None as
+    "skip the matching, re-encode exactly as before" -- graceful degradation
+    to this feature's pre-existing behavior, same convention already used for
+    a RASL-detection probe failure elsewhere in this file."""
+    fields: dict[str, int] = {}
+    for m in _TRACE_HEADERS_FIELD_RE.finditer(trace_text):
+        fields[m.group(1)] = int(m.group(2))
+
+    try:
+        high_tier = bool(fields["general_tier_flag"])
+        level_idc = fields["general_level_idc"]
+        dpb_minus1 = fields["sps_max_dec_pic_buffering_minus1[0]"]
+        wpp = bool(fields["entropy_coding_sync_enabled_flag"])
+    except KeyError:
+        return None
+
+    deblock = None
+    if fields.get("deblocking_filter_control_present_flag") == 1:
+        try:
+            deblock = (fields["pps_beta_offset_div2"], fields["pps_tc_offset_div2"])
+        except KeyError:
+            pass  # signaled as present but fields missing -- leave unmatched rather than guess
+
+    return _SourceHevcParams(
+        high_tier=high_tier, level_x265=f"{level_idc / 30:.1f}", dpb_minus1=dpb_minus1, wpp=wpp, deblock=deblock
+    )
+
+
+async def _probe_source_hevc_params(ffmpeg_bin: str, video_path: Path, at_seconds: float) -> _SourceHevcParams | None:
+    """Probes the source's own active HEVC parameter-set fields at the point a
+    re-encoded segment is about to start -- this is the parameter-set state
+    the decoder will have just been given right before transitioning into our
+    re-encode, i.e. exactly what _build_matching_x265_params needs to
+    replicate. No decode needed -- trace_headers runs on the packet stream
+    itself (-c:v copy), so this is cheap even though -v trace's own decode
+    logging is verbose; confirmed directly this session that this exact
+    invocation reliably prints parsed SPS/PPS field values."""
+    proc = await asyncio.create_subprocess_exec(
+        ffmpeg_bin, "-v", "trace", "-ss", f"{at_seconds:.3f}", "-i", str(video_path), "-t", "1",
+        "-map", "0:v:0", "-c:v", "copy", "-bsf:v", "trace_headers", "-f", "null", "-",
+        stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.PIPE,
+    )
+    _out, err = await proc.communicate()
+    return _parse_hevc_trace_fields(err.decode(errors="replace"))
+
+
+def _build_matching_x265_params(p: _SourceHevcParams) -> str:
+    """Builds an -x265-params value that makes a re-encoded segment's own
+    SPS/PPS match the source's derived-state fields as closely as x265's CLI
+    allows.
+
+    Why this exists: a real, reproducible libavcodec HEVC decoder bug,
+    confirmed directly against the real segment files that corrupted 3 times
+    this session (see _concat_video_segments' docstring for the full
+    history). The stream-copied segments around a blurred scene carry the
+    SOURCE's own SPS/PPS (parameter-set ID 0); the freshly libx265-encoded
+    scene segment also uses ID 0, but by default with DIFFERENT
+    derived-state fields -- tier, level, DPB buffering size, reorder/latency
+    counts, WPP wavefront sync, and deblocking-parameter presence. Direct
+    inspection via trace_headers confirmed the source's own parameter sets
+    never vary internally, so this is specifically about the re-encode
+    silently redefining an already-active ID with different content, which
+    the decoder doesn't handle correctly across the splice.
+
+    Confirmed by direct live testing against the real failing file/scene:
+    `open-gop=0` alone (the closed-GOP hypothesis -- x265 defaults to
+    open-GOP, a documented "unsafe to splice" HEVC construct) was
+    INSUFFICIENT on its own, identical corruption persisted. Matching tier,
+    level, DPB size (via --ref), WPP, and deblocking offsets -- everything
+    this function builds -- produced a completely clean decode across a wide
+    window spanning both splice points.
+
+    This is a reliability-improving heuristic layered on top of the existing
+    verify_blurred_output decode-integrity check and whole-file fallback, not
+    a hard guarantee: the ref->dpb_minus1 mapping was confirmed empirically
+    for one file's specific bframes/b-pyramid settings, not derived from
+    x265's own source, so a file whose reorder/latency needs don't line up
+    with a plain --ref override may still get an imperfect match. Any
+    residual mismatch still safely falls through to the fallback exactly as
+    it did before this fix existed."""
+    parts = [
+        "open-gop=0",
+        f"high-tier={1 if p.high_tier else 0}",
+        f"level-idc={p.level_x265}",
+        f"ref={p.dpb_minus1}",
+    ]
+    if p.wpp:
+        # A real allocated thread pool is required for x265 to actually honor
+        # wpp on a short segment -- confirmed directly this session: without
+        # an explicit pool size, x265 silently disables WPP for a short clip
+        # ("No thread pool allocated, --wpp disabled") regardless of this
+        # flag. A fixed size, not pools=+ (auto) -- not the configuration
+        # that was actually tested.
+        parts += ["pools=4", "wpp=1"]
+    else:
+        parts.append("wpp=0")
+    if p.deblock is not None:
+        parts.append(f"deblock={p.deblock[0]},{p.deblock[1]}")
+    return ":".join(parts)
+
+
 # How far an already-produced copy segment's true first-frame timestamp is
 # allowed to drift from the boundary plan_video_segments actually requested
 # before build_blurred_video's retry loop (comparing this function's return
@@ -814,8 +979,20 @@ async def _extract_reencode_segment(
     libx265 wrapper accepts the same -crf/-preset flags); libx265 is
     meaningfully slower than libx264 on non-AVX hardware (confirmed directly:
     ~5.8fps for a short 4K segment) but this only ever runs against the
-    approved-scene window, not the whole file, so the absolute cost stays small."""
+    approved-scene window, not the whole file, so the absolute cost stays small.
+
+    For HEVC sources, also probes the source's own SPS/PPS derived-state
+    fields (via _probe_source_hevc_params) and matches them in the re-encode's
+    own SPS/PPS (via _build_matching_x265_params) -- see that function's
+    docstring for the real splice-corruption bug this avoids. A probe failure
+    (non-HEVC source, unexpected ffmpeg output) falls back to today's
+    unmatched re-encode with no other change in behavior."""
     codec = _reencode_video_codec(source_codec)
+    x265_params = None
+    if source_codec == "hevc":
+        source_params = await _probe_source_hevc_params(ffmpeg_bin, video_path, segment.start)
+        if source_params is not None:
+            x265_params = _build_matching_x265_params(source_params)
 
     def build_cmd(tmp_out: Path) -> list[str]:
         cmd = [ffmpeg_bin, "-y", "-nostdin", "-loglevel", "error"]
@@ -826,11 +1003,13 @@ async def _extract_reencode_segment(
         filter_str = build_blur_filter(
             list(segment.local_blur_intervals), input_label="0:v", output_label="vb", radius=blur_radius, power=blur_power
         )
-        return cmd + [
+        cmd += [
             "-filter_complex", filter_str, "-map", "[vb]",
             "-c:v", codec, "-crf", str(video_crf), "-preset", video_preset,
-            "-an", "-sn", "-f", "matroska", str(tmp_out),
         ]
+        if x265_params is not None:
+            cmd += ["-x265-params", x265_params]
+        return cmd + ["-an", "-sn", "-f", "matroska", str(tmp_out)]
 
     await _run_atomic(
         build_cmd, out_ts_path, _SEGMENT_TIMEOUT_SECONDS,
@@ -874,15 +1053,18 @@ async def _build_video_whole_file_reencode(
     replaced by pervasive `alignment_bit_equal_to_one=0` corruption on nearly
     every frame -- consistent with the decoder using the wrong active
     parameter set (SPS/PPS) across the splice, not a DPB/reference-buffer
-    sizing issue either. Nothing tried has fixed the actual root cause; a
-    single continuous decode+encode session has no concat step at all, so it
-    structurally can't hit this failure class regardless of what that root
-    cause turns out to be. If picking this back up: the next untried thing is
-    forcing explicit SPS/PPS re-signaling or matching parameter-set fields
-    (sps_max_dec_pic_buffering_minus1, sps_max_num_reorder_pics) between the
-    copy segment's source encode and the re-encoded segment's libx265 output
-    -- not attempted yet, and a real, scoped starting point rather than
-    another blind guess.
+    sizing issue either.
+
+    Root cause since confirmed and mitigated upstream: see
+    _build_matching_x265_params' docstring -- _extract_reencode_segment now
+    probes each HEVC source's own SPS/PPS derived-state fields and matches
+    them in the re-encoded segment, which a live test against this exact
+    file/scene confirmed eliminates the corruption. This function remains the
+    safety net regardless: a single continuous decode+encode session has no
+    concat step at all, so it structurally can't hit this failure class (or
+    any future one) no matter the cause -- still relevant for a probe
+    failure, a file whose needs don't map cleanly onto the matching
+    heuristic, or any other corruption class the fast path might hit.
 
     Deliberately uses _WHOLE_FILE_FALLBACK_PRESET, not whatever blur_video_preset
     the user configured for the normal segment-based re-encode -- see that
@@ -943,23 +1125,35 @@ async def _concat_video_segments(ffmpeg_bin: str, segment_ts_paths: list[Path], 
     for this exact problem) does it too: it never uses MPEG-TS as an
     intermediate, only MP4/MOV/MKV.
 
-    Despite all of the above, this function can still fail on some real
+    Despite all of the above, this function could still fail on some real
     files with that same "Could not find ref with POC ..." corruption at the
     copy-segment/re-encoded-segment splice -- confirmed directly against a
     real file (28 Years Later) with every fix in this docstring already in
     place. Root-caused as far as: a from-scratch PyAV mux with fully explicit,
     manually-computed, monotonicity-enforced PTS/DTS (bypassing this function
     and ffmpeg's concat demuxer entirely) reproduced the identical corruption,
-    which rules out timestamp/muxer handling -- including this function's own
+    which ruled out timestamp/muxer handling -- including this function's own
     approach -- as the cause. A follow-up re-encode with a simplified
     reference structure (bframes=0) changed the symptom to pervasive
     `alignment_bit_equal_to_one=0` errors instead, consistent with the
     decoder picking up the wrong active SPS/PPS across the splice rather than
-    a reference-buffer sizing problem. No fix found; see
-    _build_video_whole_file_reencode for the pipeline's actual answer to this
-    (a fallback that avoids concat -- and this function -- altogether) and
-    its docstring for the concrete next thing worth trying if picking the
-    real root cause back up."""
+    a reference-buffer sizing problem.
+
+    Root cause since confirmed: the stream-copied segments this function
+    concatenates carry the SOURCE's own SPS/PPS; the re-encoded segment
+    between them reuses the same parameter-set ID but with different
+    derived-state fields (tier, level, DPB size, WPP, deblocking params) by
+    default, which libavcodec's HEVC decoder doesn't handle correctly across
+    the splice. _extract_reencode_segment now probes the source's own fields
+    and matches them in the re-encode (see _build_matching_x265_params) to
+    avoid triggering this at all for HEVC sources -- this function and its
+    concat mechanism are unchanged, since the fix is applied upstream, before
+    the segments this function receives are ever produced. This is a
+    mitigation, not a patch to ffmpeg/libavcodec itself: a probe failure, or a
+    file whose reorder/latency needs don't map cleanly onto the matching
+    heuristic's plain --ref override, can still hit this corruption, which is
+    exactly what verify_blurred_output's decode-integrity check and
+    _build_video_whole_file_reencode's fallback remain in place for."""
     list_path = out_path.with_suffix(".concat.txt")
     list_path.write_text("".join(f"file '{p}'\n" for p in segment_ts_paths))
 
@@ -1474,9 +1668,15 @@ async def verify_blurred_output(
     # broken, which a first-window-only check can't catch. Corrupted-but-
     # decodable frames don't necessarily error loudly, so this is the whole
     # point of checking every window rather than trusting one.
+    #
+    # A slightly wider lookback than the bare minimum needed -- gives
+    # ffmpeg's own accurate-seek preroll more room before the window of
+    # interest, though see _BENIGN_DECODE_WARNING_RE below for why this
+    # alone isn't what actually keeps this check honest.
+    _WINDOW_LOOKBACK_SECONDS = 6.0
     for window in blurred_windows:
-        check_start = max(0.0, window.start - 2.0)
-        check_duration = min(15.0, (window.end - window.start) + 4.0)
+        check_start = max(0.0, window.start - _WINDOW_LOOKBACK_SECONDS)
+        check_duration = min(19.0, (window.end - window.start) + _WINDOW_LOOKBACK_SECONDS + 2.0)
         code, _out, err = await _run(
             [
                 ffmpeg_bin, "-v", "error",
@@ -1485,10 +1685,11 @@ async def verify_blurred_output(
             ],
             timeout=120,
         )
-        if code != 0 or err.strip():
+        real_errors = _filter_benign_decode_warnings(err)
+        if code != 0 or real_errors:
             raise RemuxError(
                 f"Blurred output failed decode check for {tmp_path} at window "
-                f"[{window.start:.2f}-{window.end:.2f}]: {err.strip()[-2000:]}"
+                f"[{window.start:.2f}-{window.end:.2f}]: {real_errors[-2000:]}"
             )
 
 

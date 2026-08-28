@@ -1,9 +1,13 @@
 from app.audio.mute import MuteInterval
 from app.mux.scene_blur import (
     DEFAULT_BLUR_LEVEL,
+    _SourceHevcParams,
     _annexb_buf_has_rasl,
     _annexb_buf_last_picture_nal_type,
     _blur_job_fingerprint,
+    _build_matching_x265_params,
+    _filter_benign_decode_warnings,
+    _parse_hevc_trace_fields,
     _parse_keyframe_csv,
     _reencode_video_codec,
     _reset_stale_work_dir,
@@ -105,6 +109,99 @@ def test_last_picture_nal_type_none_for_no_picture_nals():
 
 def test_last_picture_nal_type_empty_buffer():
     assert _annexb_buf_last_picture_nal_type(b"") is None
+
+
+# Trimmed, real trace_headers output captured live this session against a
+# real 4K HEVC file (28 Years Later) -- exact field-name strings/format this
+# session confirmed ffmpeg actually prints, not a guess at the schema. The
+# vps_max_dec_pic_buffering_minus1 line uses a deliberately different value
+# than the sps_ line to prove the parser keys on the sps_-prefixed field, not
+# the vps_-prefixed duplicate.
+_TRACE_HEADERS_FIXTURE_WITH_DEBLOCK = """
+[trace_headers @ 0x1] 50          general_tier_flag                                           1 = 1
+[trace_headers @ 0x1] 136         general_level_idc                                    01111011 = 123
+[trace_headers @ 0x1] 145         vps_max_dec_pic_buffering_minus1[0]                     01001 = 9
+[trace_headers @ 0x1] 177         sps_max_dec_pic_buffering_minus1[0]                     00111 = 5
+[trace_headers @ 0x1] 41          entropy_coding_sync_enabled_flag                            1 = 1
+[trace_headers @ 0x1] 43          deblocking_filter_control_present_flag                      1 = 1
+[trace_headers @ 0x1] 46          pps_beta_offset_div2                                    00111 = -3
+[trace_headers @ 0x1] 51          pps_tc_offset_div2                                      00111 = -3
+"""
+
+
+def test_parse_hevc_trace_fields_with_deblocking():
+    params = _parse_hevc_trace_fields(_TRACE_HEADERS_FIXTURE_WITH_DEBLOCK)
+    assert params == _SourceHevcParams(
+        high_tier=True, level_x265="4.1", dpb_minus1=5, wpp=True, deblock=(-3, -3)
+    )
+
+
+def test_parse_hevc_trace_fields_without_deblocking():
+    fixture = _TRACE_HEADERS_FIXTURE_WITH_DEBLOCK.replace(
+        "deblocking_filter_control_present_flag                      1 = 1",
+        "deblocking_filter_control_present_flag                      0 = 0",
+    )
+    params = _parse_hevc_trace_fields(fixture)
+    assert params.deblock is None
+
+
+def test_parse_hevc_trace_fields_wpp_off():
+    fixture = _TRACE_HEADERS_FIXTURE_WITH_DEBLOCK.replace(
+        "entropy_coding_sync_enabled_flag                            1 = 1",
+        "entropy_coding_sync_enabled_flag                            0 = 0",
+    )
+    params = _parse_hevc_trace_fields(fixture)
+    assert params.wpp is False
+
+
+def test_parse_hevc_trace_fields_missing_fields_returns_none():
+    # A non-HEVC source, or an unexpected ffmpeg output format -- caller
+    # falls back to an unmatched re-encode rather than guessing.
+    assert _parse_hevc_trace_fields("") is None
+    assert _parse_hevc_trace_fields("not trace_headers output at all") is None
+
+
+def test_build_matching_x265_params_with_wpp():
+    p = _SourceHevcParams(high_tier=True, level_x265="4.1", dpb_minus1=5, wpp=True, deblock=(-3, -3))
+    result = _build_matching_x265_params(p)
+    assert result == "open-gop=0:high-tier=1:level-idc=4.1:ref=5:pools=4:wpp=1:deblock=-3,-3"
+
+
+def test_build_matching_x265_params_without_wpp_or_deblock():
+    p = _SourceHevcParams(high_tier=False, level_x265="4.0", dpb_minus1=4, wpp=False, deblock=None)
+    result = _build_matching_x265_params(p)
+    assert result == "open-gop=0:high-tier=0:level-idc=4.0:ref=4:wpp=0"
+    assert "pools" not in result
+
+
+def test_filter_benign_decode_warnings_strips_known_benign_line():
+    # Real message captured live this session, twice, on two different
+    # re-encodes of the same scene -- a confirmed false positive from
+    # ffmpeg's own null-muxer + accurate-seek interaction, not real
+    # corruption (see _BENIGN_DECODE_WARNING_RE's own comment).
+    err = (
+        "[null @ 0x5dbd82a54280] Application provided invalid, non monotonically increasing dts to muxer in stream 0: 251 >= 248\n"
+        "[null @ 0x5dbd82a54280] Application provided invalid, non monotonically increasing dts to muxer in stream 0: 251 >= 249"
+    )
+    assert _filter_benign_decode_warnings(err) == ""
+
+
+def test_filter_benign_decode_warnings_keeps_real_errors():
+    # Real corruption this module has hit before -- must never be filtered.
+    err = "[hevc @ 0x1] Could not find ref with POC 4\n[hevc @ 0x1] alignment_bit_equal_to_one=0"
+    assert _filter_benign_decode_warnings(err) == err
+
+
+def test_filter_benign_decode_warnings_mixed_keeps_only_real_error():
+    err = (
+        "[null @ 0x1] Application provided invalid, non monotonically increasing dts to muxer in stream 0: 5 >= 4\n"
+        "[hevc @ 0x1] Could not find ref with POC 4"
+    )
+    assert _filter_benign_decode_warnings(err) == "[hevc @ 0x1] Could not find ref with POC 4"
+
+
+def test_filter_benign_decode_warnings_empty_input():
+    assert _filter_benign_decode_warnings("") == ""
 
 
 def test_empty_intervals_is_passthrough():
