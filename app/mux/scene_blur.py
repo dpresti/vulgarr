@@ -687,6 +687,36 @@ def _build_matching_x265_params(p: _SourceHevcParams) -> str:
 # seconds to ~10s off.
 _BOUNDARY_DRIFT_TOLERANCE_SECONDS = 1.0
 
+# Bounds how far build_blurred_video's retry loop is allowed to wander a
+# boundary from where plan_video_segments ORIGINALLY (before any retry)
+# placed it -- a different thing from _BOUNDARY_DRIFT_TOLERANCE_SECONDS
+# above, which measures a single already-cut segment file against its own
+# immediate plan. In a keyframe-sparse region, each retry excludes one bad
+# keyframe and snaps to the next-nearest remaining one, with no bound of its
+# own -- confirmed directly, live, against two real files this session: one
+# drifted ~3452s from its requested boundary, another drifted from ~1289s to
+# ~2432s across 20 attempts, before finally giving up. 30s is comfortably
+# larger than any real GOP gap seen this session (a few seconds at most) but
+# far smaller than either observed runaway drift, so it stops the loop
+# almost immediately in a genuinely sparse region instead of wasting up to
+# 20 full-file re-split passes finding that out the slow way.
+_MAX_BOUNDARY_RETRY_DRIFT_SECONDS = 30.0
+
+
+def _nearest_boundary_distance(boundary: float, original_boundaries: list[float]) -> float:
+    """How far `boundary` (a retry attempt's candidate cut point) has drifted
+    from the closest point in `original_boundaries` (the un-retried plan's
+    own boundary set, captured once before build_blurred_video's retry loop
+    starts excluding keyframes) -- pure function, split out for testability
+    same as this file's other small numeric helpers. Returns float("inf")
+    for an empty original_boundaries (never actually happens in practice --
+    plan_video_segments always produces at least one reencode segment when
+    build_blurred_video's retry loop runs at all -- but a real, explicit
+    value beats an IndexError for a pure function's edge case)."""
+    if not original_boundaries:
+        return float("inf")
+    return min(abs(boundary - b) for b in original_boundaries)
+
 
 async def _segment_actual_start_time(ffprobe_bin: str, ts_path: Path) -> float | None:
     """Reads an already-produced copy segment's own true first video frame
@@ -1369,6 +1399,7 @@ async def build_blurred_video(
                     # plan, silently duplicating/omitting footage across the
                     # copy/re-encode splice until verify_blurred_output's
                     # whole-file duration check caught it after the fact).
+                    original_boundaries = [b for s in segments if s.reencode for b in (s.start, s.end)]
                     for _attempt in range(20):
                         bad_boundary = None
                         bad_reason = ""
@@ -1410,6 +1441,19 @@ async def build_blurred_video(
                                 break
                         if bad_boundary is None:
                             break
+                        drift = _nearest_boundary_distance(bad_boundary, original_boundaries)
+                        if drift > _MAX_BOUNDARY_RETRY_DRIFT_SECONDS:
+                            # Same outcome as exhausting all 20 attempts (see the
+                            # for/else below), reached far faster: a keyframe this
+                            # far from the original plan was never going to produce
+                            # a usable cut for this scene, no matter how many more
+                            # of these full-file re-splits we throw at it.
+                            raise RemuxError(
+                                f"Could not find a reliable stream-copy cut point near {bad_boundary:.3f}s for {video_path} "
+                                f"({bad_reason}) -- drifted {drift:.1f}s from the original plan, past the "
+                                f"{_MAX_BOUNDARY_RETRY_DRIFT_SECONDS:.0f}s retry bound, so this source likely has an "
+                                f"unusually sparse or irregular keyframe structure in that region"
+                            )
                         logger.info("Cut point %.3fs for %s %s -- excluding and re-splitting", bad_boundary, video_path, bad_reason)
                         keyframe_timestamps = [t for t in keyframe_timestamps if abs(t - bad_boundary) > 1e-6]
                         if confirmed_keyframe is not None:

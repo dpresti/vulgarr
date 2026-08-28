@@ -7,6 +7,7 @@ from app.mux.scene_blur import (
     _blur_job_fingerprint,
     _build_matching_x265_params,
     _filter_benign_decode_warnings,
+    _nearest_boundary_distance,
     _parse_hevc_trace_fields,
     _parse_keyframe_csv,
     _reencode_video_codec,
@@ -202,6 +203,25 @@ def test_filter_benign_decode_warnings_mixed_keeps_only_real_error():
 
 def test_filter_benign_decode_warnings_empty_input():
     assert _filter_benign_decode_warnings("") == ""
+
+
+def test_nearest_boundary_distance_exact_match():
+    assert _nearest_boundary_distance(100.0, [50.0, 100.0, 200.0]) == 0.0
+
+
+def test_nearest_boundary_distance_picks_closest():
+    assert _nearest_boundary_distance(95.0, [50.0, 100.0, 200.0]) == 5.0
+
+
+def test_nearest_boundary_distance_far_from_every_original():
+    # Real shape of the bug this guards against: a retry attempt's candidate
+    # keyframe can end up thousands of seconds from every boundary the
+    # original (un-retried) plan ever had.
+    assert _nearest_boundary_distance(2432.432, [1289.915, 1300.0]) > 1000
+
+
+def test_nearest_boundary_distance_empty_original_boundaries():
+    assert _nearest_boundary_distance(100.0, []) == float("inf")
 
 
 def test_empty_intervals_is_passthrough():
