@@ -16,6 +16,7 @@ from sqlalchemy import select, update
 from app.config import settings as app_settings
 from app.db.models import JobState, SceneJob, SceneJobKind, Title
 from app.db.session import get_session, get_setting
+from app.queue.heavy_pipeline_lock import HEAVY_PIPELINE_LOCK
 from app.queue.worker import is_within_off_hours_window
 from app.scenes.pipeline import apply_scene_blur, reverify_scenes_with_claude, scan_for_scenes
 
@@ -381,9 +382,10 @@ class SceneJobQueue:
 
             try:
                 if is_scan:
-                    scan_outcome = await scan_for_scenes(
-                        session, title, job.id, on_progress=on_scan_progress, on_stage=on_scan_stage
-                    )
+                    async with HEAVY_PIPELINE_LOCK:
+                        scan_outcome = await scan_for_scenes(
+                            session, title, job.id, on_progress=on_scan_progress, on_stage=on_scan_stage
+                        )
                     job.progress_message = f"Done -- found {scan_outcome.candidate_count} candidate scene(s)"
                     title.scene_scan_status = "scanned" if scan_outcome.candidate_count else "no_scenes_found"
 
@@ -400,9 +402,10 @@ class SceneJobQueue:
                         await session.commit()
                         await self.enqueue_blur_if_not_already_active(title.id)
                 elif is_claude_verify:
-                    reverify_outcome = await reverify_scenes_with_claude(
-                        session, title, on_progress=on_claude_verify_progress
-                    )
+                    async with HEAVY_PIPELINE_LOCK:
+                        reverify_outcome = await reverify_scenes_with_claude(
+                            session, title, on_progress=on_claude_verify_progress
+                        )
                     job.progress_message = (
                         f"Done -- checked {reverify_outcome.checked_count} scene(s), "
                         f"{reverify_outcome.approved_count} confirmed, "
@@ -410,9 +413,10 @@ class SceneJobQueue:
                         + (f", {reverify_outcome.failed_count} failed" if reverify_outcome.failed_count else "")
                     )
                 else:
-                    blur_outcome = await apply_scene_blur(
-                        session, title, job.id, on_progress=on_blur_progress, on_stage=on_blur_stage
-                    )
+                    async with HEAVY_PIPELINE_LOCK:
+                        blur_outcome = await apply_scene_blur(
+                            session, title, job.id, on_progress=on_blur_progress, on_stage=on_blur_stage
+                        )
                     job.progress_message = f"Done -- blurred {blur_outcome.scene_count} scene(s)"
 
                 job.state = JobState.done

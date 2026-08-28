@@ -24,6 +24,7 @@ from app.integrations.subtitle_lookup import find_subtitle_for_video
 from app.library import poll_for_subtitle_then_enqueue
 from app.mux.remux import RemuxError
 from app.processing import ProcessingError, process_video
+from app.queue.heavy_pipeline_lock import HEAVY_PIPELINE_LOCK
 
 logger = logging.getLogger(__name__)
 
@@ -467,17 +468,18 @@ class JobQueue:
                 if not title.subtitle_path:
                     raise ProcessingError("No subtitle file associated with this title")
 
-                outcome = await process_video(
-                    session,
-                    video_path=Path(title.video_path),
-                    subtitle_path=Path(title.subtitle_path),
-                    severity_levels=parse_severity_levels(title.severity_levels),
-                    known_clean_indices=parse_index_list(title.clean_track_audio_indices),
-                    precise_mode=title.precise_mode,
-                    on_progress=on_progress,
-                    on_stage=on_stage,
-                    on_align_progress=on_align_progress,
-                )
+                async with HEAVY_PIPELINE_LOCK:
+                    outcome = await process_video(
+                        session,
+                        video_path=Path(title.video_path),
+                        subtitle_path=Path(title.subtitle_path),
+                        severity_levels=parse_severity_levels(title.severity_levels),
+                        known_clean_indices=parse_index_list(title.clean_track_audio_indices),
+                        precise_mode=title.precise_mode,
+                        on_progress=on_progress,
+                        on_stage=on_stage,
+                        on_align_progress=on_align_progress,
+                    )
 
                 job.state = JobState.done
                 job.progress_message = f"Done -- muted {outcome.matched_cue_count} cue(s)"
