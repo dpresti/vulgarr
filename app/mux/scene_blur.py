@@ -61,7 +61,15 @@ from typing import Callable
 
 from app.audio.mute import MuteInterval, _MAX_TERMS_PER_STAGE
 from app.common.intervals import merge_intervals
-from app.mux.remux import ProgressCallback, RemuxError, StageCallback, _audio_streams, _run, probe
+from app.mux.remux import (
+    ProgressCallback,
+    RemuxError,
+    StageCallback,
+    _audio_streams,
+    _run,
+    _run_with_progress,
+    probe,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -70,6 +78,24 @@ logger = logging.getLogger(__name__)
 # pathologically long approved "scene" (a user could adjust one to span many
 # minutes) shouldn't hang forever either.
 _SEGMENT_TIMEOUT_SECONDS = 1800
+
+# Ceiling for the whole-file re-encode fallback (see _build_video_whole_file_reencode)
+# -- a real, full-length re-encode, not a short segment, so this needs to be far
+# more generous than a hang-detection timeout normally would be, not a realistic
+# "this is how long it should take" estimate. Confirmed directly against the
+# real file this fallback exists for (28 Years Later, ~165,600 frames): even at
+# the fallback's own faster preset (see _WHOLE_FILE_FALLBACK_PRESET), real
+# throughput on this CPU was ~7fps, i.e. ~6.5 hours end to end -- 24h leaves
+# real margin above that without being effectively infinite.
+_WHOLE_FILE_REENCODE_TIMEOUT_SECONDS = 24 * 60 * 60
+
+# Deliberately faster than whatever blur_video_preset the user has configured
+# for the normal segment-based re-encode (which only ever encodes a short scene,
+# where preset speed barely matters) -- this fallback re-encodes the ENTIRE
+# file, where it matters enormously. Confirmed directly against the real file:
+# medium=3.43fps, veryfast=7.02fps, faster=7.20fps -- faster's extra 3% over
+# veryfast isn't worth its slightly worse quality-per-bit, so veryfast wins.
+_WHOLE_FILE_FALLBACK_PRESET = "veryfast"
 
 
 async def _run_atomic(cmd_for_output: Callable[[Path], list[str]], out_path: Path, timeout: float, error_ctx: str) -> None:
@@ -420,6 +446,71 @@ async def _segment_file_starts_with_rasl(ffmpeg_bin: str, ts_path: Path) -> bool
     return _annexb_buf_has_rasl(buf)
 
 
+def _annexb_buf_last_picture_nal_type(buf: bytes) -> int | None:
+    """Pure NAL-type scan of a raw Annex-B byte buffer: the type of the LAST
+    picture-class NAL unit found (0-21 -- VCL slice types; excludes parameter
+    sets/SEI/AUD, types 32+), or None if the buffer has no picture NALs at
+    all. Split out for testability, same convention as _annexb_buf_has_rasl.
+
+    Unlike that function, this one has no early-exit NAL-count cap -- a real
+    bug caught by testing this live against a real file: capping at 200 (10x
+    that function's 20, seemingly generous) still stopped well short of the
+    buffer's true end, because a GOP spanning the -sseof window in
+    _segment_file_ends_with_cra can contain many thousands of small slice
+    NALs between the boundary CRA and the container's real last frame. We
+    need the actual last one regardless of how many precede it, so this
+    scans the whole buffer every time -- a few hundred KB of Python byte
+    scanning, not expensive enough to matter for a check that only runs a
+    handful of times per Apply job."""
+    i, n = 0, len(buf)
+    last_picture_type = None
+    while i < n - 2:
+        if buf[i] == 0 and buf[i + 1] == 0 and buf[i + 2] == 1:
+            if i + 3 < n:
+                nal_type = (buf[i + 3] >> 1) & 0x3F
+                if nal_type <= 21:
+                    last_picture_type = nal_type
+            i += 3
+        else:
+            i += 1
+    return last_picture_type
+
+
+async def _segment_file_ends_with_cra(ffmpeg_bin: str, ts_path: Path) -> bool:
+    """Checks whether an ALREADY-PRODUCED copy segment's own true end lands on
+    a CRA frame (NAL type 21) -- confirmed directly, live, against a real
+    file (28 Years Later): a copy segment ending on a CRA produces genuine
+    "Could not find ref with POC ..." decode corruption immediately after the
+    splice into the following re-encoded segment, even with no RASL picture
+    involved at all (ruled out directly: the frame immediately after this
+    CRA, still within the same segment, was a plain TRAIL_R, not RASL/RADL) --
+    both this segment and the one after it decode perfectly cleanly in total
+    isolation, so this is specific to CRA-as-a-splice-boundary itself, not a
+    decodable-on-its-own bitstream defect. Matches prior art (smartcut,
+    already cited in _concat_video_segments) treating CRA as categorically
+    unsafe to cut on, unlike true IDR/BLA (NAL types 16-20).
+
+    This is the copy-segment-END-side counterpart to
+    _segment_file_starts_with_rasl's copy-segment-START-side check -- that
+    one guards a copy segment's start against inheriting a bad boundary from
+    whatever came before; this one guards a copy segment's end against
+    handing a bad boundary to whatever comes after (always a re-encoded
+    segment, per plan_video_segments -- a copy segment never directly abuts
+    another copy segment).
+
+    Reads from the already-cut segment file's own true end via -sseof, same
+    "no independent re-seek to be imprecise about" reasoning as the start-side
+    check and _segment_actual_end_time."""
+    proc = await asyncio.create_subprocess_exec(
+        ffmpeg_bin, "-v", "error", "-nostdin", "-sseof", "-2", "-i", str(ts_path),
+        "-map", "0:v:0", "-an", "-sn", "-c:v", "copy", "-bsf:v", "hevc_mp4toannexb",
+        "-f", "hevc", "-",
+        stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL,
+    )
+    buf, _ = await proc.communicate()
+    return _annexb_buf_last_picture_nal_type(buf) == 21
+
+
 # How far an already-produced copy segment's true first-frame timestamp is
 # allowed to drift from the boundary plan_video_segments actually requested
 # before build_blurred_video's retry loop (comparing this function's return
@@ -747,6 +838,84 @@ async def _extract_reencode_segment(
     )
 
 
+async def _build_video_whole_file_reencode(
+    ffmpeg_bin: str,
+    video_path: Path,
+    blur_intervals: list[MuteInterval],
+    video_crf: int,
+    total_duration: float,
+    blur_radius: int,
+    blur_power: int,
+    source_codec: str,
+    out_path: Path,
+    on_progress: ProgressCallback | None = None,
+) -> None:
+    """Fallback for when the split/copy/re-encode/concat pipeline (see
+    build_blurred_video) fails -- decodes and re-encodes the ENTIRE file in one
+    continuous ffmpeg session instead of stream-copying the untouched parts
+    around a handful of re-encoded scenes, at the cost of a full re-encode
+    instead of a partial one.
+
+    Real motivation: confirmed directly, live, against a real file (28 Years
+    Later) that the segment pipeline can produce two independently
+    perfectly-decodable pieces (a stream-copied "before" segment, a
+    re-encoded scene segment) whose *concatenation* still corrupts
+    (`Could not find ref with POC ...`), despite this module's existing three
+    real fixes for that same symptom class (MPEG-TS->MKV container, a
+    timestamp-metadata bug, a RASL-picture check) all still being in place.
+    This turned out to run deeper than a muxing/timestamp problem: a from-
+    scratch PyAV mux with fully explicit, manually-computed, monotonicity-
+    enforced packet timestamps (the technique real prior art -- smartcut,
+    github.com/skeskinen/smartcut -- actually uses for this exact class of
+    problem) reproduced the identical corruption, ruling out container/muxer/
+    timestamp handling entirely regardless of implementation. A follow-up
+    test re-encoding the scene with a simpler reference structure (bframes=0,
+    no B-pyramid) changed the symptom -- the POC-lookup errors disappeared,
+    replaced by pervasive `alignment_bit_equal_to_one=0` corruption on nearly
+    every frame -- consistent with the decoder using the wrong active
+    parameter set (SPS/PPS) across the splice, not a DPB/reference-buffer
+    sizing issue either. Nothing tried has fixed the actual root cause; a
+    single continuous decode+encode session has no concat step at all, so it
+    structurally can't hit this failure class regardless of what that root
+    cause turns out to be. If picking this back up: the next untried thing is
+    forcing explicit SPS/PPS re-signaling or matching parameter-set fields
+    (sps_max_dec_pic_buffering_minus1, sps_max_num_reorder_pics) between the
+    copy segment's source encode and the re-encoded segment's libx265 output
+    -- not attempted yet, and a real, scoped starting point rather than
+    another blind guess.
+
+    Deliberately uses _WHOLE_FILE_FALLBACK_PRESET, not whatever blur_video_preset
+    the user configured for the normal segment-based re-encode -- see that
+    constant's own comment for the real benchmark numbers behind this.
+
+    Reuses build_blur_filter unchanged -- it already handles an arbitrary
+    number of absolute-timestamp intervals (with its own >_MAX_TERMS_PER_STAGE
+    batching), the only difference from the segment case is these timestamps
+    are absolute against the whole file instead of segment-local."""
+    if out_path.exists():
+        return  # already produced by a prior interrupted attempt
+    codec = _reencode_video_codec(source_codec)
+    filter_str = build_blur_filter(
+        blur_intervals, input_label="0:v", output_label="vb", radius=blur_radius, power=blur_power
+    )
+    tmp_out = out_path.with_name(out_path.name + ".tmp")
+    cmd = [
+        ffmpeg_bin, "-y", "-nostdin", "-loglevel", "error", "-progress", "pipe:1",
+        "-i", str(video_path),
+        "-filter_complex", filter_str, "-map", "[vb]",
+        "-c:v", codec, "-crf", str(video_crf), "-preset", _WHOLE_FILE_FALLBACK_PRESET,
+        "-an", "-sn", "-f", "matroska", str(tmp_out),
+    ]
+    code, err = await _run_with_progress(
+        cmd, total_duration_seconds=total_duration, on_progress=on_progress,
+        timeout=_WHOLE_FILE_REENCODE_TIMEOUT_SECONDS,
+    )
+    if code != 0:
+        tmp_out.unlink(missing_ok=True)
+        raise RemuxError(f"ffmpeg whole-file re-encode failed for {video_path}: {err.strip()[-2000:]}")
+    tmp_out.replace(out_path)
+
+
 async def _concat_video_segments(ffmpeg_bin: str, segment_ts_paths: list[Path], out_path: Path) -> None:
     """Lossless concat via ffmpeg's concat *demuxer* (a file-list, not the raw
     concat *protocol*'s dumb byte-level join) -- the demuxer explicitly rebases
@@ -772,7 +941,25 @@ async def _concat_video_segments(ffmpeg_bin: str, segment_ts_paths: list[Path], 
     reference-buffer reset, something MP4/MKV don't have this gap for. This
     matches how smartcut (github.com/skeskinen/smartcut, a purpose-built tool
     for this exact problem) does it too: it never uses MPEG-TS as an
-    intermediate, only MP4/MOV/MKV."""
+    intermediate, only MP4/MOV/MKV.
+
+    Despite all of the above, this function can still fail on some real
+    files with that same "Could not find ref with POC ..." corruption at the
+    copy-segment/re-encoded-segment splice -- confirmed directly against a
+    real file (28 Years Later) with every fix in this docstring already in
+    place. Root-caused as far as: a from-scratch PyAV mux with fully explicit,
+    manually-computed, monotonicity-enforced PTS/DTS (bypassing this function
+    and ffmpeg's concat demuxer entirely) reproduced the identical corruption,
+    which rules out timestamp/muxer handling -- including this function's own
+    approach -- as the cause. A follow-up re-encode with a simplified
+    reference structure (bframes=0) changed the symptom to pervasive
+    `alignment_bit_equal_to_one=0` errors instead, consistent with the
+    decoder picking up the wrong active SPS/PPS across the splice rather than
+    a reference-buffer sizing problem. No fix found; see
+    _build_video_whole_file_reencode for the pipeline's actual answer to this
+    (a fallback that avoids concat -- and this function -- altogether) and
+    its docstring for the concrete next thing worth trying if picking the
+    real root cause back up."""
     list_path = out_path.with_suffix(".concat.txt")
     list_path.write_text("".join(f"file '{p}'\n" for p in segment_ts_paths))
 
@@ -858,6 +1045,7 @@ async def build_blurred_video(
     blur_power: int = 8,
     audio_bitrate: str = "192k",
     timeout: float = 14400,  # ceiling for the final mux step only now, see module docstring
+    force_whole_file_video: bool = False,
     on_progress: ProgressCallback | None = None,
     on_stage: StageCallback | None = None,
 ) -> Path:
@@ -877,7 +1065,13 @@ async def build_blurred_video(
     is written here and reused across calls instead of an auto-deleted temp
     dir, which is what makes this resumable. See the module docstring for the
     split/re-encode/concat pipeline this runs instead of one whole-file
-    re-encode, and _blur_job_fingerprint for the staleness guard."""
+    re-encode, and _blur_job_fingerprint for the staleness guard.
+
+    force_whole_file_video skips that split/re-encode/concat pipeline entirely
+    in favor of _build_video_whole_file_reencode -- apply_blur's fallback for
+    when the concat-based approach produces output that fails
+    verify_blurred_output (see that function's docstring for the real,
+    directly-confirmed corruption case that motivated this)."""
     src_probe = await probe(ffprobe_bin, video_path)
     total_duration = float(src_probe["format"].get("duration", 0))
     audio_streams = _audio_streams(src_probe)
@@ -898,206 +1092,229 @@ async def build_blurred_video(
     _reset_stale_work_dir(work_dir, fingerprint)
     tmp_root = work_dir
 
-    if on_stage is not None:
-        await on_stage("Scanning keyframes")
     video_stream = next((s for s in src_probe["streams"] if s["codec_type"] == "video"), None)
     video_codec = (video_stream or {}).get("codec_name", "")
-    # Generic keyframe probe works for every codec, HEVC included -- see
-    # _probe_keyframe_timestamps for why an earlier HEVC-specific "true
-    # IDR/BLA only" restriction here (worked around via a whole streaming
-    # Annex-B walker, since removed) turned out to be the wrong fix for most
-    # of what it was trying to prevent -- the MPEG-TS container and a
-    # timestamp-metadata bug (see _concat_video_segments and
-    # _normalize_segment_timestamps) accounted for the vast majority of real
-    # corruption regardless of keyframe type. The one thing that restriction
-    # WAS incidentally protecting against -- a CRA cut point with a RASL
-    # picture following it -- is real but rare, so it's handled narrowly
-    # instead, after the real split below (see _segment_file_starts_with_rasl
-    # for why it has to be checked against the actually-produced files, not a
-    # separate probing pass against the source).
-    keyframe_timestamps = list(await _probe_keyframe_timestamps(ffprobe_bin, video_path))
-    segments = plan_video_segments(blur_intervals, keyframe_timestamps, total_duration)
 
     try:
-        concatenated_video_path = tmp_root / "concatenated.mkv"
-        if concatenated_video_path.exists():
-            # A prior (interrupted) attempt already finished this whole stage
-            # -- _run_atomic's rename-on-success means this file existing at
-            # all means it's complete, not partially written.
-            logger.info("Resuming blur for %s: video already combined, skipping segment production", video_path)
-            reencode_segments = [s for s in segments if s.reencode]
-            total_reencode_seconds = sum(s.duration for s in reencode_segments) or 1.0
-            done_reencode_seconds = 0.0
-        else:
-            segment_ts_paths: list[Path] = []
-            # One continuous stream-copy pass covers every boundary at once
-            # (see _split_copy_segments for why this replaced N independent
-            # per-segment `-ss`/`-t` copy extractions). Always redone in full
-            # on a resume rather than individually checkpointed -- it's a
-            # stream copy over the whole file, cheap regardless, and not
-            # worth the complexity of partial-resume for this specific step.
-            if len(segments) > 1:
-                if on_stage is not None:
-                    await on_stage("Splitting video")
-                boundaries = [s.end for s in segments[:-1]]
-                await _split_copy_segments(ffmpeg_bin, video_path, boundaries, tmp_root)
-
-            if len(segments) > 1:
-                # Validate against the segments actually just produced, not a
-                # separate probe against the source -- an earlier version of
-                # the RASL check below seeked independently into the source
-                # file per candidate and got inconsistent verdicts for the
-                # same real timestamp across repeated runs (the same
-                # stream-copy seek imprecision _split_copy_segments's own
-                # docstring already documents for this class of source).
-                # Reading an already-cut segment's own true start has no seek
-                # step to be imprecise about -- same reasoning
-                # _segment_actual_start_time uses for the codec-agnostic
-                # check below.
-                #
-                # Two independent checks share this one retry loop/bad-
-                # boundary-exclusion mechanism: the RASL check (HEVC-only,
-                # a specific corrupt-reference-frame byte pattern) and the
-                # boundary-drift check (every codec, the segment muxer's own
-                # keyframe-cut decision landing somewhere plan_video_segments
-                # didn't expect -- see _segment_actual_start_time's docstring
-                # for the real H.264 case that surfaced this: no RASL
-                # anywhere, but several cuts several-to-ten seconds off their
-                # plan, silently duplicating/omitting footage across the
-                # copy/re-encode splice until verify_blurred_output's
-                # whole-file duration check caught it after the fact).
-                for _attempt in range(20):
-                    bad_boundary = None
-                    bad_reason = ""
-                    confirmed_keyframe = None
-                    for i, seg in enumerate(segments):
-                        if seg.reencode or seg.start >= seg.end:
-                            continue
-                        ts_path = tmp_root / f"copy_{i:04d}.mkv"
-                        if seg.start > 0.0 and video_codec in ("hevc", "h265") and await _segment_file_starts_with_rasl(ffmpeg_bin, ts_path):
-                            bad_boundary = seg.start
-                            bad_reason = "has a RASL picture following it"
-                            break
-                        actual_start = await _segment_actual_start_time(ffprobe_bin, ts_path)
-                        # Both boundaries this copy segment touches get checked, not just
-                        # its start -- a bad cut on the *end* side (where the next
-                        # re-encoded scene is supposed to pick up) is the more dangerous
-                        # direction to miss: see _segment_actual_end_time's docstring for
-                        # why that one can leave the real start of an approved scene
-                        # sitting unblurred, rather than just duplicated.
-                        if seg.start > 0.0 and actual_start is not None and abs(actual_start - seg.start) > _BOUNDARY_DRIFT_TOLERANCE_SECONDS:
-                            bad_boundary = seg.start
-                            bad_reason = f"actually cut at {actual_start:.3f}s"
-                            confirmed_keyframe = actual_start
-                            break
-                        if seg.end < total_duration and actual_start is not None:
-                            actual_end = await _segment_actual_end_time(ffprobe_bin, ts_path, actual_start)
-                            if actual_end is not None and abs(actual_end - seg.end) > _BOUNDARY_DRIFT_TOLERANCE_SECONDS:
-                                bad_boundary = seg.end
-                                bad_reason = f"actually cut at {actual_end:.3f}s"
-                                confirmed_keyframe = actual_end
-                                break
-                    if bad_boundary is None:
-                        break
-                    logger.info("Cut point %.3fs for %s %s -- excluding and re-splitting", bad_boundary, video_path, bad_reason)
-                    keyframe_timestamps = [t for t in keyframe_timestamps if abs(t - bad_boundary) > 1e-6]
-                    if confirmed_keyframe is not None:
-                        keyframe_timestamps.append(confirmed_keyframe)
-                    segments = plan_video_segments(blur_intervals, keyframe_timestamps, total_duration)
-                    # Old copy_*.mkv indices no longer correspond to the new
-                    # plan's boundaries -- wipe and re-split rather than risk
-                    # a later stale-file reuse under a shifted index.
-                    for stale in tmp_root.glob("copy_*.mkv"):
-                        stale.unlink(missing_ok=True)
-                    for stale in tmp_root.glob("reencode_*.mkv"):
-                        stale.unlink(missing_ok=True)
-                    if len(segments) > 1:
-                        if on_stage is not None:
-                            await on_stage("Splitting video")
-                        boundaries = [s.end for s in segments[:-1]]
-                        await _split_copy_segments(ffmpeg_bin, video_path, boundaries, tmp_root)
-                else:
-                    # Unlike the old HEVC-only version of this loop, which proceeded
-                    # anyway after exhausting attempts (a RASL miss is rare enough
-                    # that this was an acceptable bet, and verify_blurred_output
-                    # would still catch a real corruption via the stream-count/
-                    # decode checks even if the duration happened to still line up),
-                    # failing fast here instead: the boundary-drift case, generalized
-                    # to every codec, is a duration mismatch by construction, which
-                    # verify_blurred_output WILL catch regardless -- so "proceed
-                    # anyway" here only ever bought a guaranteed-wasted re-encode
-                    # pass (potentially the whole file's approved-scene set, tens of
-                    # minutes) before failing at the exact same check at the very end
-                    # instead. Raising immediately, before any of that expensive work
-                    # starts, reaches the same safe outcome (nothing ever gets
-                    # published) far faster.
-                    raise RemuxError(
-                        f"Could not find a reliable stream-copy cut point near {bad_boundary:.3f}s for {video_path} "
-                        f"after 20 attempts ({bad_reason}) -- this source likely has an unusually sparse or "
-                        f"irregular keyframe structure in that region"
-                    )
-
-            reencode_segments = [s for s in segments if s.reencode]
-            total_reencode_seconds = sum(s.duration for s in reencode_segments) or 1.0
-            done_reencode_seconds = 0.0
-            logger.info(
-                "Scene-blur split for %s: %d segment(s) (%d re-encode, %d copy), "
-                "%.1fs of %.1fs actually needs re-encoding (%.1f%%)",
-                video_path, len(segments), len(reencode_segments), len(segments) - len(reencode_segments),
-                sum(s.duration for s in reencode_segments), total_duration,
-                100 * sum(s.duration for s in reencode_segments) / total_duration if total_duration else 0,
+        if force_whole_file_video:
+            # apply_blur's fallback path -- see _build_video_whole_file_reencode's
+            # docstring for why this exists at all. Separate filename from the
+            # segment pipeline's concatenated.mkv (not reused) so a stale copy
+            # left behind by a failed first attempt in this same work_dir can
+            # never be mistaken for this attempt's own output.
+            concatenated_video_path = tmp_root / "concatenated_wholefile.mkv"
+            if on_stage is not None:
+                await on_stage("Blurring video (whole-file re-encode)")
+            await _build_video_whole_file_reencode(
+                ffmpeg_bin, video_path, blur_intervals, video_crf, total_duration, blur_radius, blur_power,
+                video_codec, concatenated_video_path, on_progress=on_progress,
             )
+        else:
+            if on_stage is not None:
+                await on_stage("Scanning keyframes")
+            # Generic keyframe probe works for every codec, HEVC included -- see
+            # _probe_keyframe_timestamps for why an earlier HEVC-specific "true
+            # IDR/BLA only" restriction here (worked around via a whole streaming
+            # Annex-B walker, since removed) turned out to be the wrong fix for most
+            # of what it was trying to prevent -- the MPEG-TS container and a
+            # timestamp-metadata bug (see _concat_video_segments and
+            # _normalize_segment_timestamps) accounted for the vast majority of real
+            # corruption regardless of keyframe type. The one thing that restriction
+            # WAS incidentally protecting against -- a CRA cut point with a RASL
+            # picture following it -- is real but rare, so it's handled narrowly
+            # instead, after the real split below (see _segment_file_starts_with_rasl
+            # for why it has to be checked against the actually-produced files, not a
+            # separate probing pass against the source).
+            keyframe_timestamps = list(await _probe_keyframe_timestamps(ffprobe_bin, video_path))
+            segments = plan_video_segments(blur_intervals, keyframe_timestamps, total_duration)
 
-            total_scene_count = sum(len(s.local_blur_intervals) for s in reencode_segments)
-            scenes_done = 0
-            for i, segment in enumerate(segments):
-                if segment.reencode:
-                    # A segment can carry more than one original scene when two
-                    # approved scenes are close enough together to share the
-                    # same keyframe-expanded re-encode range (see
-                    # plan_video_segments) -- report progress against the
-                    # scene count you actually approved, not the (fewer)
-                    # merged segments, so this doesn't read as "missing" scenes.
-                    n = len(segment.local_blur_intervals)
-                    seg_ts_path = tmp_root / f"reencode_{i:04d}.mkv"
-                    if seg_ts_path.exists():
-                        # Already produced by a prior interrupted attempt.
+            concatenated_video_path = tmp_root / "concatenated.mkv"
+            if concatenated_video_path.exists():
+                # A prior (interrupted) attempt already finished this whole stage
+                # -- _run_atomic's rename-on-success means this file existing at
+                # all means it's complete, not partially written.
+                logger.info("Resuming blur for %s: video already combined, skipping segment production", video_path)
+                reencode_segments = [s for s in segments if s.reencode]
+                total_reencode_seconds = sum(s.duration for s in reencode_segments) or 1.0
+                done_reencode_seconds = 0.0
+            else:
+                segment_ts_paths: list[Path] = []
+                # One continuous stream-copy pass covers every boundary at once
+                # (see _split_copy_segments for why this replaced N independent
+                # per-segment `-ss`/`-t` copy extractions). Always redone in full
+                # on a resume rather than individually checkpointed -- it's a
+                # stream copy over the whole file, cheap regardless, and not
+                # worth the complexity of partial-resume for this specific step.
+                if len(segments) > 1:
+                    if on_stage is not None:
+                        await on_stage("Splitting video")
+                    boundaries = [s.end for s in segments[:-1]]
+                    await _split_copy_segments(ffmpeg_bin, video_path, boundaries, tmp_root)
+
+                if len(segments) > 1:
+                    # Validate against the segments actually just produced, not a
+                    # separate probe against the source -- an earlier version of
+                    # the RASL check below seeked independently into the source
+                    # file per candidate and got inconsistent verdicts for the
+                    # same real timestamp across repeated runs (the same
+                    # stream-copy seek imprecision _split_copy_segments's own
+                    # docstring already documents for this class of source).
+                    # Reading an already-cut segment's own true start has no seek
+                    # step to be imprecise about -- same reasoning
+                    # _segment_actual_start_time uses for the codec-agnostic
+                    # check below.
+                    #
+                    # Two independent checks share this one retry loop/bad-
+                    # boundary-exclusion mechanism: the RASL check (HEVC-only,
+                    # a specific corrupt-reference-frame byte pattern) and the
+                    # boundary-drift check (every codec, the segment muxer's own
+                    # keyframe-cut decision landing somewhere plan_video_segments
+                    # didn't expect -- see _segment_actual_start_time's docstring
+                    # for the real H.264 case that surfaced this: no RASL
+                    # anywhere, but several cuts several-to-ten seconds off their
+                    # plan, silently duplicating/omitting footage across the
+                    # copy/re-encode splice until verify_blurred_output's
+                    # whole-file duration check caught it after the fact).
+                    for _attempt in range(20):
+                        bad_boundary = None
+                        bad_reason = ""
+                        confirmed_keyframe = None
+                        for i, seg in enumerate(segments):
+                            if seg.reencode or seg.start >= seg.end:
+                                continue
+                            ts_path = tmp_root / f"copy_{i:04d}.mkv"
+                            if seg.start > 0.0 and video_codec in ("hevc", "h265") and await _segment_file_starts_with_rasl(ffmpeg_bin, ts_path):
+                                bad_boundary = seg.start
+                                bad_reason = "has a RASL picture following it"
+                                break
+                            actual_start = await _segment_actual_start_time(ffprobe_bin, ts_path)
+                            # Both boundaries this copy segment touches get checked, not just
+                            # its start -- a bad cut on the *end* side (where the next
+                            # re-encoded scene is supposed to pick up) is the more dangerous
+                            # direction to miss: see _segment_actual_end_time's docstring for
+                            # why that one can leave the real start of an approved scene
+                            # sitting unblurred, rather than just duplicated.
+                            if seg.start > 0.0 and actual_start is not None and abs(actual_start - seg.start) > _BOUNDARY_DRIFT_TOLERANCE_SECONDS:
+                                bad_boundary = seg.start
+                                bad_reason = f"actually cut at {actual_start:.3f}s"
+                                confirmed_keyframe = actual_start
+                                break
+                            if seg.end < total_duration and actual_start is not None:
+                                actual_end = await _segment_actual_end_time(ffprobe_bin, ts_path, actual_start)
+                                if actual_end is not None and abs(actual_end - seg.end) > _BOUNDARY_DRIFT_TOLERANCE_SECONDS:
+                                    bad_boundary = seg.end
+                                    bad_reason = f"actually cut at {actual_end:.3f}s"
+                                    confirmed_keyframe = actual_end
+                                    break
+                            if (
+                                seg.end < total_duration
+                                and video_codec in ("hevc", "h265")
+                                and await _segment_file_ends_with_cra(ffmpeg_bin, ts_path)
+                            ):
+                                bad_boundary = seg.end
+                                bad_reason = "ends on a CRA frame"
+                                break
+                        if bad_boundary is None:
+                            break
+                        logger.info("Cut point %.3fs for %s %s -- excluding and re-splitting", bad_boundary, video_path, bad_reason)
+                        keyframe_timestamps = [t for t in keyframe_timestamps if abs(t - bad_boundary) > 1e-6]
+                        if confirmed_keyframe is not None:
+                            keyframe_timestamps.append(confirmed_keyframe)
+                        segments = plan_video_segments(blur_intervals, keyframe_timestamps, total_duration)
+                        # Old copy_*.mkv indices no longer correspond to the new
+                        # plan's boundaries -- wipe and re-split rather than risk
+                        # a later stale-file reuse under a shifted index.
+                        for stale in tmp_root.glob("copy_*.mkv"):
+                            stale.unlink(missing_ok=True)
+                        for stale in tmp_root.glob("reencode_*.mkv"):
+                            stale.unlink(missing_ok=True)
+                        if len(segments) > 1:
+                            if on_stage is not None:
+                                await on_stage("Splitting video")
+                            boundaries = [s.end for s in segments[:-1]]
+                            await _split_copy_segments(ffmpeg_bin, video_path, boundaries, tmp_root)
+                    else:
+                        # Unlike the old HEVC-only version of this loop, which proceeded
+                        # anyway after exhausting attempts (a RASL miss is rare enough
+                        # that this was an acceptable bet, and verify_blurred_output
+                        # would still catch a real corruption via the stream-count/
+                        # decode checks even if the duration happened to still line up),
+                        # failing fast here instead: the boundary-drift case, generalized
+                        # to every codec, is a duration mismatch by construction, which
+                        # verify_blurred_output WILL catch regardless -- so "proceed
+                        # anyway" here only ever bought a guaranteed-wasted re-encode
+                        # pass (potentially the whole file's approved-scene set, tens of
+                        # minutes) before failing at the exact same check at the very end
+                        # instead. Raising immediately, before any of that expensive work
+                        # starts, reaches the same safe outcome (nothing ever gets
+                        # published) far faster.
+                        raise RemuxError(
+                            f"Could not find a reliable stream-copy cut point near {bad_boundary:.3f}s for {video_path} "
+                            f"after 20 attempts ({bad_reason}) -- this source likely has an unusually sparse or "
+                            f"irregular keyframe structure in that region"
+                        )
+
+                reencode_segments = [s for s in segments if s.reencode]
+                total_reencode_seconds = sum(s.duration for s in reencode_segments) or 1.0
+                done_reencode_seconds = 0.0
+                logger.info(
+                    "Scene-blur split for %s: %d segment(s) (%d re-encode, %d copy), "
+                    "%.1fs of %.1fs actually needs re-encoding (%.1f%%)",
+                    video_path, len(segments), len(reencode_segments), len(segments) - len(reencode_segments),
+                    sum(s.duration for s in reencode_segments), total_duration,
+                    100 * sum(s.duration for s in reencode_segments) / total_duration if total_duration else 0,
+                )
+
+                total_scene_count = sum(len(s.local_blur_intervals) for s in reencode_segments)
+                scenes_done = 0
+                for i, segment in enumerate(segments):
+                    if segment.reencode:
+                        # A segment can carry more than one original scene when two
+                        # approved scenes are close enough together to share the
+                        # same keyframe-expanded re-encode range (see
+                        # plan_video_segments) -- report progress against the
+                        # scene count you actually approved, not the (fewer)
+                        # merged segments, so this doesn't read as "missing" scenes.
+                        n = len(segment.local_blur_intervals)
+                        seg_ts_path = tmp_root / f"reencode_{i:04d}.mkv"
+                        if seg_ts_path.exists():
+                            # Already produced by a prior interrupted attempt.
+                            scenes_done += n
+                            segment_ts_paths.append(seg_ts_path)
+                            done_reencode_seconds += segment.duration
+                            if on_progress is not None:
+                                await on_progress(min(1.0, done_reencode_seconds / total_reencode_seconds))
+                            continue
+                        if n > 1:
+                            stage_msg = f"Blurring scenes {scenes_done + 1}-{scenes_done + n}/{total_scene_count}"
+                        else:
+                            stage_msg = f"Blurring scene {scenes_done + 1}/{total_scene_count}"
                         scenes_done += n
-                        segment_ts_paths.append(seg_ts_path)
+                        if on_stage is not None:
+                            await on_stage(stage_msg)
+                        await _extract_reencode_segment(
+                            ffmpeg_bin, video_path, segment, video_crf, video_preset, blur_radius, blur_power, seg_ts_path,
+                            source_codec=video_codec,
+                        )
                         done_reencode_seconds += segment.duration
                         if on_progress is not None:
                             await on_progress(min(1.0, done_reencode_seconds / total_reencode_seconds))
-                        continue
-                    if n > 1:
-                        stage_msg = f"Blurring scenes {scenes_done + 1}-{scenes_done + n}/{total_scene_count}"
                     else:
-                        stage_msg = f"Blurring scene {scenes_done + 1}/{total_scene_count}"
-                    scenes_done += n
-                    if on_stage is not None:
-                        await on_stage(stage_msg)
-                    await _extract_reencode_segment(
-                        ffmpeg_bin, video_path, segment, video_crf, video_preset, blur_radius, blur_power, seg_ts_path,
-                        source_codec=video_codec,
-                    )
-                    done_reencode_seconds += segment.duration
-                    if on_progress is not None:
-                        await on_progress(min(1.0, done_reencode_seconds / total_reencode_seconds))
-                else:
-                    # Raw copy segment already produced by the whole-file
-                    # split pass above, but its own duration/start_time
-                    # metadata is wrong (see _normalize_segment_timestamps)
-                    # -- normalize it into a separate file so "the normalized
-                    # file exists" stays a reliable resume-completion signal
-                    # independent of the raw one.
-                    raw_ts_path = tmp_root / f"copy_{i:04d}.mkv"
-                    seg_ts_path = tmp_root / f"copy_{i:04d}_fixed.mkv"
-                    if not seg_ts_path.exists():
-                        await _normalize_segment_timestamps(ffmpeg_bin, raw_ts_path, seg_ts_path)
-                segment_ts_paths.append(seg_ts_path)
+                        # Raw copy segment already produced by the whole-file
+                        # split pass above, but its own duration/start_time
+                        # metadata is wrong (see _normalize_segment_timestamps)
+                        # -- normalize it into a separate file so "the normalized
+                        # file exists" stays a reliable resume-completion signal
+                        # independent of the raw one.
+                        raw_ts_path = tmp_root / f"copy_{i:04d}.mkv"
+                        seg_ts_path = tmp_root / f"copy_{i:04d}_fixed.mkv"
+                        if not seg_ts_path.exists():
+                            await _normalize_segment_timestamps(ffmpeg_bin, raw_ts_path, seg_ts_path)
+                    segment_ts_paths.append(seg_ts_path)
 
-            if on_stage is not None:
-                await on_stage("Combining segments")
-            await _concat_video_segments(ffmpeg_bin, segment_ts_paths, concatenated_video_path)
+                if on_stage is not None:
+                    await on_stage("Combining segments")
+                await _concat_video_segments(ffmpeg_bin, segment_ts_paths, concatenated_video_path)
 
         # Same split/copy/reencode/concat approach as video, applied to
         # audio -- only the muted windows get decoded+re-encoded, the rest
@@ -1294,7 +1511,19 @@ async def apply_blur(
     for how it's derived from the SceneJob id) that build_blurred_video reuses
     across resumed attempts -- deleted here only once the output has been
     verified and published, so a failed or interrupted run always leaves it
-    behind for the next attempt to pick up from."""
+    behind for the next attempt to pick up from.
+
+    Tries the segment-based split/copy/re-encode/concat pipeline first (fast:
+    only the approved scenes actually get re-encoded); if that fails --
+    either build_blurred_video itself raising, or its output failing
+    verify_blurred_output -- retries once with force_whole_file_video=True
+    (see that function and _build_video_whole_file_reencode's docstrings for
+    the real, directly-confirmed concat corruption that motivated this). A
+    single continuous decode+encode session has no concat step to corrupt,
+    so it's slower but structurally can't hit that failure class. If the
+    fallback also fails, its error is what propagates -- the segment-based
+    attempt's failure is logged but not re-raised, since the fallback
+    represents the more useful, more recent information."""
     if not video_path.exists():
         raise RemuxError(f"Video file does not exist: {video_path}")
     if not blur_intervals:
@@ -1302,34 +1531,46 @@ async def apply_blur(
 
     src_probe = await probe(ffprobe_bin, video_path)
 
-    tmp_path = await build_blurred_video(
-        video_path=video_path,
-        blur_intervals=blur_intervals,
-        mute_intervals=mute_intervals,
-        ffmpeg_bin=ffmpeg_bin,
-        ffprobe_bin=ffprobe_bin,
-        video_crf=video_crf,
-        video_preset=video_preset,
-        work_dir=work_dir,
-        blur_radius=blur_radius,
-        blur_power=blur_power,
-        on_progress=on_progress,
-        on_stage=on_stage,
-    )
-
-    if on_stage is not None:
-        await on_stage("Verifying output")
-    try:
-        await verify_blurred_output(
+    async def _build_and_verify(*, force_whole_file_video: bool) -> Path:
+        tmp_path = await build_blurred_video(
+            video_path=video_path,
+            blur_intervals=blur_intervals,
+            mute_intervals=mute_intervals,
             ffmpeg_bin=ffmpeg_bin,
             ffprobe_bin=ffprobe_bin,
-            original_probe=src_probe,
-            tmp_path=tmp_path,
-            blurred_windows=blur_intervals,
+            video_crf=video_crf,
+            video_preset=video_preset,
+            work_dir=work_dir,
+            blur_radius=blur_radius,
+            blur_power=blur_power,
+            force_whole_file_video=force_whole_file_video,
+            on_progress=on_progress,
+            on_stage=on_stage,
         )
-    except Exception:
-        tmp_path.unlink(missing_ok=True)
+        if on_stage is not None:
+            await on_stage("Verifying output")
+        try:
+            await verify_blurred_output(
+                ffmpeg_bin=ffmpeg_bin,
+                ffprobe_bin=ffprobe_bin,
+                original_probe=src_probe,
+                tmp_path=tmp_path,
+                blurred_windows=blur_intervals,
+            )
+        except Exception:
+            tmp_path.unlink(missing_ok=True)
+            raise
+        return tmp_path
+
+    try:
+        tmp_path = await _build_and_verify(force_whole_file_video=False)
+    except asyncio.CancelledError:
         raise
+    except Exception as exc:
+        logger.warning(
+            "Segment-based blur failed for %s (%s) -- falling back to a whole-file re-encode", video_path, exc
+        )
+        tmp_path = await _build_and_verify(force_whole_file_video=True)
 
     if on_stage is not None:
         await on_stage("Publishing Vulgarr Edit")

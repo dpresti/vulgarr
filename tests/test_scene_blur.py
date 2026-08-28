@@ -2,6 +2,7 @@ from app.audio.mute import MuteInterval
 from app.mux.scene_blur import (
     DEFAULT_BLUR_LEVEL,
     _annexb_buf_has_rasl,
+    _annexb_buf_last_picture_nal_type,
     _blur_job_fingerprint,
     _parse_keyframe_csv,
     _reencode_video_codec,
@@ -72,6 +73,38 @@ def test_buf_has_rasl_finds_rasl_after_cra_and_parameter_sets():
 
 def test_buf_has_rasl_empty_buffer():
     assert _annexb_buf_has_rasl(b"") is False
+
+
+def test_last_picture_nal_type_finds_trailing_cra():
+    # Real observed shape at a copy segment's true end (28 Years Later, live
+    # repro this session): parameter sets, then a closing CRA with no RASL
+    # after it -- _annexb_buf_has_rasl correctly says "no RASL here", but the
+    # CRA itself is still an unsafe splice boundary (confirmed directly: both
+    # adjacent segments decode perfectly in isolation, only the spliced
+    # result corrupts). This is what catches that case instead.
+    data = _nal_bytes(32) + _nal_bytes(33) + _nal_bytes(34) + _nal_bytes(21)
+    assert _annexb_buf_last_picture_nal_type(data) == 21
+
+
+def test_last_picture_nal_type_ignores_trailing_non_picture_nals():
+    # SEI/filler after the last real picture NAL shouldn't count -- the
+    # picture type itself (here a plain TRAIL_R) is what determines safety.
+    data = _nal_bytes(1) + _nal_bytes(39)
+    assert _annexb_buf_last_picture_nal_type(data) == 1
+
+
+def test_last_picture_nal_type_picks_the_last_one_not_the_first():
+    data = _nal_bytes(19) + _nal_bytes(1) + _nal_bytes(21)
+    assert _annexb_buf_last_picture_nal_type(data) == 21
+
+
+def test_last_picture_nal_type_none_for_no_picture_nals():
+    data = _nal_bytes(32) + _nal_bytes(33) + _nal_bytes(34)
+    assert _annexb_buf_last_picture_nal_type(data) is None
+
+
+def test_last_picture_nal_type_empty_buffer():
+    assert _annexb_buf_last_picture_nal_type(b"") is None
 
 
 def test_empty_intervals_is_passthrough():
