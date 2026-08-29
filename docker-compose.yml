@@ -4,7 +4,7 @@ services:
     # `docker compose pull && up -d`) rather than silently picking up whatever the
     # most recent push to main happened to build. Built by .github/workflows/
     # docker-publish.yml on every vX.Y.Z tag push (see README's release process).
-    image: ghcr.io/dpresti/vulgarr:2.2.1
+    image: ghcr.io/dpresti/vulgarr:2.3.0
     container_name: vulgarr
     restart: unless-stopped
     ports:
