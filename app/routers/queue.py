@@ -167,6 +167,30 @@ async def queue_page(request: Request):
     return templates.TemplateResponse("queue.html", {"request": request, **context})
 
 
+def _group_topbar_jobs(processing: list[ProcessingJob], scene_processing: list[SceneJob]) -> list[dict]:
+    """Combines an active audio job (ProcessingJob) and an active video job
+    (SceneJob: scan/blur/claude-verify all count as "video" here) for the
+    SAME title into one topbar entry instead of two separate, visually
+    disconnected rows. A title can only ever have one of each kind active at
+    once (HEAVY_PIPELINE_LOCK now also serializes them against each other
+    process-wide), so this is always at most a 1:1 pairing per title, never
+    a real many-to-one merge. Order follows first appearance across the two
+    already started_at-ordered lists, audio first."""
+    by_title: dict[int, dict] = {}
+    order: list[int] = []
+    for job in processing:
+        by_title.setdefault(job.title_id, {"title": job.title, "audio_job": None, "video_job": None})
+        if job.title_id not in order:
+            order.append(job.title_id)
+        by_title[job.title_id]["audio_job"] = job
+    for job in scene_processing:
+        by_title.setdefault(job.title_id, {"title": job.title, "audio_job": None, "video_job": None})
+        if job.title_id not in order:
+            order.append(job.title_id)
+        by_title[job.title_id]["video_job"] = job
+    return [by_title[tid] for tid in order]
+
+
 @router.get("/topbar", response_class=HTMLResponse)
 async def queue_topbar(request: Request):
     from app.db.session import get_session
@@ -190,7 +214,7 @@ async def queue_topbar(request: Request):
 
     return templates.TemplateResponse(
         "partials/queue_topbar.html",
-        {"request": request, "active": processing, "scene_active": scene_processing},
+        {"request": request, "title_jobs": _group_topbar_jobs(processing, scene_processing)},
     )
 
 

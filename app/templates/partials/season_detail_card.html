@@ -16,15 +16,16 @@
             </div>
           </div>
           <div class="detail-actions">
-            <form hx-post="/library/shows/{{ series_id }}/season/{{ season_number }}/scan-scenes" hx-target="#season-detail-{{ series_id }}-{{ season_number }}" hx-swap="outerHTML">
-              <input type="hidden" name="detail_view" value="true">
-              <input type="hidden" name="came_from" value="{{ came_from or '' }}">
-              <button type="submit" class="secondary" title="Scan every episode in this season for candidate scenes -- no subtitle needed">Process Video</button>
-            </form>
+            {# Audio, Video, Both -- deliberate order everywhere this trio appears. #}
             <form hx-post="/library/shows/{{ series_id }}/season/{{ season_number }}/process" hx-target="#season-detail-{{ series_id }}-{{ season_number }}" hx-swap="outerHTML">
               <input type="hidden" name="detail_view" value="true">
               <input type="hidden" name="came_from" value="{{ came_from or '' }}">
               <button type="submit" class="secondary" title="Queue every episode in this season that already has a subtitle (word-list mute)">Process Audio</button>
+            </form>
+            <form hx-post="/library/shows/{{ series_id }}/season/{{ season_number }}/scan-scenes" hx-target="#season-detail-{{ series_id }}-{{ season_number }}" hx-swap="outerHTML">
+              <input type="hidden" name="detail_view" value="true">
+              <input type="hidden" name="came_from" value="{{ came_from or '' }}">
+              <button type="submit" class="secondary" title="Scan every episode in this season for candidate scenes -- no subtitle needed">Process Video</button>
             </form>
             <form hx-post="/library/shows/{{ series_id }}/season/{{ season_number }}/process-both" hx-target="#season-detail-{{ series_id }}-{{ season_number }}" hx-swap="outerHTML">
               <input type="hidden" name="detail_view" value="true">

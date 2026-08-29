@@ -22,22 +22,26 @@
           <span id="detail-bazarr-indicator-{{ row.title.id }}" class="htmx-indicator detail-waiting"><span class="spinner"></span>Searching for subtitles…</span>
         </div>
         <div class="detail-actions">
-          {% if row.status != 'awaiting_mkv' %}
-            <form hx-post="/library/{{ row.title.id }}/process-video" hx-target="#title-detail-{{ row.title.id }}" hx-swap="outerHTML">
-              <input type="hidden" name="detail_view" value="true">
-              <button type="submit" class="secondary" title="Scan for candidate explicit-content scenes -- no subtitle needed">{{ video_verb }} Video</button>
-            </form>
-          {% endif %}
+          {# Audio, Video, Both -- deliberate order everywhere this trio of actions
+             appears (also show_detail_card.html, season_detail_card.html). #}
           {% if row.status == 'awaiting_mkv' %}
             <span class="muted">waiting on Sonarr/Radarr…</span>
           {% elif row.status == 'awaiting_subtitle' %}
             {# Message already shown once above via title_job_status.html -- nothing
-               to put here except keep this branch so the Audio/Both buttons below
+               to put here except keep this branch so the Video/Both buttons below
                don't render while a search is still in flight. #}
+            <form hx-post="/library/{{ row.title.id }}/process-video" hx-target="#title-detail-{{ row.title.id }}" hx-swap="outerHTML">
+              <input type="hidden" name="detail_view" value="true">
+              <button type="submit" class="secondary" title="Scan for candidate explicit-content scenes -- no subtitle needed">{{ video_verb }} Video</button>
+            </form>
           {% elif not row.has_subtitle %}
             <form hx-post="/library/{{ row.title.id }}/search-subtitle" hx-target="#title-detail-{{ row.title.id }}" hx-swap="outerHTML" hx-indicator="#detail-bazarr-indicator-{{ row.title.id }}">
               <input type="hidden" name="detail_view" value="true">
               <button type="submit" class="secondary" title="Search Bazarr for a subtitle, then queue audio processing if found">{{ audio_verb }} Audio</button>
+            </form>
+            <form hx-post="/library/{{ row.title.id }}/process-video" hx-target="#title-detail-{{ row.title.id }}" hx-swap="outerHTML">
+              <input type="hidden" name="detail_view" value="true">
+              <button type="submit" class="secondary" title="Scan for candidate explicit-content scenes -- no subtitle needed">{{ video_verb }} Video</button>
             </form>
             <form hx-post="/library/{{ row.title.id }}/search-subtitle-and-process-both" hx-target="#title-detail-{{ row.title.id }}" hx-swap="outerHTML" hx-indicator="#detail-bazarr-indicator-{{ row.title.id }}">
               <input type="hidden" name="detail_view" value="true">
@@ -47,6 +51,10 @@
             <form hx-post="/library/{{ row.title.id }}/process" hx-target="#title-detail-{{ row.title.id }}" hx-swap="outerHTML">
               <input type="hidden" name="detail_view" value="true">
               <button type="submit" class="secondary" title="{{ audio_verb }} the word list (profanity mute)">{{ audio_verb }} Audio</button>
+            </form>
+            <form hx-post="/library/{{ row.title.id }}/process-video" hx-target="#title-detail-{{ row.title.id }}" hx-swap="outerHTML">
+              <input type="hidden" name="detail_view" value="true">
+              <button type="submit" class="secondary" title="Scan for candidate explicit-content scenes -- no subtitle needed">{{ video_verb }} Video</button>
             </form>
             <form hx-post="/library/{{ row.title.id }}/process-both" hx-target="#title-detail-{{ row.title.id }}" hx-swap="outerHTML">
               <input type="hidden" name="detail_view" value="true">
@@ -58,26 +66,8 @@
     </div>
     <div class="detail-body">
       <div class="detail-columns">
-        <div class="detail-column">
-          <h3 class="detail-column-heading">Video</h3>
-          <div class="detail-section">
-            <div class="detail-label">Scenes found</div>
-            <div class="detail-stat">{{ scenes | length if scenes is not none else '—' }}</div>
-          </div>
-          <div class="detail-section">
-            <div class="detail-label">Last processed</div>
-            <div class="detail-stat">{{ last_scan_job.finished_at.strftime('%Y-%m-%d %H:%M') if last_scan_job and last_scan_job.finished_at else '—' }}</div>
-          </div>
-          <div class="detail-section">
-            <div class="detail-label">Time to finish</div>
-            <div class="detail-stat">{{ last_scan_job_duration or '—' }}</div>
-          </div>
-          {% if scenes %}
-          <div class="detail-section" style="margin-top: 0.5rem;">
-            {% include "partials/scene_review_apply_row.html" %}
-          </div>
-          {% endif %}
-        </div>
+        {# Audio on the left, Video on the right -- deliberate placement, matches
+           the Audio/Video/Both action-button order above. #}
         <div class="detail-column">
           <h3 class="detail-column-heading">Audio</h3>
           <div class="detail-section">
@@ -134,6 +124,26 @@
             <div class="detail-label">Time to finish</div>
             <div class="detail-stat">{{ last_job_duration or '—' }}</div>
           </div>
+        </div>
+        <div class="detail-column">
+          <h3 class="detail-column-heading">Video</h3>
+          <div class="detail-section">
+            <div class="detail-label">Scenes found</div>
+            <div class="detail-stat">{{ scenes | length if scenes is not none else '—' }}</div>
+          </div>
+          <div class="detail-section">
+            <div class="detail-label">Last processed</div>
+            <div class="detail-stat">{{ last_scan_job.finished_at.strftime('%Y-%m-%d %H:%M') if last_scan_job and last_scan_job.finished_at else '—' }}</div>
+          </div>
+          <div class="detail-section">
+            <div class="detail-label">Time to finish</div>
+            <div class="detail-stat">{{ last_scan_job_duration or '—' }}</div>
+          </div>
+          {% if scenes %}
+          <div class="detail-section" style="margin-top: 0.5rem;">
+            {% include "partials/scene_review_apply_row.html" %}
+          </div>
+          {% endif %}
         </div>
       </div>
 

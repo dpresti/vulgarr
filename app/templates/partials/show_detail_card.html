@@ -16,13 +16,14 @@
             </div>
           </div>
           <div class="detail-actions">
-            <form hx-post="/library/shows/{{ series_id }}/scan-scenes" hx-target="#show-detail-{{ series_id }}" hx-swap="outerHTML">
-              <input type="hidden" name="came_from" value="{{ came_from or '' }}">
-              <button type="submit" class="secondary" title="Scan every episode in this show for candidate scenes -- no subtitle needed">Process Video</button>
-            </form>
+            {# Audio, Video, Both -- deliberate order everywhere this trio appears. #}
             <form hx-post="/library/shows/{{ series_id }}/process" hx-target="#show-detail-{{ series_id }}" hx-swap="outerHTML">
               <input type="hidden" name="came_from" value="{{ came_from or '' }}">
               <button type="submit" class="secondary" title="Queue every episode in this show that already has a subtitle (word-list mute)">Process Audio</button>
+            </form>
+            <form hx-post="/library/shows/{{ series_id }}/scan-scenes" hx-target="#show-detail-{{ series_id }}" hx-swap="outerHTML">
+              <input type="hidden" name="came_from" value="{{ came_from or '' }}">
+              <button type="submit" class="secondary" title="Scan every episode in this show for candidate scenes -- no subtitle needed">Process Video</button>
             </form>
             <form hx-post="/library/shows/{{ series_id }}/process-both" hx-target="#show-detail-{{ series_id }}" hx-swap="outerHTML">
               <input type="hidden" name="came_from" value="{{ came_from or '' }}">

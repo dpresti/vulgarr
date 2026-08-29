@@ -71,20 +71,23 @@
   </td>
   <td data-label="Process" class="span-full">
     <div class="row-actions">
-      {% if row.status != 'awaiting_mkv' %}
+      {# Audio, Video, Both -- deliberate order everywhere this trio appears. #}
+      {% if row.status == 'awaiting_mkv' %}
+        <span class="muted">waiting on Sonarr/Radarr…</span>
+      {% elif row.status == 'awaiting_subtitle' %}
       <form class="inline" hx-post="/library/{{ row.title.id }}/process-video" hx-target="#title-row-{{ row.title.id }}" hx-swap="outerHTML">
         {% if season_context %}<input type="hidden" name="short_label" value="true">{% endif %}
         <button type="submit" class="small secondary" title="Scan for candidate explicit-content scenes -- no subtitle needed">Video</button>
       </form>
-      {% endif %}
-      {% if row.status == 'awaiting_mkv' %}
-        <span class="muted">waiting on Sonarr/Radarr…</span>
-      {% elif row.status == 'awaiting_subtitle' %}
         <span class="detail-waiting"><span class="spinner"></span>Searching for subtitles…</span>
       {% elif not row.has_subtitle %}
       <form class="inline" hx-post="/library/{{ row.title.id }}/search-subtitle" hx-target="#title-row-{{ row.title.id }}" hx-swap="outerHTML" hx-indicator=".bazarr-indicator-{{ row.title.id }}">
         {% if season_context %}<input type="hidden" name="short_label" value="true">{% endif %}
         <button type="submit" class="small secondary" title="Search Bazarr for a subtitle, then queue audio processing if found">Audio</button>
+      </form>
+      <form class="inline" hx-post="/library/{{ row.title.id }}/process-video" hx-target="#title-row-{{ row.title.id }}" hx-swap="outerHTML">
+        {% if season_context %}<input type="hidden" name="short_label" value="true">{% endif %}
+        <button type="submit" class="small secondary" title="Scan for candidate explicit-content scenes -- no subtitle needed">Video</button>
       </form>
       <form class="inline" hx-post="/library/{{ row.title.id }}/search-subtitle-and-process-both" hx-target="#title-row-{{ row.title.id }}" hx-swap="outerHTML" hx-indicator=".bazarr-indicator-{{ row.title.id }}">
         {% if season_context %}<input type="hidden" name="short_label" value="true">{% endif %}
@@ -95,6 +98,10 @@
       <form class="inline" hx-post="/library/{{ row.title.id }}/process" hx-target="#title-row-{{ row.title.id }}" hx-swap="outerHTML">
         {% if season_context %}<input type="hidden" name="short_label" value="true">{% endif %}
         <button type="submit" class="small secondary" title="{{ audio_verb }} the word list (profanity mute)">Audio</button>
+      </form>
+      <form class="inline" hx-post="/library/{{ row.title.id }}/process-video" hx-target="#title-row-{{ row.title.id }}" hx-swap="outerHTML">
+        {% if season_context %}<input type="hidden" name="short_label" value="true">{% endif %}
+        <button type="submit" class="small secondary" title="Scan for candidate explicit-content scenes -- no subtitle needed">Video</button>
       </form>
       <form class="inline" hx-post="/library/{{ row.title.id }}/process-both" hx-target="#title-row-{{ row.title.id }}" hx-swap="outerHTML">
         {% if season_context %}<input type="hidden" name="short_label" value="true">{% endif %}
