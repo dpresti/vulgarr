@@ -8,7 +8,20 @@
    scope, computed alongside its rows -- see _used_pips_titles/_used_pips_shows
    in routers/library.py) hides legend entries that would return nothing --
    `or key == pip` keeps the currently-active filter visible regardless, so it
-   can't disappear out from under the user while they're looking at it. #}
+   can't disappear out from under the user while they're looking at it.
+
+   name="pip_filter" (NOT "pip") -- a real, second bug found live: htmx
+   treats any clicked <button> as a submitted button and adds its own
+   name/value pair to the request (value="" here, no explicit value set),
+   alongside whatever hx-get's own URL already put there. Naming it "pip"
+   collided with hx-get's own `?pip=<key>`, producing a request with TWO
+   `pip` params (`?pip=<key>&pip=`) -- FastAPI/Starlette resolved that
+   duplicate to the empty second one, so the filter silently never applied
+   and the active-filter toggle-off never worked either (the server never
+   saw a real `pip` value to compare against). The name only needs to be
+   *some* non-empty value for _is_load_more's HX-Trigger-Name check (see
+   that function's own docstring) -- it doesn't have to be "pip" itself,
+   just anything that doesn't collide with a real query param name. #}
 <div class="legend">
   {% for key, label, color_var in [
     ('done', 'done', 'success-text'),
@@ -23,7 +36,7 @@
   {% if key in used_pips or key == pip %}
   <button
     type="button"
-    name="pip"
+    name="pip_filter"
     class="legend-item {{ 'active' if pip == key else '' }}"
     hx-get="{{ pip_action }}{{ pip_link(key) }}"
     hx-target="{{ pip_target }}"
