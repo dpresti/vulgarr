@@ -2,7 +2,13 @@
    (library_processed.html, library_movies.html, library_shows.html) includes this --
    clicking a status filters the grid to just that status; clicking the active one
    again clears the filter. Same hx-target/hx-select/hx-swap/hx-push-url pattern as
-   that page's own search input and sort select, so this behaves identically. #}
+   that page's own search input and sort select, so this behaves identically.
+
+   used_pips (a set of the status keys that actually occur in this page's own
+   scope, computed alongside its rows -- see _used_pips_titles/_used_pips_shows
+   in routers/library.py) hides legend entries that would return nothing --
+   `or key == pip` keeps the currently-active filter visible regardless, so it
+   can't disappear out from under the user while they're looking at it. #}
 <div class="legend">
   {% for key, label, color_var in [
     ('done', 'done', 'success-text'),
@@ -14,8 +20,10 @@
     ('scenes_pending_review', 'scenes pending review', 'scenereview-text'),
     ('not_processed', 'not processed', 'text-muted')
   ] %}
+  {% if key in used_pips or key == pip %}
   <button
     type="button"
+    name="pip"
     class="legend-item {{ 'active' if pip == key else '' }}"
     hx-get="{{ pip_action }}{{ pip_link(key) }}"
     hx-target="{{ pip_target }}"
@@ -23,5 +31,6 @@
     hx-swap="outerHTML"
     hx-push-url="true"
   ><i style="background: var(--vulgarr-{{ color_var }});"></i>{{ label }}</button>
+  {% endif %}
   {% endfor %}
 </div>

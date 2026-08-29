@@ -1,6 +1,16 @@
 {% set scene_review_target = '#title-detail-' ~ title_id if detail_view else '#scene-review-' ~ title_id %}
+{# A real bug: this condition drove the ONLY self-poll on the title detail
+   page (title_job_status.html, the audio/scan/blur/claude-verify status bar,
+   has no hx-trigger of its own), but never checked the audio pipeline's own
+   job (last_job) -- only scene scan/blur/claude-verify. A title mid-audio-
+   processing with no scene activity never had this div's hx-get attributes
+   render at all, so its progress bar silently never advanced without a
+   manual refresh. last_job isn't in scope on the standalone scene-review
+   page this partial also renders on (_scene_review_context doesn't pass it,
+   audio jobs aren't relevant there) -- Jinja's Undefined is falsy, so this
+   safely no-ops there rather than erroring. #}
 <div id="scene-review-{{ title_id }}"
-  {% if scene_scan_status in ('queued', 'scanning') or (blur_job and blur_job.state.value in ('queued', 'processing')) or (claude_verify_job and claude_verify_job.state.value in ('queued', 'processing')) %}
+  {% if scene_scan_status in ('queued', 'scanning') or (blur_job and blur_job.state.value in ('queued', 'processing')) or (claude_verify_job and claude_verify_job.state.value in ('queued', 'processing')) or (last_job and last_job.state.value in ('queued', 'processing')) %}
   hx-get="/library/title/{{ title_id }}/scenes{{ '?detail_view=true' if detail_view else '' }}" hx-trigger="every 3s" hx-target="{{ scene_review_target }}" hx-swap="outerHTML"
   {% endif %}
 >
