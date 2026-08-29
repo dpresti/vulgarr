@@ -100,7 +100,13 @@ async def _render_scene_review(request: Request, title_id: int, detail_view: boo
     the whole card instead of just this section so nothing outside it goes
     stale after an action."""
     if detail_view:
-        from app.routers.library import _load_last_job, _load_last_scan_job, _pending_scene_title_ids, _row_dict
+        from app.routers.library import (
+            _load_last_job,
+            _load_last_scan_job,
+            _load_matched_cues,
+            _pending_scene_title_ids,
+            _row_dict,
+        )
 
         async with get_session() as session:
             current_version = int(await get_setting(session, "wordlist_version"))
@@ -112,6 +118,7 @@ async def _render_scene_review(request: Request, title_id: int, detail_view: boo
             context = await _scene_review_context(session, title_id)
         last_job, last_job_duration = await _load_last_job(title_id)
         last_scan_job, last_scan_job_duration = await _load_last_scan_job(title_id)
+        matched_cues = await _load_matched_cues(title_id)
         return templates.TemplateResponse(
             "partials/title_detail_card.html",
             {
@@ -121,6 +128,7 @@ async def _render_scene_review(request: Request, title_id: int, detail_view: boo
                 "last_job_duration": last_job_duration,
                 "last_scan_job": last_scan_job,
                 "last_scan_job_duration": last_scan_job_duration,
+                "matched_cues": matched_cues,
                 **context,
             },
         )

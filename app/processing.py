@@ -4,12 +4,12 @@ import logging
 from dataclasses import dataclass
 from pathlib import Path
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.audio.mute import AlignProgressCallback, MuteInterval, build_mute_intervals, build_mute_intervals_whisper
 from app.config import settings as app_settings
-from app.db.models import WordListEntry
+from app.db.models import MatchedCue, WordListEntry
 from app.db.session import get_setting
 from app.domain import SEVERITY_CANONICAL_ORDER, SEVERITY_RANK, Severity, is_mkv_path
 from app.mux.remux import ProgressCallback, RemuxError, StageCallback, probe, remux_with_clean_track
@@ -86,6 +86,7 @@ async def load_active_terms(session: AsyncSession, min_severity: Severity = Seve
 async def process_video(
     session: AsyncSession,
     *,
+    title_id: int,
     video_path: Path,
     subtitle_path: Path,
     severity_levels: list[Severity] | None = None,
@@ -165,6 +166,21 @@ async def process_video(
         keep_backup=backups_enabled,
         on_progress=on_progress,
         on_stage=on_stage,
+    )
+
+    await session.execute(delete(MatchedCue).where(MatchedCue.title_id == title_id))
+    session.add_all(
+        [
+            MatchedCue(
+                title_id=title_id,
+                start_seconds=m.cue.start_seconds,
+                end_seconds=m.cue.end_seconds,
+                matched_terms=", ".join(m.matched_terms),
+                severity=m.severity.value,
+                cue_text=m.cue.text,
+            )
+            for m in matches_by_level[most_inclusive_level]
+        ]
     )
 
     return ProcessingOutcome(

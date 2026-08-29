@@ -1,0 +1,27 @@
+{% if matched_cues %}
+<details>
+  <summary style="cursor: pointer; font-weight: 600;">Show {{ matched_cues|length }} matched word(s)</summary>
+  <div style="max-height: 320px; overflow-y: auto; margin-top: 0.6rem;">
+    {% for cue in matched_cues %}
+    <div class="scene-review-row" style="display: flex; align-items: flex-start; gap: 0.75rem; flex-wrap: wrap; padding: 0.5rem 0; border-bottom: 1px solid var(--vulgarr-border);">
+      <div class="stat-pill" title="Timestamp in the source file" style="flex-shrink: 0;">
+        {% set total_seconds = cue.start_seconds|int %}
+        {% set hours = (total_seconds // 3600) %}
+        {% set minutes = ((total_seconds % 3600) // 60) %}
+        {% set seconds = (total_seconds % 60) %}
+        {% if hours %}{{ hours }}:{{ '%02d'|format(minutes) }}:{{ '%02d'|format(seconds) }}{% else %}{{ minutes }}:{{ '%02d'|format(seconds) }}{% endif %}
+      </div>
+      <div style="flex: 1 1 0; min-width: 240px;">
+        <div style="display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap;">
+          <span class="badge badge-{{ cue.severity }}">{{ cue.severity }}</span>
+          <strong>{{ cue.matched_terms }}</strong>
+        </div>
+        <div class="muted" style="margin-top: 0.25rem;">{{ cue.cue_text }}</div>
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+</details>
+{% else %}
+<div class="muted">No matched words recorded yet -- reprocess to populate this list.</div>
+{% endif %}

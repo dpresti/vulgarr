@@ -16,6 +16,7 @@ __all__ = [
     "Title",
     "ProcessingJob",
     "DetectedScene",
+    "MatchedCue",
     "SceneJob",
     "WordListEntry",
     "AppSetting",
@@ -200,6 +201,33 @@ class DetectedScene(Base):
     applied_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
     title: Mapped["Title"] = relationship(back_populates="detected_scenes")
+
+
+class MatchedCue(Base):
+    """One subtitle cue the wordlist matcher flagged during the most recent
+    successful audio-mute run (app.processing.process_video) -- the same
+    per-cue data matched_cue_count on Title already summarizes as a bare
+    number, kept here in full so the title detail page can actually show
+    which words, and when. Deliberately a separate table, same reasoning as
+    DetectedScene: an independent, replaceable-on-reprocess list, not
+    another column bolted onto Title.
+
+    Rows are wholly owned by the most recent successful run -- reprocessing
+    (word list edit, severity change, manual Reprocess) deletes and
+    regenerates this title's rows from scratch, the same "stale copies get
+    replaced, not accumulated" philosophy plan_audio_streams already applies
+    to clean audio tracks."""
+
+    __tablename__ = "matched_cues"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    title_id: Mapped[int] = mapped_column(ForeignKey("titles.id"), nullable=False)
+
+    start_seconds: Mapped[float] = mapped_column(nullable=False)
+    end_seconds: Mapped[float] = mapped_column(nullable=False)
+    matched_terms: Mapped[str] = mapped_column(String(500), nullable=False)  # comma-joined
+    severity: Mapped[str] = mapped_column(String(20), nullable=False)
+    cue_text: Mapped[str] = mapped_column(String(1000), nullable=False)
 
 
 class SceneJob(Base):

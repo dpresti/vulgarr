@@ -471,6 +471,7 @@ class JobQueue:
                 async with HEAVY_PIPELINE_LOCK:
                     outcome = await process_video(
                         session,
+                        title_id=title.id,
                         video_path=Path(title.video_path),
                         subtitle_path=Path(title.subtitle_path),
                         severity_levels=parse_severity_levels(title.severity_levels),

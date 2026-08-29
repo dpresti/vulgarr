@@ -9,7 +9,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from sqlalchemy import Select, case, func, select, update
 
-from app.db.models import DetectedScene, MediaType, ProcessingJob, SceneJob, Title, TriggerSource
+from app.db.models import DetectedScene, MatchedCue, MediaType, ProcessingJob, SceneJob, Title, TriggerSource
 from app.db.session import get_session, get_setting
 from app.domain import (
     PRECISE_MODES,
@@ -265,6 +265,19 @@ async def _load_last_scan_job(title_id: int) -> tuple[SceneJob | None, str | Non
     return last_job, last_job_duration
 
 
+async def _load_matched_cues(title_id: int) -> list[MatchedCue]:
+    async with get_session() as session:
+        return list(
+            (
+                await session.execute(
+                    select(MatchedCue).where(MatchedCue.title_id == title_id).order_by(MatchedCue.start_seconds)
+                )
+            )
+            .scalars()
+            .all()
+        )
+
+
 async def _load_scene_review_context(title_id: int) -> dict:
     """Thin wrapper around scenes.py's _scene_review_context -- that's the complete
     version (also fetches scan_job/blur_job/claude_verify_job, needed to render an
@@ -288,6 +301,7 @@ async def _render_title(request: Request, row: dict, detail_view: bool, **extra)
     if detail_view:
         last_job, last_job_duration = await _load_last_job(row["title"].id)
         last_scan_job, last_scan_job_duration = await _load_last_scan_job(row["title"].id)
+        matched_cues = await _load_matched_cues(row["title"].id)
         scene_context = await _load_scene_review_context(row["title"].id)
         return templates.TemplateResponse(
             "partials/title_detail_card.html",
@@ -298,6 +312,7 @@ async def _render_title(request: Request, row: dict, detail_view: bool, **extra)
                 "last_job_duration": last_job_duration,
                 "last_scan_job": last_scan_job,
                 "last_scan_job_duration": last_scan_job_duration,
+                "matched_cues": matched_cues,
                 **scene_context,
                 **extra,
             },
@@ -870,6 +885,7 @@ async def title_detail(request: Request, title_id: int, from_: str | None = Quer
         row = _row_dict(title, current_version, has_pending_scenes=title_id in pending_ids)
     last_job, last_job_duration = await _load_last_job(title_id)
     last_scan_job, last_scan_job_duration = await _load_last_scan_job(title_id)
+    matched_cues = await _load_matched_cues(title_id)
     scene_context = await _load_scene_review_context(title_id)
 
     return templates.TemplateResponse(
@@ -882,6 +898,7 @@ async def title_detail(request: Request, title_id: int, from_: str | None = Quer
             "last_job_duration": last_job_duration,
             "last_scan_job": last_scan_job,
             "last_scan_job_duration": last_scan_job_duration,
+            "matched_cues": matched_cues,
             **scene_context,
         },
     )
