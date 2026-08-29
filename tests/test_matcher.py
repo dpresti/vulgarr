@@ -89,3 +89,49 @@ def test_hyphenated_double_compound_catches_both_roots():
     result = m.match_cue(cue("Oh, shit-fuck, that hurt."))
     assert result is not None
     assert set(result.matched_terms) == {"shit", "fuck"}
+
+
+def test_plural_s_matches_without_a_separate_wordlist_entry():
+    # Real recall miss this session: Masters of the Universe (2025) had
+    # "assholes", the word list only had the singular "asshole".
+    m = ProfanityMatcher([WordListTerm(term="asshole", severity=Severity.teen)])
+    result = m.match_cue(cue("You assholes ruined everything."))
+    assert result is not None
+    assert result.matched_terms == ("asshole",)
+
+
+def test_plural_es_matches_for_ch_ending_term():
+    m = ProfanityMatcher([WordListTerm(term="bitch", severity=Severity.teen)])
+    result = m.match_cue(cue("You bitches are all the same."))
+    assert result is not None
+
+
+def test_plural_ies_matches_for_consonant_y_ending_term():
+    m = ProfanityMatcher([WordListTerm(term="pussy", severity=Severity.teen)])
+    result = m.match_cue(cue("Don't be such pussies."))
+    assert result is not None
+
+
+def test_singular_still_matches_alongside_plural_support():
+    m = ProfanityMatcher([WordListTerm(term="asshole", severity=Severity.teen)])
+    result = m.match_cue(cue("You asshole."))
+    assert result is not None
+
+
+def test_plural_matching_does_not_create_false_substring_matches():
+    # "asshole" gaining an optional "s?" suffix must not start matching
+    # inside unrelated longer words -- whole-word boundaries still apply on
+    # both sides of the (now variable-length) match.
+    m = ProfanityMatcher([WordListTerm(term="ass", severity=Severity.teen)])
+    result = m.match_cue(cue("The assassin passed by."))
+    assert result is None
+
+
+def test_plural_matching_skipped_for_non_whole_word_terms():
+    # A substring match already matches inside a plural (or any other) form
+    # of a larger word, so there's nothing for plural-suffix logic to add --
+    # confirms it doesn't, e.g., double up the match or otherwise misbehave.
+    m = ProfanityMatcher([WordListTerm(term="ass", severity=Severity.teen, match_whole_word=False)])
+    result = m.match_cue(cue("The classes were long."))
+    assert result is not None
+    assert result.matched_terms == ("ass",)

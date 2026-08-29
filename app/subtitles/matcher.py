@@ -55,17 +55,50 @@ def normalize_cue_text(text: str) -> str:
     return text.lower().translate(_STRIP_TABLE)
 
 
+# Regular English pluralization patterns, checked against a term's own
+# normalized text (not the escaped regex) to decide which suffix to add --
+# see _add_plural_suffix's docstring for why this exists at all.
+_PLURAL_Y_RE = re.compile(r"[^aeiou]y$", re.IGNORECASE)
+_PLURAL_ES_RE = re.compile(r"(s|x|z|ch|sh)$", re.IGNORECASE)
+
+
+def _add_plural_suffix(escaped: str, normalized_term: str) -> str:
+    """Extends an already-escaped, already-whitespace-substituted pattern to
+    also match the term's regular English plural, hidden from the word list
+    UI -- e.g. "asshole" in the list also catches "assholes" without a
+    separate entry (a real recall miss this session: Masters of the Universe
+    (2025) had "assholes", the list only had the singular).
+
+    Only covers the common regular pluralization patterns, not every
+    irregular English plural -- consonant+y -> ies (pussy -> pussies),
+    s/x/z/ch/sh -> es (bitch -> bitches, ass -> asses), everything else ->
+    plain s (asshole -> assholes) -- since that covers what real single-word
+    profanity terms actually follow. Works on the already-escaped string's
+    own trailing characters rather than re-deriving escaping rules here:
+    re.escape leaves plain ASCII letters like a trailing "y" untouched, so
+    slicing it off and replacing it is safe. Only meaningful for whole-word
+    matching -- a substring match already matches inside a larger word,
+    plural or not, so _compile_term_pattern only calls this in that case."""
+    if _PLURAL_Y_RE.search(normalized_term):
+        return escaped[:-1] + "(?:y|ies)"
+    if _PLURAL_ES_RE.search(normalized_term):
+        return escaped + "(?:es)?"
+    return escaped + "s?"
+
+
 def _compile_term_pattern(term: str, whole_word: bool) -> re.Pattern:
     # Normalized the same way match_cue normalizes the cue text it's matched
     # against (dash-to-space, strip punctuation except apostrophes) -- a term
     # entered with a hyphen (e.g. "mother-fucker") previously compiled a
     # pattern requiring a literal hyphen that the normalized cue text (hyphen
     # already converted to a space) could never contain, a silent recall miss.
-    escaped = re.escape(normalize_cue_text(term).strip())
+    normalized = normalize_cue_text(term).strip()
+    escaped = re.escape(normalized)
     # Allow the term's internal whitespace to match one-or-more whitespace,
     # so multi-word phrases survive subtitle line-wrapping/double-spacing.
     escaped = escaped.replace(r"\ ", r"\s+")
     if whole_word:
+        escaped = _add_plural_suffix(escaped, normalized)
         # (?<!\w)/(?!\w) rather than \b -- \b requires a \w/\W *transition*,
         # which fails for a term ending or starting in an apostrophe (the one
         # punctuation mark normalize_cue_text preserves): apostrophe is \W,

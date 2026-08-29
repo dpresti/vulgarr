@@ -154,8 +154,12 @@
 
       {% set hide_scan_trigger = true %}
       <div class="detail-section" style="margin-top: 0.5rem;">
-        <div class="detail-label">Scene review</div>
-        {% include "partials/scene_review_list.html" %}
+        <details>
+          <summary style="cursor: pointer; font-weight: 600;">Scene review{% if scenes %} ({{ scenes | length }}){% endif %}</summary>
+          <div style="margin-top: 0.6rem;">
+            {% include "partials/scene_review_list.html" %}
+          </div>
+        </details>
       </div>
     </div>
   </div>
