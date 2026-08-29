@@ -58,6 +58,7 @@ async def upsert_title(
     episode_number: int | None = None,
     default_precise_mode: str | None = None,
     poster_url: str | None = None,
+    imdb_id: str | None = None,
     commit: bool = True,
 ) -> Title:
     # Matched by Sonarr/Radarr's own stable id first, not video_path -- a file
@@ -101,6 +102,7 @@ async def upsert_title(
             sonarr_episode_id=sonarr_episode_id,
             radarr_movie_id=radarr_movie_id,
             precise_mode=default_precise_mode,
+            imdb_id=imdb_id,
         )
         session.add(title)
     else:
@@ -128,6 +130,9 @@ async def upsert_title(
         # Webhook-triggered upserts don't carry poster art -- don't clobber a poster a
         # real /library/sync already found with None just because this call has none.
         title.poster_url = poster_url
+    if imdb_id:
+        # Same reasoning as poster_url immediately above.
+        title.imdb_id = imdb_id
 
     if commit:
         await session.commit()
@@ -158,6 +163,7 @@ async def sync_sonarr_library(session: AsyncSession, client: SonarrClient) -> in
             episode_number=ep_file.episode_number,
             default_precise_mode=default_precise_mode,
             poster_url=ep_file.poster_url,
+            imdb_id=ep_file.imdb_id,
             commit=False,
         )
         count += 1
@@ -177,6 +183,7 @@ async def sync_radarr_library(session: AsyncSession, client: RadarrClient) -> in
             radarr_movie_id=movie_file.movie_id,
             default_precise_mode=default_precise_mode,
             poster_url=movie_file.poster_url,
+            imdb_id=movie_file.imdb_id,
             commit=False,
         )
         count += 1

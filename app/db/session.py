@@ -37,6 +37,10 @@ _COLUMNS_ADDED_LATER = [
     ("detected_scenes", "verified_fraction", "FLOAT"),
     ("detected_scenes", "mute_audio", "BOOLEAN NOT NULL DEFAULT 0"),
     ("detected_scenes", "claude_verify_reason", "VARCHAR(500)"),
+    ("titles", "imdb_id", "VARCHAR(32)"),
+    ("titles", "content_advisory_summary", "VARCHAR(255)"),
+    ("titles", "content_advisory_checked_at", "DATETIME"),
+    ("titles", "content_advisory_item_id", "INTEGER"),
 ]
 
 _DISPLAY_NAME_EPISODE_RE = re.compile(r"^(?P<series>.+) - S(?P<season>\d+)E(?P<episode>\d+)(?: - .*)?$")
@@ -194,6 +198,7 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "radarr_api_key": settings.radarr_api_key,
     "bazarr_url": settings.bazarr_url,
     "bazarr_api_key": settings.bazarr_api_key,
+    "doesthedogdie_api_key": settings.doesthedogdie_api_key,
     # Never seeded blank -- an unset webhook token used to mean "no auth check at
     # all" on inbound webhooks. A fresh install with nothing in .env now gets a
     # random token instead of silently being wide open.

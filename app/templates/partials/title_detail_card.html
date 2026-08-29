@@ -2,6 +2,10 @@
 {% set audio_verb = 'Reprocess' if row.status not in ('not_processed', 'failed', 'cancelled') else 'Process' %}
 {% set video_verb = 'Reprocess' if row.title.scene_scan_status not in ('not_scanned', 'scan_failed') else 'Process' %}
 {% set detail_view = true %}
+{# Only an explicit "no nudity/sexual content" result gates a scan -- unknown/no-data
+   and an explicit "reported" result both proceed immediately, same as before this
+   feature existed. See the content-advisory-precheck plan. #}
+{% set advisory_confirm = 'DoesTheDogDie reports no nudity/sexual content for this title -- scan anyway?' if row.title.content_advisory_summary == 'No nudity/sexual content reported' else none %}
 <div id="title-detail-{{ row.title.id }}">
   <div class="detail-backdrop">
     {% if row.title.poster_url %}<div class="detail-backdrop-img" style="background-image: url('{{ row.title.poster_url }}');"></div>{% endif %}
@@ -30,7 +34,7 @@
             {# Message already shown once above via title_job_status.html -- nothing
                to put here except keep this branch so the Video/Both buttons below
                don't render while a search is still in flight. #}
-            <form hx-post="/library/{{ row.title.id }}/process-video" hx-target="#title-detail-{{ row.title.id }}" hx-swap="outerHTML">
+            <form hx-post="/library/{{ row.title.id }}/process-video" hx-target="#title-detail-{{ row.title.id }}" hx-swap="outerHTML" {% if advisory_confirm %}hx-confirm="{{ advisory_confirm }}"{% endif %}>
               <input type="hidden" name="detail_view" value="true">
               <button type="submit" class="secondary" title="Scan for candidate explicit-content scenes -- no subtitle needed">{{ video_verb }} Video</button>
             </form>
@@ -39,11 +43,11 @@
               <input type="hidden" name="detail_view" value="true">
               <button type="submit" class="secondary" title="Search Bazarr for a subtitle, then queue audio processing if found">{{ audio_verb }} Audio</button>
             </form>
-            <form hx-post="/library/{{ row.title.id }}/process-video" hx-target="#title-detail-{{ row.title.id }}" hx-swap="outerHTML">
+            <form hx-post="/library/{{ row.title.id }}/process-video" hx-target="#title-detail-{{ row.title.id }}" hx-swap="outerHTML" {% if advisory_confirm %}hx-confirm="{{ advisory_confirm }}"{% endif %}>
               <input type="hidden" name="detail_view" value="true">
               <button type="submit" class="secondary" title="Scan for candidate explicit-content scenes -- no subtitle needed">{{ video_verb }} Video</button>
             </form>
-            <form hx-post="/library/{{ row.title.id }}/search-subtitle-and-process-both" hx-target="#title-detail-{{ row.title.id }}" hx-swap="outerHTML" hx-indicator="#detail-bazarr-indicator-{{ row.title.id }}">
+            <form hx-post="/library/{{ row.title.id }}/search-subtitle-and-process-both" hx-target="#title-detail-{{ row.title.id }}" hx-swap="outerHTML" hx-indicator="#detail-bazarr-indicator-{{ row.title.id }}" {% if advisory_confirm %}hx-confirm="{{ advisory_confirm }}"{% endif %}>
               <input type="hidden" name="detail_view" value="true">
               <button type="submit" title="Search Bazarr for a subtitle, then queue both audio processing (if found) and a scene scan (either way)">{{ audio_verb }} Both</button>
             </form>
@@ -52,11 +56,11 @@
               <input type="hidden" name="detail_view" value="true">
               <button type="submit" class="secondary" title="{{ audio_verb }} the word list (profanity mute)">{{ audio_verb }} Audio</button>
             </form>
-            <form hx-post="/library/{{ row.title.id }}/process-video" hx-target="#title-detail-{{ row.title.id }}" hx-swap="outerHTML">
+            <form hx-post="/library/{{ row.title.id }}/process-video" hx-target="#title-detail-{{ row.title.id }}" hx-swap="outerHTML" {% if advisory_confirm %}hx-confirm="{{ advisory_confirm }}"{% endif %}>
               <input type="hidden" name="detail_view" value="true">
               <button type="submit" class="secondary" title="Scan for candidate explicit-content scenes -- no subtitle needed">{{ video_verb }} Video</button>
             </form>
-            <form hx-post="/library/{{ row.title.id }}/process-both" hx-target="#title-detail-{{ row.title.id }}" hx-swap="outerHTML">
+            <form hx-post="/library/{{ row.title.id }}/process-both" hx-target="#title-detail-{{ row.title.id }}" hx-swap="outerHTML" {% if advisory_confirm %}hx-confirm="{{ advisory_confirm }}"{% endif %}>
               <input type="hidden" name="detail_view" value="true">
               <button type="submit" title="Process the word list and scan for scenes together">{{ audio_verb }} Both</button>
             </form>
@@ -127,6 +131,21 @@
         </div>
         <div class="detail-column">
           <h3 class="detail-column-heading">Video</h3>
+          {% if row.title.content_advisory_checked_at %}
+          <div class="detail-section">
+            <div class="detail-label">Content advisory</div>
+            <div class="detail-stat {{ 'muted' if row.title.content_advisory_summary != 'Nudity/sexual content reported' else '' }}">
+              {{ row.title.content_advisory_summary or 'No data' }}
+              {% if row.title.content_advisory_item_id %}
+              <a href="https://www.doesthedogdie.com/media/{{ row.title.content_advisory_item_id }}" target="_blank" rel="noopener" class="muted" style="margin-left: 0.4rem;">(DoesTheDogDie)</a>
+              {% endif %}
+            </div>
+            <form hx-post="/library/{{ row.title.id }}/recheck-content-advisory" hx-target="#title-detail-{{ row.title.id }}" hx-swap="outerHTML" style="margin-top: 0.3rem;">
+              <input type="hidden" name="detail_view" value="true">
+              <button type="submit" class="small secondary">Recheck</button>
+            </form>
+          </div>
+          {% endif %}
           <div class="detail-section">
             <div class="detail-label">Scenes found</div>
             <div class="detail-stat">{{ scenes | length if scenes is not none else '—' }}</div>

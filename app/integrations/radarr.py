@@ -14,6 +14,7 @@ class RadarrMovieFile:
     year: int
     path: str
     poster_url: str | None = None
+    imdb_id: str | None = None
 
     @property
     def display_name(self) -> str:
@@ -89,6 +90,7 @@ class RadarrClient:
                     year=movie.get("year", 0),
                     path=movie_file["path"],
                     poster_url=_extract_poster_url(movie.get("images", [])),
+                    imdb_id=movie.get("imdbId"),
                 )
             )
         return results
@@ -117,4 +119,5 @@ def parse_import_webhook(payload: dict) -> dict | None:
         # never getting a poster at all, since this went unextracted here and the
         # webhook handler had nothing to pass upsert_title.
         "poster_url": _extract_poster_url(movie.get("images", [])),
+        "imdb_id": movie.get("imdbId"),
     }

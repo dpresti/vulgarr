@@ -58,6 +58,25 @@ class Title(Base):
     # onto every episode row the same way series_title already is.
     poster_url: Mapped[str | None] = mapped_column(String(1024), nullable=True)
 
+    # Radarr/Sonarr's own imdbId for this title (Sonarr's lives on the series, so every
+    # episode of a show shares its series' value). Preferred key for looking this title
+    # up on DoesTheDogDie -- far more reliable than fuzzy title+year text search.
+    imdb_id: Mapped[str | None] = mapped_column(String(32), nullable=True)
+
+    # Cached DoesTheDogDie content-advisory result: a short human-readable summary (e.g.
+    # "No nudity/sexual content reported"), or null if never checked yet OR DoesTheDogDie
+    # had no data for this title -- those two null-causing cases are intentionally
+    # indistinguishable in the UI (see content_advisory_checked_at below to tell them
+    # apart), since neither one should ever gate/confirm a scan the way an explicit
+    # "no nudity" result does.
+    content_advisory_summary: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    content_advisory_checked_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    # DoesTheDogDie's own numeric id for whichever item we matched this title to --
+    # lets the UI link straight to https://www.doesthedogdie.com/media/<id> so the user
+    # can judge the crowd-sourced detail themselves rather than trusting our one-line
+    # summary blindly. Null whenever content_advisory_summary is also null.
+    content_advisory_item_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
     # Cached display status ("not_processed"/"queued"/"processing"/"done"/"failed"), kept in
     # sync by the queue worker on every job transition. Avoids joining ProcessingJob for every
     # row just to render a status badge, which doesn't scale to a library this size.

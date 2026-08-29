@@ -24,6 +24,7 @@ SETTING_KEYS = [
     "radarr_api_key",
     "bazarr_url",
     "bazarr_api_key",
+    "doesthedogdie_api_key",
     "webhook_token",
     "clean_track_title",
     "clean_track_language",
@@ -96,6 +97,7 @@ async def update_settings(
     radarr_api_key: str = Form(""),
     bazarr_url: str = Form(""),
     bazarr_api_key: str = Form(""),
+    doesthedogdie_api_key: str = Form(""),
     webhook_token: str = Form(""),
     clean_track_title: str = Form("Clean"),
     clean_track_language: str = Form("eng"),
@@ -146,6 +148,7 @@ async def update_settings(
         await set_setting(session, "radarr_api_key", radarr_api_key.strip())
         await set_setting(session, "bazarr_url", bazarr_url.strip())
         await set_setting(session, "bazarr_api_key", bazarr_api_key.strip())
+        await set_setting(session, "doesthedogdie_api_key", doesthedogdie_api_key.strip())
         # Blank means "keep the current token" -- never silently clear it back to
         # open/unauthenticated, since that's exactly the footgun this replaced.
         if webhook_token.strip():

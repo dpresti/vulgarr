@@ -17,6 +17,10 @@ class SonarrEpisodeFile:
     episode_title: str
     path: str
     poster_url: str | None = None
+    # Sonarr's own imdbId lives on the SERIES resource, not per-episode -- every
+    # episode of a series gets the same value here, pointing at the series' own
+    # IMDb entry rather than a (if it even exists) distinct per-episode one.
+    imdb_id: str | None = None
 
     @property
     def display_name(self) -> str:
@@ -72,6 +76,7 @@ class SonarrClient:
         for series in series_list:
             series_id = series["id"]
             poster_url = _extract_poster_url(series.get("images", []))
+            imdb_id = series.get("imdbId")
             episodes = await self._get("/api/v3/episode", params={"seriesId": series_id})
             files_by_id = {
                 f["id"]: f for f in await self._get("/api/v3/episodefile", params={"seriesId": series_id})
@@ -90,6 +95,7 @@ class SonarrClient:
                         episode_title=ep.get("title", ""),
                         path=files_by_id[file_id]["path"],
                         poster_url=poster_url,
+                        imdb_id=imdb_id,
                     )
                 )
         return results
@@ -141,4 +147,5 @@ def parse_import_webhook(payload: dict) -> dict | None:
         # Same reasoning as radarr.parse_import_webhook's poster_url -- the payload's
         # "series" object already carries the images array, no extra API call needed.
         "poster_url": _extract_poster_url(series.get("images", [])),
+        "imdb_id": series.get("imdbId"),
     }

@@ -34,6 +34,15 @@
       <button type="button" class="eye-toggle" onclick="toggleSecretVisibility(this)" title="Show/hide" aria-label="Show or hide API key"><i class="ti ti-eye" aria-hidden="true"></i></button>
     </div>
 
+    <label for="doesthedogdie_api_key">DoesTheDogDie API key</label>
+    <div>
+      <div class="secret-field">
+        <input type="password" id="doesthedogdie_api_key" name="doesthedogdie_api_key" value="{{ values.doesthedogdie_api_key }}" autocomplete="off" class="wide-input">
+        <button type="button" class="eye-toggle" onclick="toggleSecretVisibility(this)" title="Show/hide" aria-label="Show or hide API key"><i class="ti ti-eye" aria-hidden="true"></i></button>
+      </div>
+      <div class="muted">Optional. Enables a content-advisory check (nudity/sexual content) before scanning a title. Leave blank to disable.</div>
+    </div>
+
     <label for="webhook_token">Webhook token</label>
     <div>
       <div class="secret-field">

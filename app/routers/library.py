@@ -1,6 +1,7 @@
 import asyncio
 import datetime
 import logging
+import re
 from pathlib import Path
 from urllib.parse import urlencode
 
@@ -8,6 +9,7 @@ from fastapi import APIRouter, Form, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from sqlalchemy import Select, case, func, select, update
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import DetectedScene, MatchedCue, MediaType, ProcessingJob, SceneJob, Title, TriggerSource
 from app.db.session import get_session, get_setting
@@ -23,6 +25,7 @@ from app.domain import (
     title_href,
 )
 from app.integrations.bazarr import BazarrClient
+from app.integrations.doesthedogdie import DoesTheDogDieClient, summarize_content_advisory
 from app.integrations.radarr import RadarrClient
 from app.integrations.sonarr import SonarrClient
 from app.integrations.subtitle_lookup import find_subtitle_for_video
@@ -233,6 +236,52 @@ def _row_dict(
         "pip": pip,
         "pip_label": _PIP_LABELS[pip],
     }
+
+
+_MOVIE_YEAR_RE = re.compile(r"^(?P<title>.+) \((?P<year>\d{4})\)$")
+
+
+def _advisory_query_and_year(title: Title) -> tuple[str, int | None]:
+    """DTDD has no IMDb-id search endpoint -- only free-text title search (see
+    app/integrations/doesthedogdie.py) -- so this derives a plain search string and,
+    for movies, the release year to disambiguate remakes when no imdb_id is on file.
+    Title.display_name for a movie is always "Title (Year)" (see radarr.parse_import_webhook/
+    RadarrMovieFile.display_name); an episode's display_name has no bare title to search
+    on, so series_title is used instead."""
+    if title.media_type == MediaType.movie:
+        m = _MOVIE_YEAR_RE.match(title.display_name)
+        if m:
+            return m.group("title"), int(m.group("year"))
+        return title.display_name, None
+    return title.series_title or title.display_name, None
+
+
+async def _maybe_check_content_advisory(session: AsyncSession, title: Title) -> None:
+    """Lazy, once-per-title DoesTheDogDie content-advisory check, run inline on the
+    title detail page's first view after this feature is enabled (see the
+    content-advisory-precheck plan) -- DTDD's search responds in well under a second
+    in practice, so this doesn't need the fire-and-forget/poll machinery the much
+    slower Bazarr-subtitle-wait flow uses. Never re-checked automatically after that;
+    the manual "Recheck" button (recheck_content_advisory below) covers a title DTDD
+    later gets data for. Never raises -- any failure (bad key, network, DTDD downtime)
+    is cached as "no data" so a persistently broken key can't slow down every future
+    page load, and the recheck button is the deliberate way to try again."""
+    if title.content_advisory_checked_at is not None:
+        return
+    api_key = await get_setting(session, "doesthedogdie_api_key")
+    if not api_key:
+        return
+    query, year = _advisory_query_and_year(title)
+    summary, item_id = None, None
+    try:
+        items = await DoesTheDogDieClient(api_key).search(query)
+        summary, item_id = summarize_content_advisory(items, imdb_id=title.imdb_id, year=year)
+    except Exception:  # noqa: BLE001 -- see docstring: any failure caches as "no data"
+        logger.exception("DoesTheDogDie content-advisory check failed for title %s", title.id)
+    title.content_advisory_summary = summary
+    title.content_advisory_item_id = item_id
+    title.content_advisory_checked_at = datetime.datetime.utcnow()
+    await session.commit()
 
 
 async def _load_last_job(title_id: int) -> tuple[ProcessingJob | None, str | None]:
@@ -948,6 +997,7 @@ async def title_detail(request: Request, title_id: int, from_: str | None = Quer
         title = await session.get(Title, title_id)
         if title is None:
             raise HTTPException(status_code=404, detail="Title not found")
+        await _maybe_check_content_advisory(session, title)
         pending_ids = await _pending_scene_title_ids(session, [title_id])
         row = _row_dict(title, current_version, has_pending_scenes=title_id in pending_ids)
     last_job, last_job_duration = await _load_last_job(title_id)
@@ -1823,5 +1873,23 @@ async def search_mkv_replacement(
             title, current_version, bazarr_message=message, short_label=short_label,
             has_pending_scenes=title_id in pending_ids,
         )
+
+    return await _render_title(request, row, detail_view)
+
+
+@router.post("/{title_id}/recheck-content-advisory", response_class=HTMLResponse)
+async def recheck_content_advisory(request: Request, title_id: int, detail_view: bool = Form(False)):
+    """Manual counterpart to the lazy auto-check in title_detail -- covers a title
+    DTDD had no data for at the time of its first check, or one whose cached result
+    is stale after this app's own doesthedogdie_api_key setting was added/changed."""
+    async with get_session() as session:
+        current_version = int(await get_setting(session, "wordlist_version"))
+        title = await session.get(Title, title_id)
+        if title is None:
+            return HTMLResponse("")
+        title.content_advisory_checked_at = None
+        await _maybe_check_content_advisory(session, title)
+        pending_ids = await _pending_scene_title_ids(session, [title_id])
+        row = _row_dict(title, current_version, has_pending_scenes=title_id in pending_ids)
 
     return await _render_title(request, row, detail_view)

@@ -17,6 +17,7 @@ class Settings(BaseSettings):
     radarr_api_key: str = ""
     bazarr_url: str = ""
     bazarr_api_key: str = ""
+    doesthedogdie_api_key: str = ""
 
     # Shared secret required on inbound webhook calls (?token=...)
     webhook_token: str = ""
