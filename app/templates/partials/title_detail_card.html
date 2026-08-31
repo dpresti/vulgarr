@@ -167,14 +167,13 @@
       </div>
 
       <div class="detail-section" style="margin-top: 0.5rem;">
-        <div class="detail-label">Matched words</div>
         {% include "partials/matched_cues_list.html" %}
       </div>
 
       {% set hide_scan_trigger = true %}
       <div class="detail-section" style="margin-top: 0.5rem;">
         <details>
-          <summary style="cursor: pointer; font-weight: 600;">Scene review{% if scenes %} ({{ scenes | length }}){% endif %}</summary>
+          <summary style="cursor: pointer; font-weight: 600;">Show Found Scenes ({{ scenes | length if row.title.scene_scan_status != 'not_scanned' else 'Not Processed' }})</summary>
           <div style="margin-top: 0.6rem;">
             {% include "partials/scene_review_list.html" %}
           </div>

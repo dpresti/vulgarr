@@ -14,11 +14,10 @@
     </select>
   </form>
 
-  {% with pip_action='/library', pip_target='#movie-results' %}
-    {% include "partials/pip_legend.html" %}
-  {% endwith %}
-
   <div id="movie-results">
+    {% with pip_action='/library', pip_target='#movie-results' %}
+      {% include "partials/pip_legend.html" %}
+    {% endwith %}
     {% with movie_rows=movie_rows, show_rows=show_rows, from_page='library', next_url=next_url %}
       {% include "partials/poster_grid_library.html" %}
     {% endwith %}

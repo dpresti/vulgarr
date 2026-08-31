@@ -1,6 +1,6 @@
 {% if matched_cues %}
 <details>
-  <summary style="cursor: pointer; font-weight: 600;">Show {{ matched_cues|length }} matched word(s)</summary>
+  <summary style="cursor: pointer; font-weight: 600;">Show Muted Cues ({{ matched_cues|length }})</summary>
   <div style="max-height: 320px; overflow-y: auto; margin-top: 0.6rem;">
     {% for cue in matched_cues %}
     <div class="scene-review-row" style="display: flex; align-items: flex-start; gap: 0.75rem; flex-wrap: wrap; padding: 0.5rem 0; border-bottom: 1px solid var(--vulgarr-border);">
@@ -22,6 +22,8 @@
     {% endfor %}
   </div>
 </details>
+{% elif row.status == 'not_processed' %}
+<div class="muted">Show Muted Cues (Not Processed)</div>
 {% else %}
-<div class="muted">No matched words recorded yet -- reprocess to populate this list.</div>
+<div class="muted">Show Muted Cues (0)</div>
 {% endif %}
