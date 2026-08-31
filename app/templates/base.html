@@ -8,46 +8,7 @@
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@3.46.0/dist/tabler-icons.min.css">
   <script src="https://unpkg.com/htmx.org@2.0.3"></script>
   <style>
-    :root {
-      color-scheme: dark;
-
-      /* Brand */
-      --vulgarr-accent: #E53935;
-      --vulgarr-accent-hover: #D32F2F;
-      --vulgarr-accent-glow: rgba(229, 57, 53, 0.25);
-
-      /* Backgrounds */
-      --vulgarr-bg-main: #141419;
-      --vulgarr-bg-surface: #1E1F28;
-      --vulgarr-bg-elevated: #2A2C38;
-      --vulgarr-bg-row-hover: #1A1B23;
-      --vulgarr-border: #353846;
-
-      /* Typography */
-      --vulgarr-text-primary: #FFFFFF;
-      --vulgarr-text-secondary: #9E9EB2;
-      --vulgarr-text-muted: #606275;
-
-      /* Status (semantic -- deliberately distinct from the brand accent above,
-         so "danger" badges never get mistaken for primary buttons/links) */
-      --vulgarr-success-bg: #1F4D2D;
-      --vulgarr-success-text: #7FE3A0;
-      --vulgarr-warning-bg: #4D3D1F;
-      --vulgarr-warning-text: #F0C674;
-      --vulgarr-info-bg: #2C3550;
-      --vulgarr-info-text: #9AB4F0;
-      --vulgarr-danger-bg: #4D1F1F;
-      --vulgarr-danger-text: #F08080;
-      --vulgarr-danger-solid: #7A2C2C;
-      --vulgarr-neutral-bg: #3A3A3A;
-      --vulgarr-neutral-text: #B0B0B0;
-      --vulgarr-outdated-bg: #4D3520;
-      --vulgarr-outdated-text: #F0A25C;
-      --vulgarr-nosub-bg: #4D4A1F;
-      --vulgarr-nosub-text: #E8D44D;
-      --vulgarr-scenereview-bg: #3A2650;
-      --vulgarr-scenereview-text: #C8A0F0;
-    }
+    {% include "partials/theme_vars.html" %}
     /* Defense in depth: several places surface raw external text -- ffmpeg
        errors, Sonarr/Radarr/Bazarr exception messages, file paths -- that can
        be one long unbroken string with no natural wrap point. Inherited
@@ -55,6 +16,61 @@
        no-op for ordinary text. */
     body { font-family: system-ui, sans-serif; margin: 0; background: var(--vulgarr-bg-main); color: var(--vulgarr-text-primary); overflow-wrap: break-word; }
     .app-layout { display: flex; min-height: 100vh; }
+    /* Used by the first-run setup wizard (setup.html) -- same shared CSS/JS as
+       every other page (settings_form.html's fields/JS in particular), just
+       without the sidebar nav, since navigating to pages that assume Sonarr/
+       Radarr/auth are already configured makes no sense before setup finishes. */
+    .wizard-mode .sidebar { display: none; }
+    .wizard-mode main { max-width: 880px; margin: 0 auto; }
+    /* First-run setup shows sane defaults only -- fine-tuning knobs (scene-detection
+       thresholds, blur padding, etc.) belong in Settings later, not during onboarding.
+       !important guards against #settings-form.show-advanced .adv's higher
+       specificity in case that class is ever present here regardless. */
+    .wizard-mode #advanced-toggle-btn { display: none; }
+    .wizard-mode .adv { display: none !important; }
+    /* Centered brand mark for pages without the sidebar (setup.html, auth_login.html
+       -- the latter styles its own copy inline since it doesn't extend base.html).
+       Vertical stack (icon, wordmark, tagline) matching the sidebar's own
+       .sidebar-brand treatment, not a side-by-side row. */
+    .brand-corner { display: flex; flex-direction: column; align-items: center; gap: 4px; margin-bottom: 1.75rem; }
+    .brand-accent-text { color: var(--vulgarr-accent); }
+    /* The floating Save button (settings_form.html) is superseded by the
+       wizard's own Back/Next/Finish bar -- having both visible at once is
+       confusing since they'd both submit the same form. */
+    .wizard-mode .settings-save-bar { display: none !important; }
+    .wizard-card {
+      background: var(--vulgarr-bg-surface); border: 1px solid var(--vulgarr-border);
+      border-radius: 12px; padding: 2rem; margin-bottom: 6rem;
+    }
+    .wizard-stepper { display: flex; justify-content: space-between; margin-bottom: 2rem; position: relative; }
+    .wizard-stepper::before {
+      content: ""; position: absolute; top: 18px; left: 5%; right: 5%; height: 2px;
+      background: var(--vulgarr-border); z-index: 0;
+    }
+    .wizard-stepper-dot {
+      display: flex; flex-direction: column; align-items: center; gap: 0.4rem; cursor: pointer;
+      position: relative; z-index: 1; flex: 1;
+    }
+    .wizard-stepper-circle {
+      width: 36px; height: 36px; border-radius: 50%; display: flex; align-items: center; justify-content: center;
+      background: var(--vulgarr-bg-elevated); border: 2px solid var(--vulgarr-border); color: var(--vulgarr-text-secondary);
+      font-size: 1rem; transition: all 0.15s ease;
+    }
+    .wizard-stepper-dot.current .wizard-stepper-circle { border-color: var(--vulgarr-accent); color: var(--vulgarr-accent); }
+    .wizard-stepper-dot.completed .wizard-stepper-circle { background: var(--vulgarr-accent); border-color: var(--vulgarr-accent); color: #fff; }
+    .wizard-stepper-label { font-size: 0.72rem; color: var(--vulgarr-text-secondary); text-align: center; }
+    .wizard-stepper-dot.current .wizard-stepper-label { color: var(--vulgarr-text-primary); font-weight: 600; }
+    /* Scoped to .wizard-mode specifically -- settings_form.html's .wizard-step
+       divs (the same five sections as the plain Settings page) must stay
+       visible there; only the wizard's own JS (setup.html) hides/shows them
+       one at a time. */
+    .wizard-mode .wizard-step { display: none; }
+    .wizard-mode .wizard-step.wizard-step-active { display: block; }
+    .wizard-nav { display: flex; justify-content: space-between; align-items: center; margin-top: 2rem; padding-top: 1.5rem; border-top: 1px solid var(--vulgarr-border); }
+    @media (max-width: 720px) {
+      .wizard-stepper-label { display: none; }
+      .wizard-card { padding: 1.25rem; }
+    }
     .sidebar { width: 220px; flex-shrink: 0; background: var(--vulgarr-bg-surface); border-right: 1px solid var(--vulgarr-border); padding: 1.25rem 0; position: relative; transition: width .15s ease; }
     .sidebar-brand { display: block; text-align: center; padding: 0 1rem 1.25rem; border-bottom: 1px solid var(--vulgarr-border); margin-bottom: 0.75rem; text-decoration: none; }
     .sidebar-brand svg { display: block; margin: 0 auto 8px; flex-shrink: 0; }
@@ -166,8 +182,12 @@
     .job-progress-fill { height: 100%; background: var(--vulgarr-accent); border-radius: 999px; }
     button, input[type=submit] { background: var(--vulgarr-accent); color: white; border: none; padding: 0.4rem 0.9rem; border-radius: 6px; cursor: pointer; font-weight: 600; font-size: 0.9rem; }
     button:hover { background: var(--vulgarr-accent-hover); }
-    button.secondary { background: var(--vulgarr-bg-elevated); }
-    button.secondary:hover { background: var(--vulgarr-border); }
+    button.secondary, a.secondary { background: var(--vulgarr-bg-elevated); }
+    button.secondary:hover, a.secondary:hover { background: var(--vulgarr-border); }
+    /* a.secondary (e.g. the "Re-run setup wizard" link) needs its own box model --
+       button's own rule above is a type selector (button, input[type=submit]),
+       which an <a> never matches even with the same class. */
+    a.secondary { display: inline-flex; align-items: center; color: inherit; text-decoration: none; padding: 0.4rem 0.9rem; border-radius: 6px; font-weight: 600; font-size: 0.9rem; }
     button.danger { background: var(--vulgarr-danger-solid); }
     button.small { padding: 0.2rem 0.6rem; font-size: 0.78rem; font-weight: 500; }
     input[type=text], input[type=time], input[type=number], input[type=password], select { background: var(--vulgarr-bg-surface); border: 1px solid var(--vulgarr-border); color: var(--vulgarr-text-primary); padding: 0.4rem; border-radius: 6px; }
@@ -182,6 +202,9 @@
     input:focus, select:focus, button:focus-visible { outline: none; box-shadow: 0 0 0 3px var(--vulgarr-accent-glow); }
     input.input-invalid { border-color: var(--vulgarr-danger-text); }
     .field-error { color: var(--vulgarr-danger-text); font-size: 0.85rem; margin-top: 0.2rem; }
+    /* Cautionary, not blocking (see auto_process_warning in settings_form.html) --
+       warning-toned background box, distinct from .field-error's plain danger text. */
+    .field-warning { color: var(--vulgarr-warning-text); background: var(--vulgarr-warning-bg); font-size: 0.85rem; margin-top: 0.5rem; padding: 0.6rem 0.8rem; border-radius: 6px; }
     form.inline { display: inline-flex; gap: 0.4rem; align-items: center; }
     .toolbar { display: flex; justify-content: space-between; align-items: center; }
     /* Word List's version text + reprocess button: a compact right-aligned
@@ -209,6 +232,15 @@
        state remembered in localStorage -- see settings_form.html). */
     .settings-grid .adv { display: none; }
     #settings-form.show-advanced .settings-grid .adv { display: block; }
+    /* Sub-headings within a long .settings-grid section (e.g. Video Processing's
+       scene-detection/Claude-Vision/blur sub-groups) -- spans both grid columns
+       instead of getting squeezed into just the label column. */
+    .settings-grid h3 {
+      grid-column: 1 / -1; font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.08em;
+      color: var(--vulgarr-text-secondary); font-weight: 700; margin: 0.5rem 0 0;
+      border-top: 1px solid var(--vulgarr-border); padding-top: 1rem;
+    }
+    .settings-grid h3:first-child { border-top: none; padding-top: 0; margin-top: 0; }
     .wide-input { min-width: 320px; }
     .input-md { width: 200px; }
     .input-sm { width: 100px; }
@@ -325,6 +357,15 @@
     .detail-stat { font-size: 0.92rem; }
     .detail-actions { display: flex; gap: 0.6rem; flex-wrap: wrap; margin-top: 1.5rem; align-items: center; }
     .saved-flash { font-size: 0.78rem; color: var(--vulgarr-success-text); font-weight: 600; margin-left: 0.6rem; }
+    /* Settings page's floating Save button -- hidden until a field actually
+       changes (see initSettingsSaveBar below), fixed so it stays reachable no
+       matter how far down the (long) settings form the user has scrolled. */
+    .settings-save-bar {
+      position: fixed; bottom: 1.5rem; right: 1.5rem; z-index: 50;
+      opacity: 0; pointer-events: none; transition: opacity 0.4s ease;
+    }
+    .settings-save-bar.visible { opacity: 1; pointer-events: auto; }
+    .settings-save-bar button { box-shadow: 0 2px 12px rgba(0, 0, 0, 0.35); }
     .detail-warning { margin-top: 0.7rem; padding: 0.6rem 0.8rem; border-radius: 6px; background: var(--vulgarr-outdated-bg); color: var(--vulgarr-outdated-text); font-size: 0.82rem; display: flex; flex-direction: column; gap: 0.5rem; align-items: flex-start; }
     .detail-waiting { font-size: 0.82rem; color: var(--vulgarr-text-secondary); display: flex; align-items: center; gap: 6px; }
     .spinner { width: 12px; height: 12px; border-radius: 50%; border: 2px solid var(--vulgarr-border); border-top-color: var(--vulgarr-accent); animation: spin .7s linear infinite; display: inline-block; }
@@ -599,6 +640,36 @@
       if (evt.target && evt.target.id === "settings-form") applySavedAdvancedState();
     });
 
+    // Settings page's floating Save button -- stays hidden until a field is
+    // actually changed, so the page doesn't nag with an always-visible Save
+    // button; shows "Saved" then fades out after a successful hx-post swap
+    // (server renders it with a "just-saved" class -- see settings_form.html's
+    // `saved` flag). Re-initialized via htmx:afterSettle rather than relying on
+    // the swapped-in DOM's own state, same reasoning as applySavedAdvancedState
+    // above: the whole form is a fresh node after every save.
+    function initSettingsSaveBar() {
+      const form = document.getElementById("settings-form");
+      const bar = document.getElementById("settings-save-bar");
+      const btn = document.getElementById("settings-save-btn");
+      if (!form || !bar || !btn) return;
+
+      if (bar.classList.contains("just-saved")) {
+        setTimeout(function () { bar.classList.remove("visible", "just-saved"); }, 1500);
+      }
+
+      function markDirty() {
+        btn.textContent = "Save settings";
+        bar.classList.remove("just-saved");
+        bar.classList.add("visible");
+      }
+      form.addEventListener("input", markDirty);
+      form.addEventListener("change", markDirty);
+    }
+    document.addEventListener("DOMContentLoaded", initSettingsSaveBar);
+    document.addEventListener("htmx:afterSettle", function (evt) {
+      if (evt.target && evt.target.id === "settings-form") initSettingsSaveBar();
+    });
+
     // Sonarr-style masked-by-default secret fields (API keys, webhook token) with a
     // click-to-reveal eye icon, instead of showing them in plaintext by default.
     function toggleSecretVisibility(button) {
@@ -674,7 +745,7 @@
     }
   </script>
 </head>
-<body>
+<body class="{% block body_class %}{% endblock %}">
   <div class="app-layout">
     <aside class="sidebar" id="sidebar">
       <button type="button" class="sidebar-toggle" id="sidebarToggle" title="Collapse sidebar" aria-label="Toggle sidebar">
@@ -717,7 +788,12 @@
          sidebar (html.sidebar-collapsed, see CSS) and the innerWidth guard on
          hx-trigger below skips the request entirely under the mobile breakpoint,
          where the sidebar becomes a horizontal icon bar with no room for this. #}
-      <div class="sidebar-jobs" id="topbar" hx-get="/queue/topbar" hx-trigger="load[window.innerWidth > 720], every 3s[window.innerWidth > 720]" hx-swap="innerHTML"></div>
+      {# Suppressed on the setup wizard (wizard_mode, passed from app/routers/setup.py)
+         -- the sidebar is hidden there via CSS (.wizard-mode .sidebar) but hidden
+         elements still fire htmx triggers, and SetupWizardGateMiddleware would
+         answer this poll with an HX-Redirect back to /setup -- forcing a full-page
+         reload of the wizard every 3 seconds otherwise. #}
+      <div class="sidebar-jobs" id="topbar" {% if not wizard_mode %}hx-get="/queue/topbar" hx-trigger="load[window.innerWidth > 720], every 3s[window.innerWidth > 720]"{% endif %} hx-swap="innerHTML"></div>
     </aside>
     <div class="main-wrap">
       <main>

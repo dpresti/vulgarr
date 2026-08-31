@@ -1,0 +1,117 @@
+{% extends "base.html" %}
+{% block body_class %}wizard-mode{% endblock %}
+{% block content %}
+  <div class="brand-corner">
+    {% with brand_size=64 %}{% include "partials/brand_mark.html" %}{% endwith %}
+    <div class="brand-tagline">PROFANITY &amp; NUDITY FILTER</div>
+  </div>
+
+  <div class="wizard-header" style="text-align: center; margin-bottom: 1.5rem;">
+    <h1>Welcome to Vulg<span class="brand-accent-text">arr</span></h1>
+    <p class="muted">Let's get your integrations, features, and login set up. You can always change any of this later in Settings.</p>
+  </div>
+
+  <div class="wizard-card">
+    <div class="wizard-stepper">
+      {% for n, label, icon in [
+        (1, 'Welcome', 'ti-home'),
+        (2, 'Integrations', 'ti-plug'),
+        (3, 'Audio', 'ti-volume'),
+        (4, 'Video', 'ti-movie'),
+        (5, 'Backups', 'ti-archive'),
+        (6, 'Auth', 'ti-lock'),
+        (7, 'Finish', 'ti-check')
+      ] %}
+      <div class="wizard-stepper-dot" data-step="{{ n }}" onclick="wizardShowStep({{ n }})">
+        <span class="wizard-stepper-circle"><i class="ti {{ icon }}" aria-hidden="true"></i></span>
+        <span class="wizard-stepper-label">{{ label }}</span>
+      </div>
+      {% endfor %}
+    </div>
+
+    {# Steps 2-6 (Integrations/Audio/Video/Backups/Authentication) live inside
+       settings_form.html's own <form> -- this include IS that form. Steps 1 and
+       7 below have no fields of their own (import is handled via a separate
+       fetch(), Finish just triggers the same form via hx-include), so they sit
+       outside it with no loss -- .wizard-step visibility is pure CSS/JS, it
+       doesn't care about the <form> boundary. #}
+    <div class="wizard-step" data-step="1">
+      <h2>Before you start</h2>
+      <p class="muted">If you're setting this up again (a restore, or a new instance) and already have a config exported from Settings, load it here to skip re-entering everything below.</p>
+      <div class="settings-grid">
+        <label for="import-config-file">Import config</label>
+        <div>
+          <input type="file" id="import-config-file" accept="application/json" style="display: none;" onchange="wizardImportConfig(this)">
+          <button type="button" class="secondary" onclick="document.getElementById('import-config-file').click()">Choose file…</button>
+          <div class="muted" id="import-config-status"></div>
+        </div>
+      </div>
+    </div>
+
+    {% include "partials/settings_form.html" %}
+
+    <div class="wizard-step" data-step="7">
+      <h2>You're all set</h2>
+      <p class="muted">Click Finish to save everything above and start using Vulgarr. Nothing here is final -- every field can be changed later from Settings.</p>
+    </div>
+
+    <div class="wizard-nav">
+      <button type="button" class="secondary" id="wizard-back-btn" onclick="wizardPrevStep()">Back</button>
+      <button type="button" id="wizard-next-btn" onclick="wizardNextStep()">Next</button>
+      <button type="button" id="wizard-finish-btn" style="display: none;"
+        hx-post="/settings" hx-include="#settings-form" hx-target="#settings-form" hx-swap="outerHTML"
+        hx-on::after-request="if(event.detail.successful){ fetch('/setup/complete', {method: 'POST'}).then(function(){ window.location = '/library'; }); }">
+        Finish setup
+      </button>
+    </div>
+  </div>
+
+  <script>
+    (function () {
+      var TOTAL_STEPS = 7;
+      var current = 1;
+
+      function showStep(n) {
+        current = n;
+        document.querySelectorAll(".wizard-step").forEach(function (el) {
+          el.classList.toggle("wizard-step-active", parseInt(el.dataset.step, 10) === n);
+        });
+        document.querySelectorAll(".wizard-stepper-dot").forEach(function (dot) {
+          var dn = parseInt(dot.dataset.step, 10);
+          dot.classList.toggle("current", dn === n);
+          dot.classList.toggle("completed", dn < n);
+        });
+        document.getElementById("wizard-back-btn").style.visibility = n === 1 ? "hidden" : "visible";
+        document.getElementById("wizard-next-btn").style.display = n === TOTAL_STEPS ? "none" : "inline-flex";
+        document.getElementById("wizard-finish-btn").style.display = n === TOTAL_STEPS ? "inline-flex" : "none";
+        window.scrollTo({ top: 0, behavior: "smooth" });
+      }
+      window.wizardShowStep = showStep;
+      window.wizardNextStep = function () { if (current < TOTAL_STEPS) showStep(current + 1); };
+      window.wizardPrevStep = function () { if (current > 1) showStep(current - 1); };
+
+      window.wizardImportConfig = function (input) {
+        var file = input.files[0];
+        if (!file) return;
+        var status = document.getElementById("import-config-status");
+        status.textContent = "Importing…";
+        var reader = new FileReader();
+        reader.onload = function () {
+          fetch("/setup/import", { method: "POST", headers: { "Content-Type": "application/json" }, body: reader.result })
+            .then(function (r) { return r.json(); })
+            .then(function (data) {
+              if (data.ok) {
+                window.location.reload();
+              } else {
+                status.textContent = "Import failed: " + (data.error || "unknown error");
+              }
+            })
+            .catch(function (e) { status.textContent = "Import failed: " + e; });
+        };
+        reader.readAsText(file);
+      };
+
+      showStep(1);
+    })();
+  </script>
+{% endblock %}

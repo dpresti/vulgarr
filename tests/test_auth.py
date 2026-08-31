@@ -1,6 +1,6 @@
 import base64
 
-from app.auth import _credentials_valid
+from app.auth import _credentials_valid, _is_authenticated
 from app.db.session import hash_password, verify_password
 
 
@@ -45,3 +45,32 @@ def test_credentials_invalid_with_missing_header():
 def test_credentials_invalid_with_malformed_header():
     stored = hash_password("hunter2")
     assert _credentials_valid("Bearer sometoken", "admin", stored) is False
+
+
+def test_mode_none_always_authenticated():
+    assert _is_authenticated("none", basic_ok=False, has_session_user=False) is True
+
+
+def test_mode_password_requires_basic_auth():
+    assert _is_authenticated("password", basic_ok=True, has_session_user=False) is True
+    assert _is_authenticated("password", basic_ok=False, has_session_user=False) is False
+
+
+def test_mode_password_ignores_session_user():
+    # A stray session cookie (e.g. left over from a prior "sso" mode) must never
+    # substitute for real Basic Auth credentials in "password" mode.
+    assert _is_authenticated("password", basic_ok=False, has_session_user=True) is False
+
+
+def test_mode_sso_authenticated_via_session():
+    assert _is_authenticated("sso", basic_ok=False, has_session_user=True) is True
+
+
+def test_mode_sso_break_glass_via_basic_auth():
+    # The whole point of the break-glass fallback: Basic Auth alone (no SSO
+    # session at all) still gets through in "sso" mode.
+    assert _is_authenticated("sso", basic_ok=True, has_session_user=False) is True
+
+
+def test_mode_sso_denied_without_either():
+    assert _is_authenticated("sso", basic_ok=False, has_session_user=False) is False

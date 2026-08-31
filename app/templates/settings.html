@@ -2,9 +2,13 @@
 {% block content %}
   <div class="toolbar">
     <h1>Settings</h1>
-    <form method="post" action="/library/sync">
-      <button type="submit" class="secondary">Sync from Sonarr/Radarr</button>
-    </form>
+    <div class="toolbar-side" style="flex-direction: row; align-items: center;">
+      <a href="/setup" class="secondary">Re-run setup wizard</a>
+      <a href="/settings/export" class="secondary" download="vulgarr-config.json" title="Includes API keys/secrets in plaintext -- handle the downloaded file like a password export">Export config</a>
+      <form method="post" action="/library/sync">
+        <button type="submit" class="secondary">Sync from Sonarr/Radarr</button>
+      </form>
+    </div>
   </div>
   {% if sync_error %}
   <p style="color: var(--vulgarr-danger-text);">

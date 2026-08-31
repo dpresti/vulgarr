@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Sign in -- Vulgarr</title>
+  <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
+  <style>
+    {% include "partials/theme_vars.html" %}
+    body {
+      margin: 0; min-height: 100vh; display: flex; flex-direction: column; align-items: center; justify-content: center;
+      background: var(--vulgarr-bg-main); color: var(--vulgarr-text-primary);
+      font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+    }
+    .brand-corner { display: flex; flex-direction: column; align-items: center; gap: 4px; margin-bottom: 1.75rem; }
+    .brand-tagline { font-size: 0.6rem; font-weight: 600; color: var(--vulgarr-text-secondary); letter-spacing: 0.12em; margin-top: 6px; white-space: nowrap; }
+    .brand-accent-text { color: var(--vulgarr-accent); }
+    .login-card {
+      background: var(--vulgarr-bg-surface); border: 1px solid var(--vulgarr-border);
+      border-radius: 12px; padding: 2.5rem; width: 100%; max-width: 360px; text-align: center;
+    }
+    .login-card h1 { font-size: 1.3rem; margin: 0 0 1.5rem; }
+    .login-card a.button {
+      display: block; padding: 0.7rem 1rem; border-radius: 8px; margin-bottom: 0.8rem;
+      text-decoration: none; font-weight: 600; font-size: 0.95rem;
+    }
+    .login-card a.primary { background: var(--vulgarr-accent); color: #fff; }
+    .login-card a.primary:hover { background: var(--vulgarr-accent-hover); }
+    .login-card a.secondary {
+      background: transparent; color: var(--vulgarr-text-secondary); border: 1px solid var(--vulgarr-border);
+    }
+    .login-card a.secondary:hover { color: var(--vulgarr-text-primary); border-color: var(--vulgarr-text-secondary); }
+  </style>
+</head>
+<body>
+  <div class="brand-corner">
+    {% with brand_size=64 %}{% include "partials/brand_mark.html" %}{% endwith %}
+    <div class="brand-tagline">PROFANITY &amp; NUDITY FILTER</div>
+  </div>
+  <div class="login-card">
+    <h1>Sign in to Vulg<span class="brand-accent-text">arr</span></h1>
+    <a class="button primary" href="/auth/login/sso">Sign in with SSO</a>
+    <a class="button secondary" href="/auth/login/basic">Use local account</a>
+  </div>
+</body>
+</html>

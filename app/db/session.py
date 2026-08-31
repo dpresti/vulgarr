@@ -469,12 +469,29 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     # outright is a more consequential call than just surfacing a bulk-
     # approve button to a human, so it defaults to a much higher bar.
     "claude_vision_skip_above_fraction": 0.9,
-    # Optional HTTP Basic Auth in front of the whole UI (webhooks are exempt --
-    # they already require their own token). Off by default so existing
-    # deployments behind a trusted network/reverse proxy are unaffected.
+    # Optional auth in front of the whole UI (webhooks are exempt -- they already
+    # require their own token). "none" (default) leaves existing deployments
+    # behind a trusted network/reverse proxy unaffected; "password" is the
+    # original HTTP Basic Auth; "sso" adds Authentik OIDC login while keeping
+    # Basic Auth alive underneath as a break-glass fallback (see app/auth.py).
+    # auth_enabled/auth_username/auth_password_hash are kept (not renamed) --
+    # "password" mode still reads them directly, and _migrate_auth_mode below
+    # seeds auth_mode from auth_enabled once, for upgrades from before auth_mode
+    # existed.
+    "auth_mode": "none",
     "auth_enabled": False,
     "auth_username": "",
     "auth_password_hash": "",
+    "sso_issuer_url": "",
+    "sso_client_id": "",
+    "sso_client_secret": "",
+    "migrated_auth_mode": False,
+    # First-run setup wizard (see app/routers/setup.py). Left False here (the
+    # fresh-install default) -- init_db flips it True immediately for any
+    # database that already had settings before this key existed, so upgrading
+    # an existing deployment never forces it through the wizard.
+    "setup_wizard_completed": False,
+    "checked_setup_wizard_upgrade": False,
 }
 
 
@@ -504,6 +521,31 @@ async def _seed_default_wordlist_if_empty(session: AsyncSession) -> None:
     await set_setting(session, "wordlist_seeded", True)
 
 
+async def _migrate_auth_mode(session: AsyncSession) -> None:
+    """One-time migration for upgrades from before auth_mode existed. auth_mode is
+    already seeded to "none" by the DEFAULT_SETTINGS loop in init_db -- this only
+    needs to override that once, to "password", for a deployment that already had
+    the old auth_enabled flag on."""
+    if await get_setting(session, "migrated_auth_mode"):
+        return
+    if await get_setting(session, "auth_enabled"):
+        await set_setting(session, "auth_mode", "password")
+    await set_setting(session, "migrated_auth_mode", True)
+
+
+async def _mark_setup_wizard_completed_for_upgrade(session: AsyncSession, is_upgrade: bool) -> None:
+    """Called once ever (guarded the same way _migrate_auth_mode is) -- an existing
+    deployment upgrading to the version that introduced the first-run wizard must
+    never be forced through it. Guarded so a user who deliberately resets
+    setup_wizard_completed later (to revisit onboarding) doesn't get it silently
+    flipped back on the next restart."""
+    if await get_setting(session, "checked_setup_wizard_upgrade"):
+        return
+    if is_upgrade:
+        await set_setting(session, "setup_wizard_completed", True)
+    await set_setting(session, "checked_setup_wizard_upgrade", True)
+
+
 async def init_db() -> None:
     settings.data_dir.mkdir(parents=True, exist_ok=True)
     async with engine.begin() as conn:
@@ -511,6 +553,13 @@ async def init_db() -> None:
         await _run_column_migrations(conn)
         await _run_severity_vocabulary_migration(conn)
     async with async_session_maker() as session:
+        # Checked before the DEFAULT_SETTINGS loop below adds every key (including
+        # setup_wizard_completed itself) with its default value -- a fresh install
+        # has no AppSetting rows at all yet, while an upgrade already has this one
+        # from every prior version of this app. Must be read before the loop, since
+        # afterward "does this key exist" can no longer tell fresh installs apart
+        # from upgrades (the loop just created it either way).
+        is_upgrade = await session.get(AppSetting, "wordlist_version") is not None
         for key, value in DEFAULT_SETTINGS.items():
             existing = await session.get(AppSetting, key)
             if existing is None:
@@ -521,6 +570,8 @@ async def init_db() -> None:
         await _backfill_precise_mode(session)
         await _migrate_title_severity_levels_vocabulary(session)
         await _seed_default_wordlist_if_empty(session)
+        await _migrate_auth_mode(session)
+        await _mark_setup_wizard_completed_for_upgrade(session, is_upgrade)
 
 
 @asynccontextmanager

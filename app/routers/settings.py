@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Form, Request
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.templating import Jinja2Templates
 
 from app.db.session import get_session, get_setting, hash_password, set_setting
@@ -31,8 +31,11 @@ SETTING_KEYS = [
     "default_subtitle_language",
     "backups_enabled",
     "backup_retention_days",
-    "auth_enabled",
+    "auth_mode",
     "auth_username",
+    "sso_issuer_url",
+    "sso_client_id",
+    "sso_client_secret",
     "scene_confidence_threshold",
     "scene_frame_interval_seconds",
     "scene_min_duration_seconds",
@@ -80,6 +83,23 @@ async def settings_page(request: Request, sync_error: str | None = None):
     )
 
 
+@router.get("/export")
+async def export_settings():
+    """Downloadable JSON of every setting in SETTING_KEYS -- deliberately includes
+    API keys/secrets in plaintext (see the multi-step-wizard plan's Context): the
+    whole point is skipping re-entry on a new instance, for a single-admin tool
+    where whoever downloads this already has full read access to every field via
+    the Settings page's own eye-toggle reveal buttons. Built from SETTING_KEYS
+    directly (not _load_all(), which also adds scene_blur_level/_label -- display-
+    only derived values, not real settable keys, that a re-import shouldn't see)."""
+    async with get_session() as session:
+        data = {key: await get_setting(session, key) for key in SETTING_KEYS}
+    return JSONResponse(
+        data,
+        headers={"Content-Disposition": 'attachment; filename="vulgarr-config.json"'},
+    )
+
+
 @router.post("", response_class=HTMLResponse)
 async def update_settings(
     request: Request,
@@ -104,9 +124,12 @@ async def update_settings(
     default_subtitle_language: str = Form("en"),
     backups_enabled: bool = Form(False),
     backup_retention_days: int = Form(0),
-    auth_enabled: bool = Form(False),
+    auth_mode: str = Form("none"),
     auth_username: str = Form(""),
     auth_password: str = Form(""),
+    sso_issuer_url: str = Form(""),
+    sso_client_id: str = Form(""),
+    sso_client_secret: str = Form(""),
     scene_confidence_threshold: float = Form(0.3),
     scene_frame_interval_seconds: float = Form(0.5),
     scene_min_duration_seconds: float = Form(1.0),
@@ -159,17 +182,34 @@ async def update_settings(
         await set_setting(session, "backups_enabled", backups_enabled)
         await set_setting(session, "backup_retention_days", max(0, backup_retention_days))
 
-        # auth_enabled is only allowed on once a username and (new or existing)
-        # password are actually in place -- otherwise saving the form with the
-        # toggle checked but the password field left blank would lock the UI
-        # behind a login nobody can complete.
+        # auth_mode is only allowed to actually switch to "password" once a
+        # username and (new or existing) password are in place, or to "sso" once
+        # all three Authentik fields are -- otherwise saving the form with a mode
+        # selected but its fields left blank would lock the UI behind a login
+        # nobody can complete. auth_mode_blocked (passed to the template below)
+        # is what tells the user *why* their choice didn't take effect.
         existing_hash = await get_setting(session, "auth_password_hash")
         auth_username = auth_username.strip()
         if auth_password:
             await set_setting(session, "auth_password_hash", hash_password(auth_password))
             existing_hash = "set"
         await set_setting(session, "auth_username", auth_username)
-        await set_setting(session, "auth_enabled", bool(auth_enabled and auth_username and existing_hash))
+
+        sso_issuer_url = sso_issuer_url.strip()
+        sso_client_id = sso_client_id.strip()
+        sso_client_secret = sso_client_secret.strip()
+        await set_setting(session, "sso_issuer_url", sso_issuer_url)
+        await set_setting(session, "sso_client_id", sso_client_id)
+        await set_setting(session, "sso_client_secret", sso_client_secret)
+
+        password_ready = bool(auth_username and existing_hash)
+        sso_ready = bool(sso_issuer_url and sso_client_id and sso_client_secret)
+        auth_mode_blocked = (auth_mode == "password" and not password_ready) or (
+            auth_mode == "sso" and not sso_ready
+        )
+        if auth_mode_blocked:
+            auth_mode = "none"
+        await set_setting(session, "auth_mode", auth_mode)
 
         await set_setting(session, "scene_confidence_threshold", max(0.0, min(1.0, scene_confidence_threshold)))
         await set_setting(session, "scene_frame_interval_seconds", max(0.5, scene_frame_interval_seconds))
@@ -214,5 +254,11 @@ async def update_settings(
     values = await _load_all()
     return templates.TemplateResponse(
         "partials/settings_form.html",
-        {"request": request, "values": values, "saved": True, "claude_vision_blocked": claude_vision_blocked},
+        {
+            "request": request,
+            "values": values,
+            "saved": True,
+            "claude_vision_blocked": claude_vision_blocked,
+            "auth_mode_blocked": auth_mode_blocked,
+        },
     )

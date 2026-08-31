@@ -2,8 +2,7 @@
   <p>
     <button type="button" id="advanced-toggle-btn" class="secondary small" onclick="toggleAdvancedSettings()">Show advanced settings</button>
   </p>
-  {% if saved %}<p style="color:var(--vulgarr-success-text);">Saved.</p>{% endif %}
-
+  <div class="wizard-step" data-step="2">
   <h2>Integrations</h2>
   <p class="muted" style="margin-top: -0.5rem;">Reachable from inside this app's container -- use the same URL/API key you'd use from Bazarr's own settings. Changes here take effect immediately, no restart needed.</p>
   <div class="settings-grid">
@@ -48,9 +47,22 @@
       <div class="secret-field">
         <input type="password" id="webhook_token" name="webhook_token" value="{{ values.webhook_token }}" autocomplete="off" class="wide-input">
         <button type="button" class="eye-toggle" onclick="toggleSecretVisibility(this)" title="Show/hide" aria-label="Show or hide webhook token"><i class="ti ti-eye" aria-hidden="true"></i></button>
+        <button type="button" class="secondary small" onclick="generateWebhookToken()">Generate new</button>
       </div>
-      <div class="muted">Append <code>?token=&lt;this&gt;</code> to the Sonarr/Radarr/Bazarr webhook URLs. Edit and save to rotate it.</div>
+      <div class="muted">Append <code>?token=&lt;this&gt;</code> to the Sonarr/Radarr/Bazarr webhook URLs. "Generate new" fills in a fresh random one -- save to actually rotate it.</div>
     </div>
+    <script>
+      function generateWebhookToken() {
+        var bytes = new Uint8Array(32);
+        crypto.getRandomValues(bytes);
+        var b64 = btoa(String.fromCharCode.apply(null, bytes)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+        var input = document.getElementById("webhook_token");
+        input.value = b64;
+        input.type = "text";
+        var icon = input.nextElementSibling.querySelector("i");
+        if (icon) icon.className = "ti ti-eye-off";
+      }
+    </script>
 
     <label for="default_subtitle_language">Default subtitle language</label>
     <input type="text" id="default_subtitle_language" name="default_subtitle_language" value="{{ values.default_subtitle_language }}" class="input-sm">
@@ -61,7 +73,9 @@
     <label for="clean_track_language" class="adv">Clean track language tag</label>
     <input type="text" id="clean_track_language" name="clean_track_language" value="{{ values.clean_track_language }}" class="input-sm adv">
   </div>
+  </div>
 
+  <div class="wizard-step" data-step="3">
   <h2 style="margin-top: 1.75rem;">Audio Processing</h2>
   <div class="settings-grid">
     <label for="concurrency_cap">Max concurrent ffmpeg jobs</label>
@@ -72,7 +86,7 @@
       Restrict processing to off-hours
     </label>
 
-    <label>Off-hours window</label>
+    <label for="off_hours_start">Off-hours window</label>
     <div style="display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap;">
       <input type="time" id="off_hours_start" name="off_hours_start" value="{{ values.off_hours_start }}">
       <span class="muted">to</span>
@@ -109,35 +123,39 @@
       <div class="muted">Whisper mode is slower (runs a local alignment model per matched line) but more accurate. Only applies to new titles -- existing ones keep their current setting, editable individually or per-show.</div>
     </div>
   </div>
+  </div>
 
+  <div class="wizard-step" data-step="4">
   <h2 style="margin-top: 1.75rem;">Video Processing</h2>
   <p class="muted" style="margin-top: -0.5rem;">Detects candidate explicit-content scenes via a local frame classifier. Never runs automatically on import, unlike Audio Processing above -- only ever starts from an explicit "Scan for scenes" click, since a scan has a real CPU cost and Apply produces a full second encoded "Vulgarr Edit" copy of the movie/episode.</p>
   <div class="settings-grid">
+    <h3>Auto-approval &amp; Claude Vision</h3>
     <div class="checkbox-row-group">
       <label class="checkbox-row">
-        <input type="checkbox" id="scene_auto_process" name="scene_auto_process" {% if values.scene_auto_process %}checked{% endif %}>
+        <input type="checkbox" id="scene_auto_process" name="scene_auto_process" onchange="updateAutoApproveWarning()" {% if values.scene_auto_process %}checked{% endif %}>
         Auto-approve and auto-process
       </label>
       <div class="muted">When on, a scan's candidates are approved automatically and blurred into the "Vulgarr Edit" file as soon as the scan finishes -- no manual review click needed. If a scan turns up a scene that shouldn't have been caught (or misses one), go to that title's review list, reject/adjust it there, then hit Apply again to regenerate the file -- it always rebuilds from whatever's currently approved, including scenes already baked into an earlier version. Turn this off to go back to fully manual review before anything is ever blurred.</div>
+      <div class="field-warning" id="auto_process_warning" style="display: none;">NudeNet (the base scanner below) is deliberately tuned to over-flag rather than risk missing anything -- without Claude Vision's second check turned on too, every one of those over-flagged candidates gets auto-approved and blurred with zero human review. Strongly recommended to enable Claude Vision alongside this, or leave auto-approve off and review candidates manually.</div>
     </div>
 
-    <div class="checkbox-row-group adv">
+    <div class="checkbox-row-group">
       <label class="checkbox-row">
-        <input type="checkbox" id="claude_vision_verify_enabled" name="claude_vision_verify_enabled" onchange="updateClaudeVisionValidity()" {% if values.claude_vision_verify_enabled %}checked{% endif %}>
+        <input type="checkbox" id="claude_vision_verify_enabled" name="claude_vision_verify_enabled" onchange="updateClaudeVisionValidity(); updateAutoApproveWarning();" {% if values.claude_vision_verify_enabled %}checked{% endif %}>
         Claude Vision precision filter
       </label>
       <div class="muted">Optional extra check before auto-approving: sends a few frames from each candidate to a Claude-vision-capable endpoint and asks for a yes/no verdict, to catch false positives (ordinary, non-sexualized swimwear) that NudeNet alone can flag -- it also blocks sexualized/provocative content even without full nudity (thongs, lingerie, and similar). A clear "no" outright rejects the candidate, the same as manually clicking Reject. Off by default -- this is the one thing in vulgarr that costs real external money per use (a fraction of a cent per scan). Requires an OpenAI-compatible vision API below, e.g. a self-hosted LiteLLM proxy in front of Anthropic's API -- see /docker/stack/litellm in the repo. If this is on but the endpoint is unreachable or misconfigured, candidates just fall back to normal manual review -- it never causes an auto-approval on its own.</div>
       {% if claude_vision_blocked %}<div class="field-error">Couldn't turn this on -- base URL and API key are both required first (see below). Left off.</div>{% endif %}
     </div>
 
-    <label for="claude_vision_base_url" class="adv">Claude Vision base URL</label>
-    <div class="adv">
+    <label for="claude_vision_base_url">Claude Vision base URL</label>
+    <div>
       <input type="text" id="claude_vision_base_url" name="claude_vision_base_url" oninput="updateClaudeVisionValidity()" placeholder="http://litellm:4000/v1" value="{{ values.claude_vision_base_url }}" class="wide-input {{ 'input-invalid' if claude_vision_blocked and not values.claude_vision_base_url }}">
       <div class="field-error" id="claude_vision_base_url_error" style="display: none;">Required to turn on the precision filter above.</div>
     </div>
 
-    <label for="claude_vision_api_key" class="adv">Claude Vision API key</label>
-    <div class="adv">
+    <label for="claude_vision_api_key">Claude Vision API key</label>
+    <div>
       <div class="secret-field">
         <input type="password" id="claude_vision_api_key" name="claude_vision_api_key" oninput="updateClaudeVisionValidity()" placeholder="LiteLLM master/virtual key, not your raw Anthropic key" value="{{ values.claude_vision_api_key }}" autocomplete="off" class="wide-input {{ 'input-invalid' if claude_vision_blocked and not values.claude_vision_api_key }}">
         <button type="button" class="eye-toggle" onclick="toggleSecretVisibility(this)" title="Show/hide" aria-label="Show or hide API key"><i class="ti ti-eye" aria-hidden="true"></i></button>
@@ -145,8 +163,8 @@
       <div class="field-error" id="claude_vision_api_key_error" style="display: none;">Required to turn on the precision filter above.</div>
     </div>
 
-    <label for="claude_vision_model" class="adv">Claude Vision model</label>
-    <div class="adv">
+    <label for="claude_vision_model">Claude Vision model</label>
+    <div>
       <input type="text" id="claude_vision_model" name="claude_vision_model" value="{{ values.claude_vision_model }}" class="input-md">
       <div class="muted">Must match a model_name alias in the proxy's own config, not a raw Anthropic model ID -- the litellm stack's default config.yaml defines "claude-haiku-4-5" and "claude-sonnet-5".</div>
     </div>
@@ -168,9 +186,16 @@
           document.getElementById(errorId).style.display = missing ? "block" : "none";
         });
       }
+      function updateAutoApproveWarning() {
+        var autoProcess = document.getElementById("scene_auto_process").checked;
+        var claudeOn = document.getElementById("claude_vision_verify_enabled").checked;
+        document.getElementById("auto_process_warning").style.display = autoProcess && !claudeOn ? "block" : "none";
+      }
       updateClaudeVisionValidity();
+      updateAutoApproveWarning();
     </script>
 
+    <h3 class="adv">Scene detection scanning</h3>
     <label for="scene_confidence_threshold" class="adv">Confidence threshold</label>
     <div class="adv">
       <input type="number" id="scene_confidence_threshold" name="scene_confidence_threshold" min="0" max="1" step="0.05" value="{{ values.scene_confidence_threshold }}" class="input-sm">
@@ -222,6 +247,7 @@
       <div class="muted">Fraction of a candidate's dense verification samples that must clear the confidence threshold to be eligible for one-click bulk approval. Short/borderline scenes naturally score low here and stay in the manual queue.</div>
     </div>
 
+    <h3>Blur output</h3>
     <label for="blur_video_crf" class="adv">Blur video quality (CRF)</label>
     <div class="adv">
       <input type="number" id="blur_video_crf" name="blur_video_crf" min="0" max="51" value="{{ values.blur_video_crf }}" class="input-sm">
@@ -260,27 +286,20 @@
     <label>Live preview</label>
     <div>
       <div style="display: inline-block; padding: 1rem; background: #242533; border-radius: 8px;">
-        <svg id="scene-blur-preview-svg" viewBox="0 0 512 512" width="90" height="90"
-             style="filter: blur({{ '%.1f'|format(values.scene_blur_radius * values.scene_blur_power / 10) }}px); transition: filter 0.1s ease;">
-          <defs>
-            <linearGradient id="previewRedGrad" x1="0%" y1="0%" x2="100%" y2="0%">
-              <stop offset="0%" stop-color="#FF5252" />
-              <stop offset="100%" stop-color="#D32F2F" />
-            </linearGradient>
-          </defs>
-          <rect x="0" y="0" width="512" height="512" rx="110" fill="#242533" stroke="#353846" stroke-width="12"/>
-          <path d="M 256,100 C 170,100 135,160 135,235 C 135,275 155,305 180,325 L 180,380 C 180,395 195,405 210,405 L 302,405 C 317,405 332,395 332,380 L 332,325 C 357,305 377,275 377,235 C 377,160 342,100 256,100 Z" fill="#FFFFFF"/>
-          <ellipse cx="205" cy="225" rx="26" ry="32" fill="#1E1F28" transform="rotate(-6 205 225)"/>
-          <path d="M 148,165 L 364,285" stroke="#E53935" stroke-width="9"/>
-          <ellipse cx="307" cy="225" rx="30" ry="34" fill="#141419" stroke="#E53935" stroke-width="8"/>
-          <rect x="65" y="300" width="382" height="80" rx="14" fill="url(#previewRedGrad)"/>
-          <text x="96" y="358" fill="#FFF" font-family="monospace" font-weight="900" font-size="46" letter-spacing="12">#$!%*</text>
-        </svg>
+        {# filter lives on this wrapping div, not the svg itself, so the shared
+           brand_mark.html partial (also used by setup.html/auth_login.html) can
+           stay a plain, unparameterized icon -- CSS filter works the same on
+           either element. #}
+        <div id="scene-blur-preview-svg" style="filter: blur({{ '%.1f'|format(values.scene_blur_radius * values.scene_blur_power / 10) }}px); transition: filter 0.1s ease; line-height: 0;">
+          {% with brand_size=90 %}{% include "partials/brand_mark.html" %}{% endwith %}
+        </div>
       </div>
       <div class="muted">Approximate -- CSS blur isn't pixel-identical to ffmpeg's boxblur, but scales the same direction as the two sliders above.</div>
     </div>
   </div>
+  </div>
 
+  <div class="wizard-step" data-step="5">
   <h2 style="margin-top: 1.75rem;">Backups</h2>
   <div class="settings-grid">
     <label class="checkbox-row">
@@ -294,27 +313,59 @@
       <div class="muted">0 = keep every backup forever. Defaults to 7 days. Backups live under <code>/data/backups</code> and are the only copy of the original, unmodified file. Ignored while "Keep backups" above is off.</div>
     </div>
   </div>
+  </div>
 
+  <div class="wizard-step" data-step="6">
   <h2 style="margin-top: 1.75rem;">Authentication</h2>
   <p class="muted" style="margin-top: -0.5rem;">Off by default. Turn this on if this app is reachable by anyone other than you (e.g. exposed beyond your LAN) -- otherwise every page here, including this one, is wide open.</p>
+  {% if auth_mode_blocked %}
+  <p style="color: var(--vulgarr-danger-text);">Couldn't switch to that mode -- the required fields below weren't all filled in, so login is still off.</p>
+  {% endif %}
   <div class="settings-grid">
-    <label class="checkbox-row">
-      <input type="checkbox" id="auth_enabled" name="auth_enabled" {% if values.auth_enabled %}checked{% endif %}>
-      Require login
-    </label>
+    <label for="auth_mode">Require login</label>
+    <select id="auth_mode" name="auth_mode" onchange="updateAuthModeVisibility()">
+      <option value="none" {% if values.auth_mode == 'none' %}selected{% endif %}>Off</option>
+      <option value="password" {% if values.auth_mode == 'password' %}selected{% endif %}>Username &amp; password</option>
+      <option value="sso" {% if values.auth_mode == 'sso' %}selected{% endif %}>Single sign-on (Authentik / OIDC)</option>
+    </select>
 
-    <label for="auth_username">Username</label>
-    <input type="text" id="auth_username" name="auth_username" value="{{ values.auth_username }}" autocomplete="off" class="input-md">
+    <label for="auth_username" class="auth-password-field">Username</label>
+    <input type="text" id="auth_username" name="auth_username" value="{{ values.auth_username }}" autocomplete="off" class="input-md auth-password-field">
 
-    <label for="auth_password">Password</label>
-    <div>
+    <label for="auth_password" class="auth-password-field">Password</label>
+    <div class="auth-password-field">
       <div class="secret-field">
         <input type="password" id="auth_password" name="auth_password" value="" autocomplete="new-password" class="input-md">
         <button type="button" class="eye-toggle" onclick="toggleSecretVisibility(this)" title="Show/hide" aria-label="Show or hide password"><i class="ti ti-eye" aria-hidden="true"></i></button>
       </div>
-      <div class="muted">Leave blank to keep the current password. Required (once, the first time) before "Require login" can take effect.</div>
+      <div class="muted">Leave blank to keep the current password. Required (once, the first time) before "Username &amp; password" can take effect -- and if "Single sign-on" is selected, this doubles as a break-glass login (always reachable at <code>/auth/login/basic</code>) for when Authentik itself is unreachable or misconfigured.</div>
+    </div>
+
+    <label for="sso_issuer_url" class="auth-sso-field">Authentik issuer URL</label>
+    <input type="text" id="sso_issuer_url" name="sso_issuer_url" value="{{ values.sso_issuer_url }}" placeholder="https://authentik.example.com/application/o/vulgarr" class="wide-input auth-sso-field">
+
+    <label for="sso_client_id" class="auth-sso-field">Client ID</label>
+    <input type="text" id="sso_client_id" name="sso_client_id" value="{{ values.sso_client_id }}" autocomplete="off" class="wide-input auth-sso-field">
+
+    <label for="sso_client_secret" class="auth-sso-field">Client secret</label>
+    <div class="secret-field auth-sso-field">
+      <input type="password" id="sso_client_secret" name="sso_client_secret" value="{{ values.sso_client_secret }}" autocomplete="off" class="wide-input">
+      <button type="button" class="eye-toggle" onclick="toggleSecretVisibility(this)" title="Show/hide" aria-label="Show or hide client secret"><i class="ti ti-eye" aria-hidden="true"></i></button>
     </div>
   </div>
+  <script>
+    function updateAuthModeVisibility() {
+      var mode = document.getElementById("auth_mode").value;
+      var showPassword = mode === "password" || mode === "sso";
+      var showSso = mode === "sso";
+      document.querySelectorAll(".auth-password-field").forEach(function (el) { el.style.display = showPassword ? "" : "none"; });
+      document.querySelectorAll(".auth-sso-field").forEach(function (el) { el.style.display = showSso ? "" : "none"; });
+    }
+    updateAuthModeVisibility();
+  </script>
+  </div>
 
-  <p><button type="submit">Save settings</button></p>
+  <div id="settings-save-bar" class="settings-save-bar{{ ' visible just-saved' if saved else '' }}">
+    <button type="submit" id="settings-save-btn">{{ 'Saved' if saved else 'Save settings' }}</button>
+  </div>
 </form>
