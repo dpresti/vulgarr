@@ -5,7 +5,7 @@ import tempfile
 from pathlib import Path
 
 from fastapi import APIRouter, Form, HTTPException, Request
-from fastapi.responses import HTMLResponse, Response
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response, StreamingResponse
 from fastapi.templating import Jinja2Templates
 from sqlalchemy import select
 
@@ -14,6 +14,7 @@ from app.db.models import DetectedScene, SceneJob, Title
 from app.db.session import get_session, get_setting
 from app.domain import SceneJobKind, SceneReviewStatus
 from app.queue.scene_worker import scene_job_queue
+from app.scenes import scrub_proxy
 from app.vision.classifier import extract_frame
 
 router = APIRouter(tags=["scenes"])
@@ -546,3 +547,141 @@ async def adjust_scene(
     if resolved_title_id is None:
         return HTMLResponse("")
     return await _render_scene_review(request, resolved_title_id, detail_view)
+
+
+# ---------------------------------------------------------------------------
+# Manual scenes: user-marked windows from the scene review page's scrub timeline
+# ---------------------------------------------------------------------------
+
+_build_tasks: set[asyncio.Task] = set()  # strong refs so fire-and-forget builds aren't GC'd mid-run
+
+
+async def _title_or_404(title_id: int) -> Title:
+    async with get_session() as session:
+        title = await session.get(Title, title_id)
+    if title is None or not Path(title.video_path).exists():
+        raise HTTPException(status_code=404)
+    return title
+
+
+@router.get("/library/title/{title_id}/scrub/status")
+async def scrub_status(title_id: int):
+    title = await _title_or_404(title_id)
+    return JSONResponse(scrub_proxy.status_for(title))
+
+
+@router.post("/library/title/{title_id}/scrub/build")
+async def scrub_build(title_id: int):
+    title = await _title_or_404(title_id)
+    if not scrub_proxy.is_ready(title):
+        task = asyncio.create_task(scrub_proxy.build(title))
+        _build_tasks.add(task)
+        task.add_done_callback(_build_tasks.discard)
+        # Let the build register itself so the immediate status poll sees "building".
+        await asyncio.sleep(0)
+    return JSONResponse(scrub_proxy.status_for(title))
+
+
+@router.get("/library/title/{title_id}/scrub/sprite.jpg")
+async def scrub_sprite(title_id: int):
+    title = await _title_or_404(title_id)
+    path = scrub_proxy.sprite_path_for(title)
+    if not path.exists():
+        raise HTTPException(status_code=404)
+    return FileResponse(path, media_type="image/jpeg", headers={"Cache-Control": "private, max-age=3600"})
+
+
+@router.get("/library/title/{title_id}/scrub/video.mp4")
+async def scrub_video(title_id: int, request: Request):
+    """Range-capable (browsers need it to seek) -- the Starlette version pinned
+    here predates FileResponse's own Range support, so this does it by hand."""
+    title = await _title_or_404(title_id)
+    path = scrub_proxy.video_path_for(title)
+    if not path.exists():
+        raise HTTPException(status_code=404)
+    size = path.stat().st_size
+    start, end = 0, size - 1
+    status = 200
+    range_header = request.headers.get("range", "")
+    if range_header.startswith("bytes="):
+        first, _, last = range_header[6:].split(",")[0].partition("-")
+        try:
+            if first == "":  # suffix range: last N bytes
+                start = max(0, size - int(last))
+            else:
+                start = int(first)
+                if last:
+                    end = min(int(last), size - 1)
+        except ValueError:
+            raise HTTPException(status_code=416)
+        if start > end or start >= size:
+            raise HTTPException(status_code=416, headers={"Content-Range": f"bytes */{size}"})
+        status = 206
+
+    def chunks():
+        remaining = end - start + 1
+        with path.open("rb") as f:
+            f.seek(start)
+            while remaining > 0:
+                data = f.read(min(1024 * 256, remaining))
+                if not data:
+                    break
+                remaining -= len(data)
+                yield data
+
+    headers = {"Accept-Ranges": "bytes", "Content-Length": str(end - start + 1)}
+    if status == 206:
+        headers["Content-Range"] = f"bytes {start}-{end}/{size}"
+    return StreamingResponse(chunks(), status_code=status, media_type="video/mp4", headers=headers)
+
+
+@router.post("/library/title/{title_id}/scenes/manual", response_class=HTMLResponse)
+async def add_manual_scenes(
+    request: Request,
+    title_id: int,
+    starts: list[float] = Form(default=[]),
+    ends: list[float] = Form(default=[]),
+    mutes: list[str] = Form(default=[]),
+    detail_view: bool = Form(False),
+):
+    """Creates one already-approved scene per (start, end) pair. Approved from the
+    start because the user marked these by hand -- there's nothing left to review,
+    and it keeps a later rescan (which only clears pending/rejected candidates)
+    from discarding them."""
+    from app.mux.remux import probe
+
+    duration = None
+    async with get_session() as session:
+        title = await session.get(Title, title_id)
+        if title is None:
+            raise HTTPException(status_code=404)
+        try:
+            probe_data = await probe(app_settings.ffprobe_bin, Path(title.video_path))
+            duration = float(probe_data["format"].get("duration", 0)) or None
+        except Exception:
+            # Best-effort clamp only, same as adjust_scene.
+            duration = None
+
+        now = datetime.datetime.utcnow()
+        # mutes is parallel to starts/ends ("1" = also mute audio for that clip); a short list means no mute.
+        mute_flags = [m == "1" for m in mutes] + [False] * len(starts)
+        for start, end, mute in zip(starts, ends, mute_flags):
+            start = max(0.0, start)
+            if duration:
+                end = min(end, duration)
+            if end <= start:
+                continue
+            session.add(
+                DetectedScene(
+                    title_id=title_id,
+                    start_seconds=start,
+                    end_seconds=end,
+                    peak_confidence=1.0,
+                    mute_audio=mute,
+                    source="manual",
+                    status=SceneReviewStatus.approved,
+                    reviewed_at=now,
+                )
+            )
+        await session.commit()
+    return await _render_scene_review(request, title_id, detail_view)

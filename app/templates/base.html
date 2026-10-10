@@ -115,6 +115,28 @@
     html.sidebar-collapsed .sidebar nav a { justify-content: center; padding: 10px 0; }
     html.sidebar-collapsed .sidebar-toggle i { transform: rotate(180deg); }
 
+    /* ---- manual scene marking (partials/scene_manual_panel.html) ---- */
+    .manual-panel { background: var(--vulgarr-bg-surface); border: 1px solid var(--vulgarr-border); border-radius: 12px; padding: 0.9rem 1.1rem; margin: 0.9rem 0; }
+    .manual-panel > summary { cursor: pointer; font-weight: 700; list-style: none; display: flex; align-items: center; gap: 8px; }
+    .manual-panel > summary::-webkit-details-marker { display: none; }
+    .manual-video { width: 100%; max-height: 360px; background: #000; border-radius: 8px; margin-top: 0.8rem; display: block; }
+    .manual-ruler { position: relative; height: 18px; margin-top: 0.8rem; font: 11px ui-monospace, monospace; color: var(--vulgarr-text-muted); }
+    .manual-ruler span { position: absolute; transform: translateX(-50%); white-space: nowrap; }
+    .manual-bar { position: relative; height: 54px; margin: 4px 0 6px; background: #0f1014 center / 100% 100% no-repeat; border: 1px solid var(--vulgarr-border); border-radius: 8px; cursor: pointer; overflow: hidden; user-select: none; touch-action: none; }
+    .manual-seg { position: absolute; top: 0; bottom: 0; }
+    .manual-existing { background: rgba(240, 198, 116, 0.35); border: 1px solid var(--vulgarr-warning-text); }
+    .manual-clip { background: rgba(229, 57, 53, 0.4); border-left: 3px solid var(--vulgarr-accent); border-right: 3px solid var(--vulgarr-accent); }
+    .manual-draft { background: rgba(154, 180, 240, 0.35); border-left: 3px solid var(--vulgarr-info-text); border-right: 3px solid var(--vulgarr-info-text); }
+    .manual-head { position: absolute; top: -2px; bottom: -2px; width: 2px; background: #fff; pointer-events: none; }
+    .manual-mini { position: relative; height: 22px; background: #0f1014; border: 1px solid var(--vulgarr-border); border-radius: 4px; margin: 2px 0 8px; overflow: hidden; cursor: grab; touch-action: none; }
+    .manual-win { position: absolute; top: 0; bottom: 0; background: rgba(154, 180, 240, 0.35); border-left: 4px solid var(--vulgarr-info-text); border-right: 4px solid var(--vulgarr-info-text); pointer-events: none; }
+    .manual-m { position: absolute; top: 0; bottom: 0; width: 2px; background: var(--vulgarr-accent); pointer-events: none; }
+    .manual-row { display: flex; gap: 0.6rem; align-items: center; flex-wrap: wrap; margin-bottom: 0.5rem; }
+    .manual-legend { display: flex; gap: 14px; flex-wrap: wrap; font-size: 0.75rem; margin-bottom: 0.7rem; }
+    .manual-legend b { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 5px; }
+    .manual-table { width: 100%; border-collapse: collapse; margin-top: 0.4rem; }
+    .manual-table th, .manual-table td { padding: 0.4rem 0.5rem; border-top: 1px solid var(--vulgarr-border); text-align: left; font-size: 0.85rem; }
+    .manual-table th { color: var(--vulgarr-text-secondary); font-weight: 500; border-top: 0; }
     .back-link { display: inline-flex; align-items: center; gap: 4px; color: var(--vulgarr-text-secondary); text-decoration: none; font-size: 0.85rem; font-weight: 600; margin-bottom: 0.75rem; }
     .back-link:hover { color: var(--vulgarr-text-primary); }
     .back-link i { font-size: 1.1rem; }

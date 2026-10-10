@@ -9,11 +9,12 @@
   <div class="scene-review-body" style="flex: 1; min-width: 240px;">
     <div class="scene-review-badges">
       <span class="badge badge-{{ 'done' if scene.status.value == 'approved' else ('failed' if scene.status.value == 'rejected' else 'queued') }}">{{ scene.status.value }}</span>
+      {% if scene.source == 'manual' %}<span class="badge badge-scenes_pending_review">manual</span>{% endif %}
       <button
         type="button" class="small secondary"
         onclick="toggleScenePreview(this, 'scene-preview-{{ scene.id }}', {{ title_id }}, {{ scene.start_seconds }}, {{ scene.end_seconds }})"
       >Preview</button>
-      <span class="stat-pill" title="Peak per-frame classifier confidence"><i class="ti ti-gauge" aria-hidden="true"></i><span class="stat-pill-label">confidence</span> {{ (scene.peak_confidence * 100) | round | int }}%</span>
+      {% if scene.source != 'manual' %}<span class="stat-pill" title="Peak per-frame classifier confidence"><i class="ti ti-gauge" aria-hidden="true"></i><span class="stat-pill-label">confidence</span> {{ (scene.peak_confidence * 100) | round | int }}%</span>{% endif %}
       {% if scene.verified_fraction is not none %}
         <span class="stat-pill" title="Fraction of a denser re-scan of this window's padded range that cleared the confidence threshold"><i class="ti ti-shield-check" aria-hidden="true"></i><span class="stat-pill-label">verified</span> {{ (scene.verified_fraction * 100) | round | int }}%</span>
         {% if scene.verified_fraction >= high_confidence_fraction %}<span class="badge badge-done">high confidence</span>{% endif %}

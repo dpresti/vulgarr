@@ -207,6 +207,12 @@ class DetectedScene(Base):
     # bundled into approval the way it originally was.
     mute_audio: Mapped[bool] = mapped_column(default=False, nullable=False)
 
+    # "detected" for a classifier candidate, "manual" for a window the user
+    # marked by hand on the scene review page's scrub timeline. Manual scenes
+    # are created already-approved, so a rescan (which only clears pending/
+    # rejected candidates) leaves them alone.
+    source: Mapped[str] = mapped_column(String(20), default="detected", nullable=False)
+
     status: Mapped[SceneReviewStatus] = mapped_column(
         Enum(SceneReviewStatus), default=SceneReviewStatus.pending, nullable=False
     )

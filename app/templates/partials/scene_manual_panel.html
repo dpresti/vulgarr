@@ -1,0 +1,241 @@
+{# Manual scene marking: scrub a low-res proxy of the title, zoom the timeline, mark start/end, add several
+   clips, then save them all as already-approved scenes. See app/scenes/scrub_proxy.py for why a proxy is
+   needed. hx-preserve keeps the panel (and any unsaved clips) alive across the review list's own re-renders. #}
+<details class="manual-panel" id="manual-scenes-{{ title_id }}" hx-preserve="true"
+  data-title-id="{{ title_id }}" data-target="{{ scene_review_target }}" data-detail-view="{{ 'true' if detail_view else 'false' }}">
+  <summary><i class="ti ti-plus" aria-hidden="true"></i>Add scenes manually <span class="muted">(scrub, mark, add)</span></summary>
+  {% for scene in scenes %}<i hidden data-existing data-a="{{ scene.start_seconds }}" data-b="{{ scene.end_seconds }}"></i>{% endfor %}
+
+  <div data-r="prep" class="muted" style="margin-top: 0.75rem;">
+    <span data-r="prep-msg">Preparing a small preview copy of this title so you can scrub it in the browser…</span>
+    <div class="job-progress" style="margin-top: 0.4rem;"><div class="job-progress-fill" data-r="prep-bar" style="width: 0%"></div></div>
+  </div>
+
+  <div data-r="ui" tabindex="0" style="display: none; outline: none;">
+    <video data-r="video" class="manual-video" playsinline preload="metadata"></video>
+    <div class="manual-ruler" data-r="ruler"></div>
+    <div class="manual-bar" data-r="bar">
+      <div data-r="clips"></div>
+      <div class="manual-seg manual-draft" data-r="draft" style="display: none;"></div>
+      <div class="manual-head" data-r="head"></div>
+    </div>
+    <div class="manual-mini" data-r="mini"><div class="manual-win" data-r="win"></div><div data-r="minimarks"></div></div>
+    <div class="manual-row">
+      <button type="button" class="small secondary" data-r="zout" title="Zoom out"><i class="ti ti-zoom-out" aria-hidden="true"></i></button>
+      <button type="button" class="small secondary" data-r="zin" title="Zoom in"><i class="ti ti-zoom-in" aria-hidden="true"></i></button>
+      <button type="button" class="small secondary" data-r="zfit">Show all</button>
+      <span class="muted" data-r="zinfo"></span>
+      <span style="flex: 1;"></span>
+      <button type="button" class="small secondary" data-nudge="-1">−1s</button>
+      <button type="button" class="small secondary" data-nudge="1">+1s</button>
+      <button type="button" class="small secondary" data-nudge="-0.1">−0.1s</button>
+      <button type="button" class="small secondary" data-nudge="0.1">+0.1s</button>
+    </div>
+    <div class="manual-legend muted">
+      <span><b style="background: var(--vulgarr-warning-text);"></b>existing scene</span>
+      <span><b style="background: var(--vulgarr-info-text);"></b>being marked</span>
+      <span><b style="background: var(--vulgarr-accent);"></b>added</span>
+      <span>Drag to scrub · pinch / scroll / ± to zoom · Space, I, O, Enter when focused</span>
+    </div>
+    <div class="manual-row">
+      <button type="button" class="small" data-r="play"><i class="ti ti-player-play" aria-hidden="true"></i> Play</button>
+      <button type="button" class="small secondary" data-r="setS">Mark start</button>
+      <input class="input-sm" data-r="s" value="--:--:--" aria-label="Start time">
+      <span class="muted">→</span>
+      <input class="input-sm" data-r="e" value="--:--:--" aria-label="End time">
+      <button type="button" class="small secondary" data-r="setE">Mark end</button>
+      <span style="flex: 1;"></span>
+      <button type="button" class="small secondary" data-r="add" disabled>+ Add clip</button>
+    </div>
+    <div data-r="list"></div>
+    <div class="manual-row" style="margin-top: 0.75rem;">
+      <span style="flex: 1;"></span>
+      <button type="button" data-r="save" disabled>Approve &amp; save <span data-r="n">0</span> scene(s)</button>
+    </div>
+  </div>
+</details>
+
+<script>
+(function () {
+  const root = document.getElementById("manual-scenes-{{ title_id }}");
+  if (!root || root.dataset.init) return;
+  root.dataset.init = "1";
+  const titleId = root.dataset.titleId;
+  const r = (n) => root.querySelector(`[data-r="${n}"]`);
+  const video = r("video"), bar = r("bar");
+  let D = 0, va = 0, vb = 0, t = 0, S = null, E = null, clips = [], playing = false, started = false, playingClip = null;
+  const existing = [...root.querySelectorAll("[data-existing]")].map((el) => ({ a: +el.dataset.a, b: +el.dataset.b }));
+
+  const fmt = (s, tenths) => {
+    const whole = Math.floor(s);
+    const base = [Math.floor(whole / 3600), String(Math.floor(whole / 60) % 60).padStart(2, "0"), String(whole % 60).padStart(2, "0")].join(":");
+    return tenths ? `${base}.${Math.floor((s - whole) * 10)}` : base;
+  };
+  const parse = (v) => v.split(":").reduce((a, n) => a * 60 + +n, 0);
+  const px = (p) => ((p - va) / (vb - va)) * 100;
+  const place = (el, a, b) => {
+    const l = Math.max(0, px(a)), rr = Math.min(100, px(b));
+    el.style.display = rr > l ? "block" : "none";
+    el.style.left = l + "%"; el.style.width = rr - l + "%";
+  };
+  const clampView = () => {
+    const len = Math.max(4, Math.min(D, vb - va));
+    va = Math.max(0, Math.min(D - len, va)); vb = va + len;
+  };
+  const zoomAt = (f, c) => { const len = (vb - va) * f, ratio = (c - va) / (vb - va); va = c - ratio * len; vb = va + len; clampView(); draw(); };
+  const seekTo = (p) => { t = Math.max(0, Math.min(D, p)); video.currentTime = t; draw(); };
+
+  function ruler() {
+    const len = vb - va, steps = [1, 2, 5, 10, 15, 30, 60, 120, 300, 600, 900, 1800, 3600];
+    const step = steps.find((x) => len / x <= 8) || 3600;
+    let html = "";
+    for (let p = Math.ceil(va / step) * step; p <= vb; p += step) html += `<span style="left:${px(p)}%">${fmt(p)}</span>`;
+    r("ruler").innerHTML = html;
+  }
+
+  function draw() {
+    if (!D) return;
+    const hp = px(t);
+    r("head").style.display = hp >= 0 && hp <= 100 ? "block" : "none"; r("head").style.left = hp + "%";
+    r("play").innerHTML = playing ? '<i class="ti ti-player-pause" aria-hidden="true"></i> Pause' : '<i class="ti ti-player-play" aria-hidden="true"></i> Play';
+    const ok = S != null && E != null && E > S;
+    if (ok) place(r("draft"), S, E); else r("draft").style.display = "none";
+    r("add").disabled = !ok; r("save").disabled = !clips.length; r("n").textContent = clips.length;
+    // Thumbnail sprite follows the zoom window (see scrub_proxy for the 60-frame layout).
+    const len = vb - va;
+    bar.style.backgroundSize = `${(D / len) * 100}% 100%`;
+    bar.style.backgroundPosition = `${D > len ? (va / (D - len)) * 100 : 0}% 0`;
+    r("clips").innerHTML = "";
+    existing.forEach((x) => { const d = document.createElement("div"); d.className = "manual-seg manual-existing"; place(d, x.a, x.b); r("clips").appendChild(d); });
+    clips.forEach((c) => { const d = document.createElement("div"); d.className = "manual-seg manual-clip"; place(d, c.s, c.e); r("clips").appendChild(d); });
+    r("win").style.left = (va / D) * 100 + "%"; r("win").style.width = ((vb - va) / D) * 100 + "%";
+    r("minimarks").innerHTML = clips.map((c) => `<div class="manual-m" style="left:${(c.s / D) * 100}%"></div>`).join("") +
+      (S != null ? `<div class="manual-m" style="left:${(S / D) * 100}%;background:var(--vulgarr-info-text)"></div>` : "");
+    r("zinfo").textContent = `${fmt(va)} – ${fmt(vb)} (${Math.round((D / (vb - va)) * 10) / 10}×)  ·  now ${fmt(t, true)}`;
+    ruler();
+    r("list").innerHTML = clips.length
+      ? "<table class='manual-table'><tr><th>#</th><th>Start</th><th>End</th><th>Length</th><th>Mute audio</th><th></th></tr>" +
+        clips.map((c, i) => `<tr><td>${i + 1}</td><td>${fmt(c.s, true)}</td><td>${fmt(c.e, true)}</td><td>${fmt(c.e - c.s)}</td><td><input type="checkbox" data-mute="${i}" ${c.mute ? "checked" : ""} aria-label="Mute audio for clip ${i + 1}"></td>
+          <td><button type="button" class="small" data-playclip="${i}">${playingClip === i ? "■ Stop" : "▶ Play"}</button> <button type="button" class="small secondary" data-go="${i}">Go to</button> <button type="button" class="small danger" data-del="${i}">Remove</button></td></tr>`).join("") + "</table>"
+      : "";
+  }
+
+  const tAt = (x) => { const b = bar.getBoundingClientRect(); return va + Math.max(0, Math.min(1, (x - b.left) / b.width)) * (vb - va); };
+  const ptrs = new Map(); let pinch = null;
+  bar.addEventListener("pointerdown", (e) => {
+    bar.setPointerCapture(e.pointerId); ptrs.set(e.pointerId, e.clientX); r("ui").focus({ preventScroll: true });
+    if (ptrs.size === 2) { const [x1, x2] = [...ptrs.values()]; pinch = { d: Math.abs(x2 - x1) || 1 }; }
+    else seekTo(tAt(e.clientX));
+  });
+  bar.addEventListener("pointermove", (e) => {
+    if (!ptrs.has(e.pointerId)) return;
+    ptrs.set(e.pointerId, e.clientX);
+    if (ptrs.size === 2 && pinch) { const [x1, x2] = [...ptrs.values()]; const d = Math.abs(x2 - x1) || 1; zoomAt(pinch.d / d, tAt((x1 + x2) / 2)); pinch.d = d; }
+    else if (ptrs.size === 1) seekTo(tAt(e.clientX));
+  });
+  ["pointerup", "pointercancel"].forEach((n) => bar.addEventListener(n, (e) => { ptrs.delete(e.pointerId); pinch = null; }));
+  bar.addEventListener("wheel", (e) => { e.preventDefault(); zoomAt(e.deltaY > 0 ? 1.25 : 0.8, tAt(e.clientX)); }, { passive: false });
+  // Overview strip: drag the box to pan, drag its left/right edge to resize the zoom, click outside it to recenter.
+  const mini = r("mini"); let miniDrag = null;
+  const miniT = (x) => { const b = mini.getBoundingClientRect(); return Math.max(0, Math.min(1, (x - b.left) / b.width)) * D; };
+  mini.addEventListener("pointerdown", (e) => {
+    mini.setPointerCapture(e.pointerId);
+    const b = mini.getBoundingClientRect(), edge = 10 / b.width * D, p = miniT(e.clientX);
+    if (Math.abs(p - va) <= edge) miniDrag = { mode: "left" };
+    else if (Math.abs(p - vb) <= edge) miniDrag = { mode: "right" };
+    else if (p > va && p < vb) miniDrag = { mode: "pan", off: p - va };
+    else { const len = vb - va; va = p - len / 2; vb = va + len; clampView(); draw(); miniDrag = { mode: "pan", off: p - va }; }
+  });
+  mini.addEventListener("pointermove", (e) => {
+    const p = miniT(e.clientX);
+    if (!miniDrag) { const edge = 10 / mini.getBoundingClientRect().width * D; mini.style.cursor = (Math.abs(p - va) <= edge || Math.abs(p - vb) <= edge) ? "ew-resize" : "grab"; return; }
+    if (miniDrag.mode === "pan") { const len = vb - va; va = p - miniDrag.off; vb = va + len; clampView(); }
+    else if (miniDrag.mode === "left") { va = Math.min(p, vb - 4); }
+    else { vb = Math.max(p, va + 4); }
+    draw();
+  });
+  ["pointerup", "pointercancel"].forEach((n) => mini.addEventListener(n, () => { miniDrag = null; }));
+
+  const center = () => (t >= va && t <= vb ? t : (va + vb) / 2);
+  r("zin").onclick = () => zoomAt(0.5, center());
+  r("zout").onclick = () => zoomAt(2, center());
+  r("zfit").onclick = () => { va = 0; vb = D; draw(); };
+  root.querySelectorAll("[data-nudge]").forEach((b) => (b.onclick = () => seekTo(t + parseFloat(b.dataset.nudge))));
+
+  const markS = () => { S = t; E = null; r("s").value = fmt(t, true); r("e").value = "--:--:--"; draw(); };
+  const markE = () => { E = t; r("e").value = fmt(t, true); draw(); };
+  const addClip = () => {
+    if (S == null || E == null || E <= S) return;
+    clips.push({ s: S, e: E, mute: false }); clips.sort((a, b) => a.s - b.s);
+    S = E = null; r("s").value = r("e").value = "--:--:--"; r("zfit").click();
+  };
+  const togglePlay = () => { playingClip = null; if (video.paused) video.play(); else video.pause(); };
+  r("play").onclick = togglePlay; r("setS").onclick = markS; r("setE").onclick = markE; r("add").onclick = addClip;
+  r("s").onchange = (e) => { S = parse(e.target.value); draw(); }; r("e").onchange = (e) => { E = parse(e.target.value); draw(); };
+  r("list").addEventListener("change", (e) => {
+    const m = e.target.closest("[data-mute]");
+    if (m) clips[+m.dataset.mute].mute = m.checked;
+  });
+  r("list").addEventListener("click", (e) => {
+    const go = e.target.closest("[data-go]"), del = e.target.closest("[data-del]"), pc = e.target.closest("[data-playclip]");
+    if (pc) {
+      const i = +pc.dataset.playclip;
+      if (playingClip === i) { video.pause(); return; }
+      playingClip = i; seekTo(clips[i].s); video.play();
+      return;
+    }
+    if (go) { const c = clips[+go.dataset.go]; const len = vb - va; if (c.s < va || c.s > vb) { va = c.s - len / 2; vb = va + len; clampView(); } seekTo(c.s); }
+    if (del) { if (playingClip !== null) video.pause(); clips.splice(+del.dataset.del, 1); draw(); }
+  });
+  r("ui").addEventListener("keydown", (e) => {
+    if (e.target.tagName === "INPUT") return;
+    const step = e.shiftKey ? 10 : 1;
+    if (e.key === " ") { e.preventDefault(); togglePlay(); }
+    else if (e.key === "ArrowRight") seekTo(t + step); else if (e.key === "ArrowLeft") seekTo(t - step);
+    else if (e.key === "i") markS(); else if (e.key === "o") markE(); else if (e.key === "Enter") addClip();
+    else if (e.key === "+" || e.key === "=") zoomAt(0.5, t); else if (e.key === "-") zoomAt(2, t);
+  });
+
+  video.addEventListener("play", () => { playing = true; tick(); });
+  video.addEventListener("pause", () => { playing = false; playingClip = null; draw(); });
+  video.addEventListener("ended", () => { playing = false; playingClip = null; draw(); });
+  function tick() {
+    if (!playing) return;
+    t = video.currentTime;
+    if (playingClip !== null && clips[playingClip] && t >= clips[playingClip].e) { video.pause(); seekTo(clips[playingClip].e); return; }
+    draw(); requestAnimationFrame(tick);
+  }
+
+  r("save").onclick = () => {
+    if (!clips.length) return;
+    r("save").disabled = true;
+    const values = { starts: clips.map((c) => c.s.toFixed(2)), ends: clips.map((c) => c.e.toFixed(2)), mutes: clips.map((c) => (c.mute ? "1" : "0")) };
+    if (root.dataset.detailView === "true") values.detail_view = "true";
+    const saved = clips.slice();
+    htmx.ajax("POST", `/library/title/${titleId}/scenes/manual`, { target: root.dataset.target, swap: "outerHTML", values })
+      .then(() => { saved.forEach((c) => existing.push({ a: c.s, b: c.e })); clips = []; draw(); });
+  };
+
+  function initPlayer() {
+    D = video.duration; va = 0; vb = D; t = 0; draw();
+  }
+  function showUi() {
+    r("prep").style.display = "none"; r("ui").style.display = "block";
+    bar.style.backgroundImage = `url(/library/title/${titleId}/scrub/sprite.jpg)`;
+    video.addEventListener("loadedmetadata", initPlayer, { once: true });
+    video.src = `/library/title/${titleId}/scrub/video.mp4`;
+  }
+  async function poll() {
+    let st;
+    try { st = await (await fetch(`/library/title/${titleId}/scrub/status`)).json(); }
+    catch (e) { r("prep-msg").textContent = "Couldn't reach the server -- retrying…"; return setTimeout(poll, 3000); }
+    if (st.state === "ready") return showUi();
+    if (st.state === "error") { r("prep-msg").textContent = "Preparing the preview failed: " + (st.error || "unknown error"); return; }
+    if (st.state === "missing") await fetch(`/library/title/${titleId}/scrub/build`, { method: "POST" });
+    r("prep-bar").style.width = (st.percent || 0) + "%";
+    setTimeout(poll, 2000);
+  }
+  // Only start the (potentially minutes-long) proxy build once the panel is actually opened.
+  root.addEventListener("toggle", () => { if (root.open && !started) { started = true; poll(); } });
+})();
+</script>

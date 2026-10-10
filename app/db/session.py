@@ -41,6 +41,7 @@ _COLUMNS_ADDED_LATER = [
     ("titles", "content_advisory_summary", "VARCHAR(255)"),
     ("titles", "content_advisory_checked_at", "DATETIME"),
     ("titles", "content_advisory_item_id", "INTEGER"),
+    ("detected_scenes", "source", "VARCHAR(20) NOT NULL DEFAULT 'detected'"),
 ]
 
 _DISPLAY_NAME_EPISODE_RE = re.compile(r"^(?P<series>.+) - S(?P<season>\d+)E(?P<episode>\d+)(?: - .*)?$")
