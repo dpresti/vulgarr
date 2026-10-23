@@ -9,6 +9,9 @@ WORKDIR /app
 
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
+# Pick up the eMudhra/emSign CA removal (GHSA-6q48-6c7w-9gw2) regardless of
+# what transitive deps pin.
+RUN pip install --no-cache-dir --upgrade "pip>=26.2.2" "certifi>=2026.10.19"
 
 COPY app ./app
 COPY entrypoint.sh /entrypoint.sh
