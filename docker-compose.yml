@@ -1,10 +1,11 @@
 services:
   vulgarr:
-    # Pinned to a released version, not :latest -- deliberate upgrades (bump this,
-    # `docker compose pull && up -d`) rather than silently picking up whatever the
-    # most recent push to main happened to build. Built by .github/workflows/
+    # :stable is the newest tagged release, not :latest -- :latest is rebuilt on
+    # every push to main, including unreleased work. Upgrade with
+    # `docker compose pull && up -d`. To pin an exact version instead (e.g. to
+    # roll back), use a specific tag like :2.7.0. Built by .github/workflows/
     # docker-publish.yml on every vX.Y.Z tag push (see README's release process).
-    image: ghcr.io/dpresti/vulgarr:2.7.0
+    image: ghcr.io/dpresti/vulgarr:stable
     container_name: vulgarr
     restart: unless-stopped
     ports:

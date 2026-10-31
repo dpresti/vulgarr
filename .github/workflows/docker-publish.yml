@@ -35,6 +35,10 @@ jobs:
             type=raw,value=latest,enable={{is_default_branch}}
             type=sha,format=short
             type=semver,pattern={{version}}
+            # Moves only on a vX.Y.Z tag push, never a plain push to main --
+            # what docker-compose.yml tracks, so a pull always gets the newest
+            # release but never unreleased work.
+            type=raw,value=stable,enable=${{ startsWith(github.ref, 'refs/tags/v') }}
 
       - uses: docker/build-push-action@v6
         with:

@@ -128,10 +128,11 @@ git push origin v2.1.0
 ```
 
 Pushing a `vX.Y.Z` tag is what triggers both of those -- a plain push to `main`
-never does. `docker-compose.yml` pins to a specific released version rather
-than `:latest`, so bumping it is a deliberate `image:` tag edit +
-`docker compose pull && up -d`, not something that happens silently underneath
-a running deployment.
+never does. A tag push also moves the `:stable` image tag to that release.
+`docker-compose.yml` tracks `:stable` rather than `:latest`, so upgrading is
+just `docker compose pull && up -d` and only ever picks up a real release, never
+unreleased work from `main`. To pin an exact version (e.g. to roll back), set
+`image:` to a specific tag like `ghcr.io/dpresti/vulgarr:2.7.0`.
 
 ## Quick start
 
