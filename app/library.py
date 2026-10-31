@@ -13,7 +13,7 @@ from app.db.models import JobState, MediaType, ProcessingJob, Title, TriggerSour
 from app.db.session import get_session, get_setting
 from app.integrations.radarr import RadarrClient
 from app.integrations.sonarr import SonarrClient
-from app.integrations.subtitle_lookup import find_subtitle_for_video
+from app.integrations.subtitle_lookup import find_subtitle_for_video, resolve_subtitle_for_video
 
 logger = logging.getLogger(__name__)
 
@@ -233,8 +233,14 @@ async def poll_for_subtitle_then_enqueue(
         default_subtitle_language = await get_setting(session, "default_subtitle_language")
 
     elapsed = 0.0
+    first_check = True
     while elapsed < timeout:
-        subtitle = await asyncio.to_thread(find_subtitle_for_video, Path(video_path), default_subtitle_language)
+        # First pass also tries a text track embedded in the video -- if one
+        # exists there's nothing to wait on Bazarr for. Only once: it's
+        # expensive, and the embedded tracks can't change while we poll.
+        lookup = resolve_subtitle_for_video if first_check else find_subtitle_for_video
+        first_check = False
+        subtitle = await asyncio.to_thread(lookup, Path(video_path), default_subtitle_language)
         if subtitle is not None:
             async with get_session() as session:
                 title = await upsert_title(

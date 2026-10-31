@@ -20,7 +20,7 @@ from app.domain import is_mkv_path, parse_index_list, parse_severity_levels, ser
 from app.integrations.bazarr import BazarrClient
 from app.integrations.radarr import RadarrClient
 from app.integrations.sonarr import SonarrClient
-from app.integrations.subtitle_lookup import find_subtitle_for_video
+from app.integrations.subtitle_lookup import find_subtitle_for_video, is_forced_subtitle, resolve_subtitle_for_video
 from app.library import poll_for_subtitle_then_enqueue
 from app.mux.remux import RemuxError
 from app.processing import ProcessingError, process_video
@@ -465,8 +465,25 @@ class JobQueue:
                 await session.commit()
 
             try:
+                # No usable sidecar .srt (none, a stale path, or forced-only) --
+                # fall back to a full text track embedded in the video itself
+                # before giving up. Extraction demuxes the whole file, so it's
+                # only done here, for a title actually being processed.
+                if (
+                    not title.subtitle_path
+                    or not Path(title.subtitle_path).exists()
+                    or is_forced_subtitle(Path(title.subtitle_path))
+                ):
+                    job.progress_message = "Checking for embedded subtitles"
+                    await session.commit()
+                    language = title.subtitle_language or await get_setting(session, "default_subtitle_language")
+                    resolved = await asyncio.to_thread(resolve_subtitle_for_video, Path(title.video_path), language)
+                    if resolved is not None:
+                        title.subtitle_path = str(resolved)
+                        title.subtitle_language = language
+                        await session.commit()
                 if not title.subtitle_path:
-                    raise ProcessingError("No subtitle file associated with this title")
+                    raise ProcessingError("No subtitle file associated with this title (no sidecar .srt and no embedded text subtitle track)")
 
                 async with HEAVY_PIPELINE_LOCK:
                     outcome = await process_video(

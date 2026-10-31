@@ -26,9 +26,10 @@ from app.domain import (
 )
 from app.integrations.bazarr import BazarrClient
 from app.integrations.doesthedogdie import DoesTheDogDieClient, summarize_content_advisory
+from app.integrations.embedded_subtitles import describe_missing_embedded, embedded_subtitle_dir
 from app.integrations.radarr import RadarrClient
 from app.integrations.sonarr import SonarrClient
-from app.integrations.subtitle_lookup import find_subtitle_for_video
+from app.integrations.subtitle_lookup import find_subtitle_for_video, resolve_subtitle_for_video
 from app.library import (
     enqueue_if_not_already_active,
     is_outdated,
@@ -1656,6 +1657,19 @@ async def _search_and_queue_subtitle(
     caught this bug) still won't show up in this one request/response cycle
     -- see the honest, non-final message below rather than pretending
     otherwise."""
+    # A full subtitle track muxed into the video itself is as good as anything
+    # Bazarr would fetch -- use it without a provider round-trip at all.
+    embedded = await asyncio.to_thread(resolve_subtitle_for_video, Path(video_path), default_subtitle_language)
+    if embedded is not None and embedded.parent == embedded_subtitle_dir():
+        async with get_session() as session:
+            title = await session.get(Title, title_id)
+            if title is not None:
+                title.subtitle_path = str(embedded)
+                title.subtitle_language = default_subtitle_language
+                await session.commit()
+        await job_queue.enqueue(title_id, TriggerSource.manual)
+        return "Using the subtitles embedded in the video file -- queued for processing."
+
     if not bazarr_url or not bazarr_api_key:
         return "Bazarr isn't configured (missing URL/API key) -- set it in Settings."
     if media_type == MediaType.episode and not (sonarr_series_id and sonarr_episode_id):
@@ -1723,11 +1737,13 @@ async def _search_and_queue_subtitle(
                         episode_number=title.episode_number,
                     )
                 )
+        embedded_note = await asyncio.to_thread(describe_missing_embedded, Path(video_path), default_subtitle_language)
         return (
             "Bazarr search triggered, but no subtitle has landed yet after "
             f"~{_SUBTITLE_POLL_ATTEMPTS * _SUBTITLE_POLL_INTERVAL_SECONDS:.0f}s -- "
             "still watching for it in the background, this page will pick it up "
             "automatically once it appears."
+            + (f" (Not using embedded subs: {embedded_note}.)" if embedded_note else "")
         )
 
     async with get_session() as session:
