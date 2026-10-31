@@ -253,6 +253,29 @@ class MatchedCue(Base):
     matched_terms: Mapped[str] = mapped_column(String(500), nullable=False)  # comma-joined
     severity: Mapped[str] = mapped_column(String(20), nullable=False)
     cue_text: Mapped[str] = mapped_column(String(1000), nullable=False)
+    # Matched, but left audible because the user marked it Keep (see KeptCue).
+    # Still listed so it can be flipped back.
+    kept: Mapped[bool] = mapped_column(default=False, nullable=False)
+
+
+class KeptCue(Base):
+    """A matched cue the user chose not to mute on this title -- e.g. "shoot"
+    said about an actual gun. Unlike MatchedCue this is user intent, so it
+    persists across reprocesses (word list edits, severity changes, a
+    subtitle swap) instead of being regenerated each run.
+
+    Identified by normalized cue text + start time rather than a MatchedCue
+    id, since those ids are replaced every run. A replacement subtitle with
+    slightly shifted timing still lines up via KEPT_CUE_TIME_TOLERANCE_SECONDS
+    in app.processing."""
+
+    __tablename__ = "kept_cues"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    title_id: Mapped[int] = mapped_column(ForeignKey("titles.id"), nullable=False, index=True)
+    start_seconds: Mapped[float] = mapped_column(nullable=False)
+    normalized_text: Mapped[str] = mapped_column(String(1000), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
 
 class SceneJob(Base):

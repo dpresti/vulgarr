@@ -1,9 +1,19 @@
 {% if matched_cues %}
-<details>
-  <summary style="cursor: pointer; font-weight: 600;">Show Muted Cues ({{ matched_cues|length }})</summary>
-  <div style="max-height: 320px; overflow-y: auto; margin-top: 0.6rem;">
+{% set kept_count = matched_cues|selectattr('kept')|list|length %}
+<details id="muted-cues-{{ row.title.id }}" {% if cues_open %}open{% endif %}>
+  <summary style="cursor: pointer; font-weight: 600;">Show Muted Cues ({{ matched_cues|length - kept_count }} muted{% if kept_count %}, {{ kept_count }} kept{% endif %})</summary>
+  <div class="muted" style="margin-top: 0.4rem;">Mark a cue <strong>Keep</strong> if the word is used literally (e.g. "shoot" with a gun). Kept cues stay audible and stay kept across future reprocesses.</div>
+  {% if cues_message %}<div class="muted" style="margin-top: 0.4rem;"><span class="badge badge-queued">queued</span> {{ cues_message }}</div>{% endif %}
+  <div class="cue-suggest" data-r="suggest">
+    <i class="ti ti-bulb"></i><span data-r="suggest-text"></span>
+    <button type="button" class="small secondary" data-r="suggest-yes">Keep all</button>
+    <button type="button" class="small secondary" data-r="suggest-no">No thanks</button>
+  </div>
+  <form hx-post="/library/{{ row.title.id }}/kept-cues" hx-target="#title-detail-{{ row.title.id }}" hx-swap="outerHTML">
+  <div style="max-height: 420px; overflow-y: auto; margin-top: 0.6rem;">
     {% for cue in matched_cues %}
-    <div class="scene-review-row" style="display: flex; align-items: flex-start; gap: 0.75rem; flex-wrap: wrap; padding: 0.5rem 0; border-bottom: 1px solid var(--vulgarr-border);">
+    <div class="scene-review-row cue-row{% if cue.kept %} kept{% endif %}" data-term="{{ cue.matched_terms }}" data-saved="{{ 1 if cue.kept else 0 }}" style="display: flex; align-items: flex-start; gap: 0.75rem; flex-wrap: wrap; padding: 0.5rem 0; border-bottom: 1px solid var(--vulgarr-border);">
+      <input type="checkbox" name="kept_ids" value="{{ cue.id }}" hidden {% if cue.kept %}checked{% endif %}>
       <div class="stat-pill" title="Timestamp in the source file" style="flex-shrink: 0;">
         {% set total_seconds = cue.start_seconds|int %}
         {% set hours = (total_seconds // 3600) %}
@@ -11,17 +21,86 @@
         {% set seconds = (total_seconds % 60) %}
         {% if hours %}{{ hours }}:{{ '%02d'|format(minutes) }}:{{ '%02d'|format(seconds) }}{% else %}{{ minutes }}:{{ '%02d'|format(seconds) }}{% endif %}
       </div>
-      <div style="flex: 1 1 0; min-width: 240px;">
+      <div class="cue-body" style="flex: 1 1 0; min-width: 240px;">
         <div style="display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap;">
           <span class="badge badge-{{ cue.severity }}">{{ cue.severity }}</span>
-          <strong>{{ cue.matched_terms }}</strong>
+          <strong class="cue-term">{{ cue.matched_terms }}</strong>
+          <span class="badge cue-kept-badge"><i class="ti ti-volume"></i> Kept &mdash; not muted</span>
+          <span class="badge cue-pending-badge"></span>
         </div>
         <div class="muted" style="margin-top: 0.25rem;">{{ cue.cue_text }}</div>
+      </div>
+      <div style="flex-shrink: 0;">
+        <button type="button" class="small secondary cue-keep-btn" title="Leave this word audible in the Clean track"><i class="ti ti-volume"></i> Keep</button>
+        <button type="button" class="small secondary cue-mute-btn" title="Go back to muting this word"><i class="ti ti-volume-off"></i> Mute again</button>
       </div>
     </div>
     {% endfor %}
   </div>
+  <div class="cue-apply-bar" data-r="apply-bar">
+    <i class="ti ti-alert-circle" style="color: var(--vulgarr-warning-text);"></i>
+    <span data-r="apply-text"></span>
+    <span style="flex: 1;"></span>
+    <button type="button" class="small secondary" data-r="discard">Discard</button>
+    <button type="submit" class="small"><i class="ti ti-refresh"></i> Apply &amp; rebuild Clean track</button>
+  </div>
+  </form>
 </details>
+<script>
+(function () {
+  const root = document.getElementById("muted-cues-{{ row.title.id }}");
+  if (!root || root.dataset.init) return;
+  root.dataset.init = "1";
+  const r = (n) => root.querySelector(`[data-r="${n}"]`);
+  const rows = [...root.querySelectorAll(".cue-row")];
+  const box = r("suggest");
+  const dismissed = new Set();
+
+  const setKept = (row, kept) => {
+    row.classList.toggle("kept", kept);
+    row.querySelector('input[name="kept_ids"]').checked = kept;
+  };
+  const render = () => {
+    let changes = 0;
+    rows.forEach((row) => {
+      const kept = row.classList.contains("kept");
+      const changed = kept !== (row.dataset.saved === "1");
+      row.classList.toggle("pending", changed);
+      row.querySelector(".cue-pending-badge").textContent = changed ? (kept ? "will un-mute" : "will re-mute") : "";
+      if (changed) changes++;
+    });
+    r("apply-bar").classList.toggle("show", changes > 0);
+    r("apply-text").textContent = `${changes} unsaved change${changes > 1 ? "s" : ""}. The Clean track is rebuilt once, when you apply.`;
+  };
+  const suggestFor = (term) => {
+    const rest = rows.filter((row) => row.dataset.term === term && !row.classList.contains("kept"));
+    if (rest.length && !dismissed.has(term)) {
+      r("suggest-text").textContent = `${rest.length} other "${term}" cue${rest.length > 1 ? "s" : ""} still muted in this title. Keep all of them too?`;
+      box.dataset.term = term;
+      box.classList.add("show");
+    } else {
+      box.classList.remove("show");
+    }
+  };
+
+  rows.forEach((row) => {
+    row.querySelector(".cue-keep-btn").onclick = () => { setKept(row, true); render(); suggestFor(row.dataset.term); };
+    row.querySelector(".cue-mute-btn").onclick = () => { setKept(row, false); render(); };
+  });
+  r("suggest-yes").onclick = () => {
+    rows.filter((row) => row.dataset.term === box.dataset.term).forEach((row) => setKept(row, true));
+    box.classList.remove("show");
+    render();
+  };
+  r("suggest-no").onclick = () => { dismissed.add(box.dataset.term); box.classList.remove("show"); };
+  r("discard").onclick = () => {
+    rows.forEach((row) => setKept(row, row.dataset.saved === "1"));
+    box.classList.remove("show");
+    render();
+  };
+  render();
+})();
+</script>
 {% elif row.status == 'not_processed' %}
 <div class="muted">Show Muted Cues (Not Processed)</div>
 {% else %}

@@ -11,7 +11,7 @@ from fastapi.templating import Jinja2Templates
 from sqlalchemy import Select, case, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models import DetectedScene, MatchedCue, MediaType, ProcessingJob, SceneJob, Title, TriggerSource
+from app.db.models import DetectedScene, KeptCue, MatchedCue, MediaType, ProcessingJob, SceneJob, Title, TriggerSource
 from app.db.session import get_session, get_setting
 from app.domain import (
     PRECISE_MODES,
@@ -38,8 +38,10 @@ from app.library import (
     sync_radarr_library,
     sync_sonarr_library,
 )
+from app.processing import KEPT_CUE_TIME_TOLERANCE_SECONDS
 from app.queue.scene_worker import scene_job_queue
 from app.queue.worker import job_queue
+from app.subtitles.matcher import normalize_cue_text
 
 router = APIRouter(prefix="/library", tags=["library"])
 templates = Jinja2Templates(directory="app/templates")
@@ -1909,3 +1911,46 @@ async def recheck_content_advisory(request: Request, title_id: int, detail_view:
         row = _row_dict(title, current_version, has_pending_scenes=title_id in pending_ids)
 
     return await _render_title(request, row, detail_view)
+
+
+@router.post("/{title_id}/kept-cues", response_class=HTMLResponse)
+async def save_kept_cues(request: Request, title_id: int, kept_ids: list[int] = Form(default=[])):
+    """Apply the Muted Cues list's Keep/Mute-again toggles: kept_ids is the full
+    set of this title's MatchedCue ids that should stay audible. Records the
+    change as KeptCue rows (which survive reprocessing) and queues one
+    reprocess so the Clean track is rebuilt with it."""
+    wanted = set(kept_ids)
+    changed = False
+    async with get_session() as session:
+        title = await session.get(Title, title_id)
+        if title is None:
+            return HTMLResponse("")
+        cues = (await session.execute(select(MatchedCue).where(MatchedCue.title_id == title_id))).scalars().all()
+        existing = (await session.execute(select(KeptCue).where(KeptCue.title_id == title_id))).scalars().all()
+        for cue in cues:
+            want = cue.id in wanted
+            if want == cue.kept:
+                continue
+            changed = True
+            cue.kept = want
+            text = normalize_cue_text(cue.cue_text)
+            if want:
+                session.add(KeptCue(title_id=title_id, start_seconds=cue.start_seconds, normalized_text=text))
+            else:
+                for row in existing:
+                    if row.normalized_text == text and abs(row.start_seconds - cue.start_seconds) <= KEPT_CUE_TIME_TOLERANCE_SECONDS:
+                        await session.delete(row)
+        await session.commit()
+
+    message = None
+    if changed:
+        await job_queue.enqueue(title_id, TriggerSource.manual)
+        message = "Saved -- rebuilding the Clean track with your changes (a few minutes)."
+
+    async with get_session() as session:
+        current_version = int(await get_setting(session, "wordlist_version"))
+        title = await session.get(Title, title_id)
+        pending_ids = await _pending_scene_title_ids(session, [title_id])
+        row = _row_dict(title, current_version, has_pending_scenes=title_id in pending_ids)
+
+    return await _render_title(request, row, detail_view=True, cues_open=True, cues_message=message)

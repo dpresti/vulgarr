@@ -9,11 +9,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.audio.mute import AlignProgressCallback, MuteInterval, build_mute_intervals, build_mute_intervals_whisper
 from app.config import settings as app_settings
-from app.db.models import MatchedCue, WordListEntry
+from app.db.models import KeptCue, MatchedCue, WordListEntry
 from app.db.session import get_setting
 from app.domain import SEVERITY_CANONICAL_ORDER, SEVERITY_RANK, Severity, is_mkv_path
 from app.mux.remux import ProgressCallback, RemuxError, StageCallback, probe, remux_with_clean_track
-from app.subtitles.matcher import CueMatch, ProfanityMatcher, WordListTerm
+from app.subtitles.matcher import CueMatch, ProfanityMatcher, WordListTerm, normalize_cue_text
 from app.subtitles.parser import parse_srt_file
 
 logger = logging.getLogger(__name__)
@@ -83,6 +83,19 @@ async def load_active_terms(session: AsyncSession, min_severity: Severity = Seve
     ]
 
 
+# How far a cue's start can drift from a KeptCue and still count as the same
+# line -- covers a re-synced or replacement subtitle for the same file.
+KEPT_CUE_TIME_TOLERANCE_SECONDS = 2.0
+
+
+def is_kept_match(match: CueMatch, kept: list[tuple[float, str]]) -> bool:
+    text = normalize_cue_text(match.cue.text)
+    return any(
+        text == kept_text and abs(match.cue.start_seconds - kept_start) <= KEPT_CUE_TIME_TOLERANCE_SECONDS
+        for kept_start, kept_text in kept
+    )
+
+
 async def process_video(
     session: AsyncSession,
     *,
@@ -111,13 +124,23 @@ async def process_video(
     if duration_error:
         raise ProcessingError(duration_error)
 
+    kept = [
+        (row.start_seconds, row.normalized_text)
+        for row in (await session.execute(select(KeptCue).where(KeptCue.title_id == title_id))).scalars()
+    ]
+
+    # all_matches_by_level is what gets listed on the title page (kept cues
+    # included, so they can be un-kept); matches_by_level is what actually
+    # gets muted.
+    all_matches_by_level: dict[Severity, list[CueMatch]] = {}
     matches_by_level: dict[Severity, list[CueMatch]] = {}
     for level in levels:
         terms = await load_active_terms(session, min_severity=level)
         if not terms:
             raise ProcessingError(f"Word list is empty at the '{level.value}' severity level -- nothing to filter")
         matcher = ProfanityMatcher(terms)
-        matches_by_level[level] = matcher.match_all(cues)
+        all_matches_by_level[level] = matcher.match_all(cues)
+        matches_by_level[level] = [m for m in all_matches_by_level[level] if not is_kept_match(m, kept)]
 
     # Precomputed across every selected level up front, so on_align_progress can
     # report one accurate running count for the whole job even when multiple levels
@@ -178,8 +201,9 @@ async def process_video(
                 matched_terms=", ".join(m.matched_terms),
                 severity=m.severity.value,
                 cue_text=m.cue.text,
+                kept=is_kept_match(m, kept),
             )
-            for m in matches_by_level[most_inclusive_level]
+            for m in all_matches_by_level[most_inclusive_level]
         ]
     )
 
