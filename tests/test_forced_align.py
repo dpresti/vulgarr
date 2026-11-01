@@ -91,7 +91,7 @@ def test_align_matches_for_cue_success_passes_through(monkeypatch):
 
     captured = {}
 
-    def _fake_align_blocking(ffmpeg_bin, video_path, window_start, window_end, words, spans):
+    def _fake_align_blocking(ffmpeg_bin, video_path, window_start, window_end, words, spans, source=None):
         captured["window_start"] = window_start
         captured["window_end"] = window_end
         return expected
@@ -114,7 +114,7 @@ def test_align_matches_for_cue_drops_words_the_aligner_cant_tokenize(monkeypatch
 
     captured = {}
 
-    def _fake_align_blocking(ffmpeg_bin, video_path, window_start, window_end, words, spans):
+    def _fake_align_blocking(ffmpeg_bin, video_path, window_start, window_end, words, spans, source=None):
         captured["words"] = words
         return [WordWindow(start=6.0, end=6.3)]
 

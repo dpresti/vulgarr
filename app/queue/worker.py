@@ -456,6 +456,24 @@ class JobQueue:
                 job.progress_message = f"Step 1/2: Aligning word timing (Whisper) -- {done}/{total} cues"
                 await session.commit()
 
+            speech_start_monotonic: float | None = None
+
+            async def on_speech_progress(fraction: float) -> None:
+                nonlocal last_update_monotonic, speech_start_monotonic
+                now = time.monotonic()
+                if speech_start_monotonic is None:
+                    speech_start_monotonic = now
+                if 0 < fraction < 0.999 and now - last_update_monotonic < _PROGRESS_UPDATE_MIN_INTERVAL_SECONDS:
+                    return
+                last_update_monotonic = now
+                message = f"Speech check: listening for words the subtitles missed -- {round(fraction * 100):.0f}%"
+                if fraction > 0.03:
+                    elapsed = now - speech_start_monotonic
+                    message += f", {_format_eta(elapsed * (1 - fraction) / fraction)}"
+                job.progress_percent = round(fraction * 100, 1)
+                job.progress_message = message
+                await session.commit()
+
             async def on_stage(message: str) -> None:
                 job.progress_message = message
                 # Nudge the bar forward past wherever ffmpeg's own progress topped
@@ -497,6 +515,7 @@ class JobQueue:
                         on_progress=on_progress,
                         on_stage=on_stage,
                         on_align_progress=on_align_progress,
+                        on_speech_progress=on_speech_progress,
                     )
 
                 job.state = JobState.done

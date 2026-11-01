@@ -256,6 +256,9 @@ class MatchedCue(Base):
     # Matched, but left audible because the user marked it Keep (see KeptCue).
     # Still listed so it can be flipped back.
     kept: Mapped[bool] = mapped_column(default=False, nullable=False)
+    # "subtitle", or "speech" for a word the speech check heard that the
+    # subtitle didn't have (app.audio.speech_check).
+    source: Mapped[str] = mapped_column(String(20), default="subtitle", nullable=False)
 
 
 class KeptCue(Base):

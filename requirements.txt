@@ -26,3 +26,10 @@ numpy==2.1.3
 # during the scene-detection feature's Phase 0 spike). Pulls in onnxruntime and
 # opencv-python-headless as transitive deps.
 nudenet==3.4.2
+
+# Speech check (app/audio/speech_check.py) only -- transcribes dialogue to catch
+# words the subtitles left out. CTranslate2 runs fine on this host's non-AVX
+# CPU (unlike TensorFlow, see below). Model (small.en, ~500MB) downloads to
+# /data/whisper_models on first use.
+faster-whisper==1.2.1
+ctranslate2==4.8.4

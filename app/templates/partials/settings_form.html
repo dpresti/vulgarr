@@ -122,6 +122,12 @@
       </select>
       <div class="muted">Whisper mode is slower (runs a local alignment model per matched line) but more accurate. Only applies to new titles -- existing ones keep their current setting, editable individually or per-show.</div>
     </div>
+
+    <label class="checkbox-row">
+      <input type="checkbox" id="speech_check_enabled" name="speech_check_enabled" {% if values.speech_check_enabled %}checked{% endif %}>
+      Speech check
+    </label>
+    <div class="muted">Also transcribes the dialogue (local Whisper model) to catch words the subtitles left out or softened, e.g. a subtitle reading "what it is" when the actor said "what the hell it is". Slow the first time a title is processed -- roughly a quarter of its runtime (~25-30 min for a movie) -- then cached, so reprocessing doesn't repeat it. Words it finds show in the title's Muted Cues as "heard, not in subtitles".</div>
   </div>
   </div>
 

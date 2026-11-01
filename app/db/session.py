@@ -43,6 +43,7 @@ _COLUMNS_ADDED_LATER = [
     ("titles", "content_advisory_item_id", "INTEGER"),
     ("detected_scenes", "source", "VARCHAR(20) NOT NULL DEFAULT 'detected'"),
     ("matched_cues", "kept", "BOOLEAN NOT NULL DEFAULT 0"),
+    ("matched_cues", "source", "VARCHAR(20) NOT NULL DEFAULT 'subtitle'"),
 ]
 
 _DISPLAY_NAME_EPISODE_RE = re.compile(r"^(?P<series>.+) - S(?P<season>\d+)E(?P<episode>\d+)(?: - .*)?$")
@@ -193,6 +194,10 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     # alignment against the real audio). Existing titles are unaffected by changing
     # this -- it's only applied at creation.
     "default_precise_mode": "whole_line",
+    # Transcribe each title's dialogue (app.audio.speech_check) to also catch
+    # words the subtitles left out. ~25-30 min extra per feature film the first
+    # time it's processed; cached after that.
+    "speech_check_enabled": True,
     # Integrations -- seeded from SPF_* env vars once, editable in Settings after that.
     "sonarr_url": settings.sonarr_url,
     "sonarr_api_key": settings.sonarr_api_key,

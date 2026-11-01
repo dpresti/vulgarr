@@ -25,6 +25,7 @@
         <div style="display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap;">
           <span class="badge badge-{{ cue.severity }}">{{ cue.severity }}</span>
           <strong class="cue-term">{{ cue.matched_terms }}</strong>
+          {% if cue.source == 'speech' %}<span class="badge badge-info" title="The speech check heard this word, but the subtitle line doesn't have it. The text below is what was heard."><i class="ti ti-ear"></i> heard, not in subtitles</span>{% endif %}
           <span class="badge cue-kept-badge"><i class="ti ti-volume"></i> Kept &mdash; not muted</span>
           <span class="badge cue-pending-badge"></span>
         </div>

@@ -124,7 +124,7 @@ def test_precise_mode_handles_repeated_term_in_one_cue():
 def test_whisper_mode_uses_aligned_word_window(monkeypatch):
     match = real_match("this has some shit in it", 10.0, 12.0, term="shit")
 
-    async def fake_align(video_path, ffmpeg_bin, m):
+    async def fake_align(video_path, ffmpeg_bin, m, source=None):
         return [WordWindow(start=10.8, end=11.0)]
 
     monkeypatch.setattr("app.audio.forced_align.align_matches_for_cue", fake_align)
@@ -141,7 +141,7 @@ def test_whisper_mode_falls_back_to_estimate_per_cue_on_alignment_failure(monkey
     # back to the proportional-estimate window for just that cue.
     match = real_match("this is a really really long sentence that ends in the word fuck", 100.0, 110.0)
 
-    async def fake_align(video_path, ffmpeg_bin, m):
+    async def fake_align(video_path, ffmpeg_bin, m, source=None):
         return None
 
     monkeypatch.setattr("app.audio.forced_align.align_matches_for_cue", fake_align)
@@ -161,7 +161,7 @@ def test_whisper_mode_reports_progress_per_cue(monkeypatch):
         real_match("god damn it works", 3.0, 5.0, term="damn", i=2),
     ]
 
-    async def fake_align(video_path, ffmpeg_bin, m):
+    async def fake_align(video_path, ffmpeg_bin, m, source=None):
         return None  # forces the fallback path -- progress should still fire
 
     monkeypatch.setattr("app.audio.forced_align.align_matches_for_cue", fake_align)

@@ -19,6 +19,7 @@ import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
+from app.audio.source import AudioSource
 from app.subtitles.matcher import CueMatch, MatchSpan, normalize_cue_text
 
 logger = logging.getLogger(__name__)
@@ -39,6 +40,13 @@ _WORD_RE = re.compile(r"\S+")
 # correctly falls back to the estimate method (via the "no covering word" check
 # below), same as any other alignment failure.
 _ALIGNABLE_WORD_RE = re.compile(r"^[a-z'\-*]+$")
+
+# Mean per-character CTC score below which the aligner is effectively guessing
+# where a word is (seen at 0.10 on a line shouted over engine noise, where the
+# mute landed ~0.4s early and the word leaked, vs 0.6-0.8 on clean dialogue).
+# A matched word scoring under this is muted from the start of the word before
+# it to the end of the word after, instead of trusting the tight placement.
+LOW_CONFIDENCE_SCORE = 0.3
 
 _bundle: dict = {}
 
@@ -88,7 +96,7 @@ def _tokenize_with_offsets(text: str) -> list[tuple[str, int, int]]:
     return [(m.group(), m.start(), m.end()) for m in _WORD_RE.finditer(text)]
 
 
-def _extract_audio_window(ffmpeg_bin: str, video_path: Path, start: float, end: float):
+def _extract_audio_window(ffmpeg_bin: str, video_path: Path, start: float, end: float, source: AudioSource | None = None):
     """Decode [start, end) of video_path's audio to a mono 16kHz float32 tensor via
     ffmpeg directly (raw PCM over a pipe) -- avoids depending on torchaudio's own
     audio-decoding backends, which need extra system libs we don't otherwise use."""
@@ -98,7 +106,8 @@ def _extract_audio_window(ffmpeg_bin: str, video_path: Path, start: float, end: 
         [
             ffmpeg_bin, "-nostdin", "-loglevel", "error",
             "-ss", f"{start:.3f}", "-t", f"{duration:.3f}", "-i", str(video_path),
-            "-ac", "1", "-ar", str(ALIGN_SAMPLE_RATE), "-f", "s16le", "-",
+            *(source.ffmpeg_args() if source else ["-ac", "1"]),
+            "-ar", str(ALIGN_SAMPLE_RATE), "-f", "s16le", "-",
         ],
         stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True,
     )
@@ -115,11 +124,12 @@ def _align_blocking(
     window_end: float,
     words: list[tuple[str, int, int]],
     spans: tuple[MatchSpan, ...],
+    source: AudioSource | None = None,
 ) -> list[WordWindow]:
     bundle = _get_bundle()
     torch = bundle["torch"]
 
-    waveform = _extract_audio_window(ffmpeg_bin, video_path, window_start, window_end)
+    waveform = _extract_audio_window(ffmpeg_bin, video_path, window_start, window_end, source)
 
     with torch.inference_mode():
         emission, _ = bundle["model"](waveform)
@@ -131,8 +141,9 @@ def _align_blocking(
 
     ratio = waveform.size(1) / emission.size(1) / bundle["sample_rate"]
     word_times = [(ts[0].start * ratio, ts[-1].end * ratio) for ts in token_spans]
+    word_scores = [sum(t.score for t in ts) / len(ts) for ts in token_spans]
 
-    return _spans_to_word_windows(words, word_times, spans, window_start)
+    return _spans_to_word_windows(words, word_times, spans, window_start, word_scores)
 
 
 def _spans_to_word_windows(
@@ -140,18 +151,25 @@ def _spans_to_word_windows(
     word_times: list[tuple[float, float]],
     spans: tuple[MatchSpan, ...],
     window_start: float,
+    word_scores: list[float] | None = None,
 ) -> list[WordWindow]:
     """Pure mapping from per-word alignment output (word_times, same order/length as
     words) to one WordWindow per matched span, in absolute video-time seconds. Kept
-    torch-free so it's directly unit-testable without the real model."""
+    torch-free so it's directly unit-testable without the real model.
+
+    With word_scores, a span whose words aligned below LOW_CONFIDENCE_SCORE is
+    widened to its neighboring words' extent -- see LOW_CONFIDENCE_SCORE."""
     results: list[WordWindow] = []
     for span in spans:
         # A matched span can cover more than one aligned word (multi-word phrases in
         # the word list) -- take the union of every word whose character range
         # overlaps the span's.
-        covering = [word_times[i] for i, (_, wstart, wend) in enumerate(words) if wstart < span.end and wend > span.start]
-        if not covering:
+        indices = [i for i, (_, wstart, wend) in enumerate(words) if wstart < span.end and wend > span.start]
+        if not indices:
             raise ValueError(f"No aligned word overlaps matched span {span!r}")
+        if word_scores is not None and min(word_scores[i] for i in indices) < LOW_CONFIDENCE_SCORE:
+            indices = list(range(max(0, indices[0] - 1), min(len(words), indices[-1] + 2)))
+        covering = [word_times[i] for i in indices]
         results.append(
             WordWindow(
                 start=window_start + min(t[0] for t in covering),
@@ -161,7 +179,9 @@ def _spans_to_word_windows(
     return results
 
 
-async def align_matches_for_cue(video_path: Path, ffmpeg_bin: str, match: CueMatch) -> list[WordWindow] | None:
+async def align_matches_for_cue(
+    video_path: Path, ffmpeg_bin: str, match: CueMatch, source: AudioSource | None = None
+) -> list[WordWindow] | None:
     """One WordWindow per entry in match.spans (same order), in absolute video-time
     seconds -- or None if alignment couldn't be attempted/trusted for this cue, in
     which case the caller should fall back to the proportional-estimate method for
@@ -178,7 +198,7 @@ async def align_matches_for_cue(video_path: Path, ffmpeg_bin: str, match: CueMat
 
     try:
         return await asyncio.to_thread(
-            _align_blocking, ffmpeg_bin, video_path, window_start, window_end, words, match.spans
+            _align_blocking, ffmpeg_bin, video_path, window_start, window_end, words, match.spans, source
         )
     except Exception:
         logger.warning(

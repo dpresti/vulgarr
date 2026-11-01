@@ -2,10 +2,13 @@
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Awaitable, Callable
+from typing import TYPE_CHECKING, Awaitable, Callable
 
 from app.common.intervals import merge_intervals
 from app.subtitles.matcher import CueMatch
+
+if TYPE_CHECKING:
+    from app.audio.source import AudioSource
 
 # Called after each cue's alignment attempt (success or per-cue fallback) with
 # (cues_done_so_far, total_cues) -- lets the caller surface real progress during
@@ -83,6 +86,7 @@ async def build_mute_intervals_whisper(
     pad_seconds: float = WHISPER_PAD_SECONDS,
     merge_gap_seconds: float = DEFAULT_MERGE_GAP_SECONDS,
     on_progress: AlignProgressCallback | None = None,
+    source: "AudioSource | None" = None,
 ) -> list[MuteInterval]:
     """Like build_mute_intervals(precise=True), but locates each matched word's real
     position in the audio via forced alignment (app.audio.forced_align) instead of
@@ -100,7 +104,7 @@ async def build_mute_intervals_whisper(
 
     raw: list[tuple[float, float]] = []
     for i, m in enumerate(matches):
-        windows = await align_matches_for_cue(video_path, ffmpeg_bin, m)
+        windows = await align_matches_for_cue(video_path, ffmpeg_bin, m, source)
         if windows is None:
             raw.extend(
                 (iv.start, iv.end)

@@ -7,7 +7,22 @@ from pathlib import Path
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.audio.mute import AlignProgressCallback, MuteInterval, build_mute_intervals, build_mute_intervals_whisper
+from app.audio.mute import (
+    DEFAULT_MERGE_GAP_SECONDS,
+    AlignProgressCallback,
+    MuteInterval,
+    _merge_raw_intervals,
+    build_mute_intervals,
+    build_mute_intervals_whisper,
+)
+from app.audio.source import audio_source_for
+from app.audio.speech_check import (
+    HeardMatch,
+    SpeechProgressCallback,
+    find_heard_matches,
+    get_transcript,
+    is_duplicate_of_subtitle,
+)
 from app.config import settings as app_settings
 from app.db.models import KeptCue, MatchedCue, WordListEntry
 from app.db.session import get_setting
@@ -86,6 +101,9 @@ async def load_active_terms(session: AsyncSession, min_severity: Severity = Seve
 # How far a cue's start can drift from a KeptCue and still count as the same
 # line -- covers a re-synced or replacement subtitle for the same file.
 KEPT_CUE_TIME_TOLERANCE_SECONDS = 2.0
+# Padding around a word the speech check heard -- Whisper's word timestamps
+# are good to ~0.1-0.2s, a bit looser than forced alignment's.
+SPEECH_PAD_SECONDS = 0.25
 
 
 def is_kept_match(match: CueMatch, kept: list[tuple[float, str]]) -> bool:
@@ -108,6 +126,7 @@ async def process_video(
     on_progress: ProgressCallback | None = None,
     on_stage: StageCallback | None = None,
     on_align_progress: AlignProgressCallback | None = None,
+    on_speech_progress: SpeechProgressCallback | None = None,
 ) -> ProcessingOutcome:
     """Run the full pipeline for one file, generating one clean track per severity level.
     Raises ProcessingError/RemuxError on failure."""
@@ -132,8 +151,29 @@ async def process_video(
     # all_matches_by_level is what gets listed on the title page (kept cues
     # included, so they can be un-kept); matches_by_level is what actually
     # gets muted.
+    clean_track_title = await get_setting(session, "clean_track_title")
+    source = audio_source_for(src_probe, clean_track_title, known_clean_indices)
+    heard_segments = []
+    if bool(await get_setting(session, "speech_check_enabled")):
+        if on_speech_progress is not None:
+            await on_speech_progress(0.0)
+        heard_segments = await get_transcript(
+            title_id=title_id,
+            video_path=video_path,
+            source=source,
+            duration=video_duration,
+            ffmpeg_bin=app_settings.ffmpeg_bin,
+            on_progress=on_speech_progress,
+        )
+
     all_matches_by_level: dict[Severity, list[CueMatch]] = {}
     matches_by_level: dict[Severity, list[CueMatch]] = {}
+    # Speech-check hits per level that should be muted. Includes ones that
+    # duplicate a subtitle match -- their own (independently timed) window
+    # merges with the subtitle one and covers a misplaced alignment.
+    heard_by_level: dict[Severity, list[HeardMatch]] = {}
+    # Hits the subtitles didn't have at all -- the ones listed on the title page.
+    new_heard_by_level: dict[Severity, list[HeardMatch]] = {}
     for level in levels:
         terms = await load_active_terms(session, min_severity=level)
         if not terms:
@@ -141,6 +181,13 @@ async def process_video(
         matcher = ProfanityMatcher(terms)
         all_matches_by_level[level] = matcher.match_all(cues)
         matches_by_level[level] = [m for m in all_matches_by_level[level] if not is_kept_match(m, kept)]
+        kept_subtitle = [m for m in all_matches_by_level[level] if is_kept_match(m, kept)]
+        heard = find_heard_matches(heard_segments, matcher)
+        new_heard_by_level[level] = [h for h in heard if not is_duplicate_of_subtitle(h, all_matches_by_level[level])]
+        heard_by_level[level] = [
+            h for h in heard
+            if not is_kept_match(h.match, kept) and not is_duplicate_of_subtitle(h, kept_subtitle)
+        ]
 
     # Precomputed across every selected level up front, so on_align_progress can
     # report one accurate running count for the whole job even when multiple levels
@@ -158,19 +205,28 @@ async def process_video(
                     await on_align_progress(_offset + done_in_level, whisper_grand_total)
 
             intervals = await build_mute_intervals_whisper(
-                matches, video_path, app_settings.ffmpeg_bin, on_progress=_level_align_progress
+                matches, video_path, app_settings.ffmpeg_bin, on_progress=_level_align_progress, source=source
             )
         else:
             intervals = build_mute_intervals(matches, precise=(precise_mode == "estimate"))
+        heard_raw = [
+            (max(0.0, a - SPEECH_PAD_SECONDS), b + SPEECH_PAD_SECONDS)
+            for h in heard_by_level[level]
+            for a, b in h.windows
+        ]
+        if heard_raw:
+            intervals = _merge_raw_intervals([(iv.start, iv.end) for iv in intervals] + heard_raw, DEFAULT_MERGE_GAP_SECONDS)
         intervals_by_level.append((level, intervals))
         level_offset += len(matches)
 
     # Report the count for whichever selected level catches the most (the lowest-rank
     # one selected), since that's the most complete picture of what's being filtered.
     most_inclusive_level = levels[0]
-    representative_count = len(matches_by_level[most_inclusive_level])
+    new_heard = new_heard_by_level[most_inclusive_level]
+    representative_count = len(matches_by_level[most_inclusive_level]) + sum(
+        1 for h in new_heard if not is_kept_match(h.match, kept)
+    )
 
-    clean_track_title = await get_setting(session, "clean_track_title")
     clean_track_language = await get_setting(session, "clean_track_language")
     backups_enabled = bool(await get_setting(session, "backups_enabled"))
 
@@ -202,8 +258,12 @@ async def process_video(
                 severity=m.severity.value,
                 cue_text=m.cue.text,
                 kept=is_kept_match(m, kept),
+                source=source_label,
             )
-            for m in all_matches_by_level[most_inclusive_level]
+            for m, source_label in [
+                *((m, "subtitle") for m in all_matches_by_level[most_inclusive_level]),
+                *((h.match, "speech") for h in new_heard),
+            ]
         ]
     )
 

@@ -18,6 +18,7 @@ SETTING_KEYS = [
     "trigger_sonarr_radarr_enabled",
     "trigger_priority",
     "default_precise_mode",
+    "speech_check_enabled",
     "sonarr_url",
     "sonarr_api_key",
     "radarr_url",
@@ -111,6 +112,7 @@ async def update_settings(
     trigger_sonarr_radarr_enabled: bool = Form(False),
     trigger_priority_first: str = Form("sonarr_radarr"),
     default_precise_mode: str = Form("whole_line"),
+    speech_check_enabled: bool = Form(False),
     sonarr_url: str = Form(""),
     sonarr_api_key: str = Form(""),
     radarr_url: str = Form(""),
@@ -165,6 +167,7 @@ async def update_settings(
         if default_precise_mode not in PRECISE_MODES:
             default_precise_mode = "whole_line"
         await set_setting(session, "default_precise_mode", default_precise_mode)
+        await set_setting(session, "speech_check_enabled", speech_check_enabled)
         await set_setting(session, "sonarr_url", sonarr_url.strip())
         await set_setting(session, "sonarr_api_key", sonarr_api_key.strip())
         await set_setting(session, "radarr_url", radarr_url.strip())
