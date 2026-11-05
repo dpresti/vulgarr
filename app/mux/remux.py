@@ -25,6 +25,7 @@ from typing import Awaitable, Callable
 
 from app.audio.mute import MuteInterval, build_volume_filter
 from app.domain import Severity
+from app.mux.tempfiles import remove_orphaned_temp_files
 from app.subtitles.matcher import CueMatch
 
 logger = logging.getLogger(__name__)
@@ -397,6 +398,7 @@ async def remux_with_clean_track(
 ) -> RemuxResult:
     if not video_path.exists():
         raise RemuxError(f"Video file does not exist: {video_path}")
+    await asyncio.to_thread(remove_orphaned_temp_files, video_path)
 
     src_probe = await probe(ffprobe_bin, video_path)
     total_duration = float(src_probe["format"].get("duration", 0))
@@ -415,9 +417,12 @@ async def remux_with_clean_track(
         on_progress=on_progress,
     )
 
-    if on_stage is not None:
-        await on_stage("Verifying output")
+    # BaseException, not Exception: a cancellation landing here (cancel_job, or
+    # JobQueue.stop() on container shutdown) is a CancelledError, which would
+    # otherwise skip the unlink and leave the temp file behind for good.
     try:
+        if on_stage is not None:
+            await on_stage("Verifying output")
         await verify_output(
             ffmpeg_bin=ffmpeg_bin,
             ffprobe_bin=ffprobe_bin,
@@ -426,7 +431,7 @@ async def remux_with_clean_track(
             new_track_output_indices=plan.new_track_output_indices,
             stale_clean_tracks_dropped=len(plan.existing_clean_indices),
         )
-    except Exception:
+    except BaseException:
         tmp_path.unlink(missing_ok=True)
         raise
 

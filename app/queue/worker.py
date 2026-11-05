@@ -23,6 +23,7 @@ from app.integrations.sonarr import SonarrClient
 from app.integrations.subtitle_lookup import find_subtitle_for_video, is_forced_subtitle, resolve_subtitle_for_video
 from app.library import poll_for_subtitle_then_enqueue
 from app.mux.remux import RemuxError
+from app.mux.tempfiles import sweep_interrupted_temp_files
 from app.processing import ProcessingError, process_video
 from app.queue.heavy_pipeline_lock import HEAVY_PIPELINE_LOCK
 
@@ -125,12 +126,16 @@ class JobQueue:
                 select(ProcessingJob).where(ProcessingJob.state.in_([JobState.queued, JobState.processing]))
             )
             active_title_ids: set[int] = set()
+            interrupted_videos: list[Path] = []
             for job in result.scalars().all():
+                was_processing = job.state == JobState.processing
                 job.state = JobState.queued
                 job.started_at = None
                 title = await session.get(Title, job.title_id)
                 if title is not None:
                     title.status = "queued"
+                    if was_processing:
+                        interrupted_videos.append(Path(title.video_path))
                 active_title_ids.add(job.title_id)
 
             # Defensive reconciliation: a Title stuck showing "queued" with no
@@ -151,6 +156,10 @@ class JobQueue:
             )
             for (job_id,) in result.all():
                 await self._pending.put(job_id)
+
+        # Nothing is running yet in this process, so any temp file next to an
+        # interrupted job's video is from the run that died with the old one.
+        await sweep_interrupted_temp_files(interrupted_videos)
 
         self._dispatcher_task = asyncio.create_task(self._dispatch_loop())
 

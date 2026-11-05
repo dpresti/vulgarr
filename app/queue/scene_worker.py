@@ -10,12 +10,14 @@ import datetime
 import logging
 import shutil
 import time
+from pathlib import Path
 
 from sqlalchemy import select, update
 
 from app.config import settings as app_settings
 from app.db.models import JobState, SceneJob, SceneJobKind, Title
 from app.db.session import get_session, get_setting
+from app.mux.tempfiles import sweep_interrupted_temp_files
 from app.queue.heavy_pipeline_lock import HEAVY_PIPELINE_LOCK
 from app.queue.worker import is_within_off_hours_window
 from app.scenes.pipeline import apply_scene_blur, reverify_scenes_with_claude, scan_for_scenes
@@ -59,12 +61,16 @@ class SceneJobQueue:
                 select(SceneJob).where(SceneJob.state.in_([JobState.queued, JobState.processing]))
             )
             active_scan_title_ids: set[int] = set()
+            interrupted_videos: list[Path] = []
             for job in result.scalars().all():
+                was_processing = job.state == JobState.processing
                 job.state = JobState.queued
                 job.started_at = None
                 title = await session.get(Title, job.title_id)
                 if title is not None:
                     title.scene_scan_status = "queued"
+                    if was_processing and job.kind == SceneJobKind.blur:
+                        interrupted_videos.append(Path(title.video_path))
                 if job.kind == SceneJobKind.scan:
                     active_scan_title_ids.add(job.title_id)
 
@@ -86,6 +92,9 @@ class SceneJobQueue:
             result = await session.execute(select(SceneJob.id).where(SceneJob.state == JobState.queued))
             for (job_id,) in result.all():
                 await self._pending.put(job_id)
+
+        # Same as JobQueue.start(): an interrupted blur's temp output is orphaned.
+        await sweep_interrupted_temp_files(interrupted_videos)
 
         self._dispatcher_task = asyncio.create_task(self._dispatch_loop())
 

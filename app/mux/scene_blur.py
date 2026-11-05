@@ -71,6 +71,7 @@ from app.mux.remux import (
     _run_with_progress,
     probe,
 )
+from app.mux.tempfiles import remove_orphaned_temp_files
 
 logger = logging.getLogger(__name__)
 
@@ -1839,6 +1840,7 @@ async def apply_blur(
         raise RemuxError(f"Video file does not exist: {video_path}")
     if not blur_intervals:
         raise RemuxError("No approved scene windows to apply")
+    await asyncio.to_thread(remove_orphaned_temp_files, video_path)
 
     src_probe = await probe(ffprobe_bin, video_path)
 
@@ -1858,9 +1860,11 @@ async def apply_blur(
             on_progress=on_progress,
             on_stage=on_stage,
         )
-        if on_stage is not None:
-            await on_stage("Verifying output")
+        # BaseException, not Exception: a cancellation here (cancel_job, or the
+        # queue's stop() on container shutdown) would otherwise skip the unlink.
         try:
+            if on_stage is not None:
+                await on_stage("Verifying output")
             await verify_blurred_output(
                 ffmpeg_bin=ffmpeg_bin,
                 ffprobe_bin=ffprobe_bin,
@@ -1868,7 +1872,7 @@ async def apply_blur(
                 tmp_path=tmp_path,
                 blurred_windows=blur_intervals,
             )
-        except Exception:
+        except BaseException:
             tmp_path.unlink(missing_ok=True)
             raise
         return tmp_path
@@ -1883,11 +1887,14 @@ async def apply_blur(
         )
         tmp_path = await _build_and_verify(force_whole_file_video=True)
 
-    if on_stage is not None:
-        await on_stage("Publishing Vulgarr Edit")
-
     final_path = sibling_edit_path(video_path)
-    tmp_path.replace(final_path)  # same-directory rename: atomic, no partial-file window
+    try:
+        if on_stage is not None:
+            await on_stage("Publishing Vulgarr Edit")
+        tmp_path.replace(final_path)  # same-directory rename: atomic, no partial-file window
+    except BaseException:
+        tmp_path.unlink(missing_ok=True)
+        raise
 
     # Full success -- the work_dir has served its purpose. A future Apply for
     # this same title (even if it needs to redo everything, e.g. a rejected
